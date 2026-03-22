@@ -1,0 +1,194 @@
+.surface {
+  background:
+    radial-gradient(circle at 15% 15%, rgba(20, 184, 166, 0.1), transparent 24%),
+    radial-gradient(circle at 85% 8%, rgba(34, 211, 238, 0.08), transparent 20%),
+    linear-gradient(180deg, #050507 0%, #030306 100%);
+  color: #e4e4e7;
+}
+
+.mono {
+  font-family: "DM Mono", monospace;
+}
+
+.circleBg {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  width: 900px;
+  height: 900px;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(20, 184, 166, 0.025);
+  border-radius: 9999px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.circleBg::before {
+  content: "";
+  position: absolute;
+  inset: 40px;
+  border: 1px dashed rgba(20, 184, 166, 0.04);
+  border-radius: 9999px;
+  animation: orbitSpin 90s linear infinite;
+}
+
+.circleBg::after {
+  content: "";
+  position: absolute;
+  inset: 120px;
+  border: 1px solid rgba(20, 184, 166, 0.015);
+  border-radius: 9999px;
+  animation: orbitSpin 150s linear infinite reverse;
+}
+
+.glossCard {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(40, 40, 44, 0.75) 0%, rgba(15, 15, 18, 0.95) 100%);
+  box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(15px);
+  transition: transform 0.3s ease, border-color 0.3s ease;
+}
+
+.glossCard:hover {
+  border-color: rgba(20, 184, 166, 0.35);
+  transform: translateY(-2px);
+}
+
+.gloss {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 16px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    transparent 40%,
+    rgba(255, 255, 255, 0.015) 100%
+  );
+}
+
+.flipContainer {
+  perspective: 1200px;
+  min-height: 206px;
+}
+
+.flipInner {
+  position: relative;
+  min-height: 206px;
+  transform-style: preserve-3d;
+  transition: transform 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.isFlipped {
+  transform: rotateY(180deg);
+}
+
+.flipFace {
+  position: absolute;
+  inset: 0;
+  min-height: 206px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(40, 40, 44, 0.75) 0%, rgba(15, 15, 18, 0.95) 100%);
+  box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(15px);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.flipBack {
+  transform: rotateY(180deg);
+}
+
+.kanbanCol {
+  min-height: 60vh;
+}
+
+.tabBtn {
+  transition: all 0.2s;
+}
+
+.tabBtnActive {
+  color: #14b8a6;
+  border-color: #14b8a6;
+  background: rgba(20, 184, 166, 0.05);
+}
+
+.modalOverlay {
+  backdrop-filter: blur(20px);
+}
+
+.calDay {
+  min-height: 42px;
+  transition: all 0.12s;
+}
+
+.calDay:hover {
+  background: rgba(20, 184, 166, 0.08);
+}
+
+.calDaySelected {
+  background: #14b8a6;
+  color: #000;
+  font-weight: 700;
+}
+
+.calDayToday {
+  border: 1px solid rgba(20, 184, 166, 0.3);
+  color: #14b8a6;
+}
+
+.searchResult:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.timelineRail {
+  position: relative;
+  padding-left: 1rem;
+  border-left: 1px solid rgba(20, 184, 166, 0.15);
+}
+
+.metricGrid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.chartGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@keyframes orbitSpin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1280px) {
+  .metricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1024px) {
+  .chartGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .circleBg {
+    width: 620px;
+    height: 620px;
+  }
+
+  .metricGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

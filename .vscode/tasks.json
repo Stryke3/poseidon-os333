@@ -1,0 +1,22 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Open Codex (CLI)",
+      "type": "shell",
+      "command": "node \"/Volumes/WORKSPACE/dev/node/lib/node_modules/@openai/codex/bin/codex.js\"",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "/Volumes/WORKSPACE/dev/node/bin:/opt/homebrew/bin:/usr/local/bin:${userHome}/.nodejs/bin:${env:PATH}"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "new"
+      }
+    }
+  ]
+}

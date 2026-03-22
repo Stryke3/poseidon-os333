@@ -1,0 +1,7 @@
+{
+  "include": ["services", "scripts"],
+  "extraPaths": ["services/shared"],
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "warning",
+  "pythonVersion": "3.11"
+}

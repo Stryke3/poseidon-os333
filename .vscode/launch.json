@@ -1,0 +1,80 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Core API (8001)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"],
+      "cwd": "${workspaceFolder}/services/core",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/services/shared",
+        "PORT": "8001"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Trident (8002)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--host", "0.0.0.0", "--port", "8002", "--reload"],
+      "cwd": "${workspaceFolder}/services/trident",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/services/shared",
+        "PORT": "8002"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Intake (8003)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--host", "0.0.0.0", "--port", "8003", "--reload"],
+      "cwd": "${workspaceFolder}/services/intake",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/services/shared",
+        "PORT": "8003"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "ML Service (8004)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--host", "0.0.0.0", "--port", "8004", "--reload"],
+      "cwd": "${workspaceFolder}/services/ml",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/services/shared",
+        "PORT": "8004"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Docker: Core (attach)",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": {
+        "host": "localhost",
+        "port": 5678
+      },
+      "pathMappings": [
+        { "localRoot": "${workspaceFolder}/services/core", "remoteRoot": "/app" },
+        { "localRoot": "${workspaceFolder}/services/shared", "remoteRoot": "/app/shared" }
+      ],
+      "justMyCode": false
+    }
+  ],
+  "compounds": []
+}
