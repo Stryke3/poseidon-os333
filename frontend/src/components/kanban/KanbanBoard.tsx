@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 
+import { PodDeliveryGuidancePanel, type PodDeliveryGuidancePayload } from "@/components/patient/PodDeliveryGuidancePanel"
 import { moveKanbanCard } from "@/lib/api"
 import { KANBAN_DATA, type KanbanCard, type KanbanColumn } from "@/lib/data"
 
@@ -41,6 +42,7 @@ type PatientChart = {
     first_name?: string
     last_name?: string
   }
+  pod_delivery_guidance?: PodDeliveryGuidancePayload | null
   summary: {
     total_orders: number
     signed_swo_count: number
@@ -497,6 +499,12 @@ export default function KanbanBoard({
                                 <SummaryPill label="EOBs" value={String(chart.summary.eobs_count)} />
                                 <SummaryPill label="Denied" value={formatCurrency(chart.summary.denied_amount_total)} />
                               </div>
+
+                              {chart.pod_delivery_guidance ? (
+                                <div className="shrink-0">
+                                  <PodDeliveryGuidancePanel compact data={chart.pod_delivery_guidance} />
+                                </div>
+                              ) : null}
 
                               <div className="mt-auto flex items-center justify-between gap-2 pt-1">
                                 <div className="flex gap-2">

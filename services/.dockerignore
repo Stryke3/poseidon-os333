@@ -1,0 +1,4 @@
+trident/Historical_Model_Data
+*/__pycache__
+*/.pytest_cache
+*.pyc

@@ -9,6 +9,7 @@ import {
   SectionCard,
   SectionHeading,
 } from "@/components/dashboard/DashboardPrimitives"
+import { PodDeliveryGuidancePanel, type PodDeliveryGuidancePayload } from "@/components/patient/PodDeliveryGuidancePanel"
 
 const CORE_API_URL =
   process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
@@ -240,6 +241,17 @@ export default async function PatientFilePage({
               ))}
             </div>
           </SectionCard>
+
+          {chart.pod_delivery_guidance ? (
+            <SectionCard>
+              <SectionHeading
+                eyebrow="Compliance"
+                title="POD & CMS delivery checklist"
+                description="Same operational content as the generated POD package PDF—use for intake, delivery, and billing prep."
+              />
+              <PodDeliveryGuidancePanel data={chart.pod_delivery_guidance} />
+            </SectionCard>
+          ) : null}
 
           <SectionCard>
             <SectionHeading
