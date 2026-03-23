@@ -19,6 +19,10 @@ type ChartOrder = {
   hcpcs_codes?: string[]
   billing_status?: string
   swo_status?: string
+  total_billed?: number | string
+  paid_amount?: number | string
+  total_paid?: number | string
+  denied_amount?: number | string
   primary_documents?: {
     swo?: ChartDocument | null
     cms1500?: ChartDocument | null
@@ -28,6 +32,7 @@ type ChartOrder = {
 
 type ChartItem = {
   id?: string
+  order_id?: string
   paid_amount?: number | string
   denied_amount?: number | string
   denial_category?: string
@@ -72,6 +77,26 @@ function formatCurrency(value: number | string | undefined) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(numeric)
+}
+
+function parseAmt(value: number | string | undefined) {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  const n = Number.parseFloat(String(value || ""))
+  return Number.isFinite(n) ? n : 0
+}
+
+function reimbursedForOrder(order: ChartOrder, payments: ChartItem[]) {
+  const fromOrder = parseAmt(order.paid_amount) || parseAmt(order.total_paid)
+  if (fromOrder > 0) return fromOrder
+  return payments
+    .filter((p) => p.order_id === order.id)
+    .reduce((s, p) => s + parseAmt(p.paid_amount), 0)
+}
+
+function deniedForOrder(order: ChartOrder, denials: ChartItem[]) {
+  const fromOrder = parseAmt(order.denied_amount)
+  if (fromOrder > 0) return fromOrder
+  return denials.filter((d) => d.order_id === order.id).reduce((s, d) => s + parseAmt(d.denied_amount), 0)
 }
 
 function DocumentPill({
@@ -463,6 +488,11 @@ export default function KanbanBoard({
                                       </p>
                                       <p className="mt-1 text-slate-400">
                                         {(order.hcpcs_codes || []).join(", ") || "No HCPCS"} · Billing {order.billing_status || "pending"}
+                                      </p>
+                                      <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+                                        Reimbursed {formatCurrency(reimbursedForOrder(order, chart.payments))} · Denied{" "}
+                                        {formatCurrency(deniedForOrder(order, chart.denials))} · Billed{" "}
+                                        {formatCurrency(parseAmt(order.total_billed))}
                                       </p>
                                       <div className="mt-2 flex flex-wrap gap-1">
                                         <DocumentPill label="SWO" document={order.primary_documents?.swo} />

@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6-20250527",
       max_tokens: 1024,
       system: `You are Trident, the intelligence engine for Poseidon OS at StrykeFox Medical.
 You analyze healthcare reimbursement data, DME claims, surgical case billing, and denial patterns.

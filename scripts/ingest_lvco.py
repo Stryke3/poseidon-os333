@@ -69,6 +69,19 @@ def split_name(full_name: str) -> tuple[str, str]:
     return (parts[0] if parts else ""), (" ".join(parts[1:]) if len(parts) > 1 else "Unknown")
 
 
+def parse_money_cell(value: str) -> float | None:
+    if not value or not str(value).strip():
+        return None
+    s = str(value).strip().replace("$", "").replace(",", "")
+    if s.startswith("(") and s.endswith(")"):
+        s = "-" + s[1:-1]
+    try:
+        v = float(s)
+        return v
+    except ValueError:
+        return None
+
+
 def normalize_dob(value: str) -> str:
     trimmed = value.strip()
     if not trimmed:
@@ -194,6 +207,53 @@ def map_rows_to_orders(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
         )
 
+        paid_raw = row_value(
+            row,
+            [
+                "paid_amount",
+                "amount_paid",
+                "paid",
+                "payment_amount",
+                "check_amount",
+                "total_paid",
+                "payer_payment",
+            ],
+        )
+        reimbursed_raw = row_value(
+            row,
+            ["reimbursed", "reimbursed_amount", "reimbursement", "allowed_paid", "net_paid"],
+        )
+        denied_raw = row_value(
+            row,
+            [
+                "denied_amount",
+                "denial_amount",
+                "amount_denied",
+                "disallowed_amount",
+                "write_off_amount",
+            ],
+        )
+        billed_raw = row_value(
+            row,
+            [
+                "billed_amount",
+                "billed",
+                "charges",
+                "total_billed",
+                "claim_amount",
+                "submitted_amount",
+            ],
+        )
+        claim_status = row_value(
+            row,
+            [
+                "claim_status",
+                "current_claim_status",
+                "adjudication_status",
+                "payment_status",
+            ],
+        )
+
         order: dict[str, Any] = {
             "patient_name": patient_name,
             "first_name": row_value(row, ["first_name", "firstname", "first"]) or name_parts[0],
@@ -227,6 +287,22 @@ def map_rows_to_orders(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Drop None email if empty string already handled
         if order["email"] == "":
             order["email"] = None
+
+        pa = parse_money_cell(paid_raw)
+        if pa is not None:
+            order["paid_amount"] = pa
+        rb = parse_money_cell(reimbursed_raw)
+        if rb is not None:
+            order["reimbursed_amount"] = rb
+        da = parse_money_cell(denied_raw)
+        if da is not None:
+            order["denied_amount"] = da
+        ba = parse_money_cell(billed_raw)
+        if ba is not None:
+            order["billed_amount"] = ba
+        if claim_status:
+            order["claim_status"] = claim_status
+
         orders.append(order)
     return orders
 

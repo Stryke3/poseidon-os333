@@ -16,3 +16,10 @@ docker-data*
 tmp
 backups/
 data/*
+services/trident/Historical_Model_Data/
+services/trident/Manuals/
+aries 2/
+matia_complete 2/
+matia_complete.zip
+*.jpeg
+*.JPEG

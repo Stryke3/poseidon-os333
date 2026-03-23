@@ -30,7 +30,9 @@ for migration in \
   "${ROOT_DIR}/scripts/migrations/004_fulfillment_billing_workflow.sql" \
   "${ROOT_DIR}/scripts/migrations/005_communications_feed.sql" \
   "${ROOT_DIR}/scripts/migrations/006_cleanup_import_dedup.sql" \
-  "${ROOT_DIR}/scripts/migrations/007_patient_contact_dl_nok.sql"
+  "${ROOT_DIR}/scripts/migrations/007_patient_contact_dl_nok.sql" \
+  "${ROOT_DIR}/scripts/migrations/008_dedup_orders_sorted_hcpcs.sql" \
+  "${ROOT_DIR}/scripts/migrations/009_dedup_payment_outcomes.sql"
 do
   echo "Applying $(basename "${migration}")"
   docker compose exec -T \

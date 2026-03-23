@@ -1323,6 +1323,12 @@ class ImportOrderPayload(BaseModel):
     source_channel: str | None = None
     source_reference: str | None = None
     intake_payload: dict[str, Any] | None = None
+    # LVCO / spreadsheet remittance snapshot (optional)
+    paid_amount: float | None = None
+    reimbursed_amount: float | None = None
+    denied_amount: float | None = None
+    billed_amount: float | None = None
+    claim_status: str | None = None
 
 
 class OrderAssignmentRequest(BaseModel):
@@ -1445,6 +1451,215 @@ async def _import_row_dedup_context(
     )
     ctx = (first_name, last_name, dob, insurance_id, payer_id, hcpcs_codes, diagnosis_codes)
     return key, ctx
+
+
+async def _import_find_existing_draft_duplicate(
+    conn: Any,
+    org_id: str,
+    patient_id: str,
+    payer_id: str,
+    hcpcs_codes: list[str],
+    diagnosis_codes: list[str],
+) -> dict[str, Any] | None:
+    """
+    Same import run dedupes in-memory; across API calls we must not insert another draft
+    import order for the same org/patient/payer/HCPCS/diagnosis signature.
+    """
+    hcpcs_norm = json.dumps(hcpcs_codes)
+    diag_norm = json.dumps(diagnosis_codes)
+    return await fetch_one(
+        conn,
+        """
+        SELECT o.id, o.notes
+        FROM orders o
+        WHERE o.org_id = $1::uuid
+          AND o.patient_id = $2::uuid
+          AND o.payer_id = $3
+          AND o.status = 'draft'
+          AND lower(btrim(coalesce(o.source_channel, ''))) IN ('import', 'lvco')
+          AND COALESCE(
+            (
+              SELECT jsonb_agg(elem ORDER BY elem)
+              FROM jsonb_array_elements_text(COALESCE(o.hcpcs_codes, '[]'::jsonb)) AS e(elem)
+            ),
+            '[]'::jsonb
+          ) = $4::jsonb
+          AND (
+            (o.intake_payload ? '_import_diag_sig'
+              AND (o.intake_payload->'_import_diag_sig')::jsonb = $5::jsonb)
+            OR (
+              NOT (o.intake_payload ? '_import_diag_sig')
+              AND EXISTS (
+                SELECT 1 FROM patients p
+                WHERE p.id = o.patient_id
+                  AND p.diagnosis_codes IS NOT NULL
+                  AND p.diagnosis_codes = $5::jsonb
+              )
+            )
+          )
+        ORDER BY o.created_at ASC NULLS FIRST, o.id
+        LIMIT 1
+        """,
+        org_id,
+        patient_id,
+        payer_id,
+        hcpcs_norm,
+        diag_norm,
+    )
+
+
+def _coerce_import_money(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        v = float(value)
+        return v
+    s = _normalize_text(str(value)).replace("$", "").replace(",", "").replace("(", "-").replace(")", "")
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _import_infer_order_status_from_lvco(
+    paid: float | None,
+    denied: float | None,
+    claim_status: str,
+) -> str | None:
+    """Return a Core order status when LVCO data is explicit enough; else None."""
+    cs = claim_status.lower()
+    if paid is not None and paid > 0 and (denied is None or denied <= 0):
+        return "paid"
+    if denied is not None and denied > 0:
+        return "denied"
+    if "paid" in cs or "remit" in cs or "allow" in cs:
+        if "deny" not in cs:
+            return "paid"
+    if "deny" in cs or "reject" in cs:
+        return "denied"
+    if "pend" in cs or "process" in cs or "review" in cs:
+        return "submitted"
+    return None
+
+
+async def _import_apply_financial_snapshot(
+    conn: Any,
+    org_id: str,
+    user_sub: str,
+    order_id: str,
+    payer_id: str,
+    row: ImportOrderPayload,
+    hcpcs_codes: list[str],
+    diagnosis_codes: list[str],
+) -> None:
+    """
+    Persist LVCO / spreadsheet paid & denied amounts on the order row, payment_outcomes,
+    and denials so patient charts and Kanban show real reimbursement posture.
+    """
+    paid = _coerce_import_money(row.reimbursed_amount) or _coerce_import_money(row.paid_amount)
+    denied = _coerce_import_money(row.denied_amount)
+    billed = _coerce_import_money(row.billed_amount)
+    claim_st = _normalize_text(row.claim_status)
+    inferred = _import_infer_order_status_from_lvco(paid, denied, claim_st)
+
+    if paid is None and denied is None and billed is None and not claim_st:
+        return
+
+    hcpcs_primary = hcpcs_codes[0] if hcpcs_codes else None
+    diag_text = json.dumps(diagnosis_codes)
+    claim_ref = f"LVCO-{order_id}"
+
+    billing_status = None
+    if paid is not None and paid > 0 and (denied is None or denied <= 0):
+        billing_status = "paid"
+    elif denied is not None and denied > 0:
+        billing_status = "denied"
+    elif billed is not None and billed > 0:
+        billing_status = "billed"
+
+    await exec_write(
+        conn,
+        """
+        UPDATE orders
+        SET
+            total_billed = COALESCE($2::numeric, total_billed),
+            paid_amount = COALESCE($3::numeric, paid_amount),
+            total_paid = COALESCE($3::numeric, total_paid),
+            denied_amount = COALESCE($4::numeric, denied_amount),
+            payment_date = CASE WHEN $3::numeric IS NOT NULL AND $3::numeric > 0 THEN COALESCE(payment_date, CURRENT_DATE) ELSE payment_date END,
+            denial_date = CASE WHEN $4::numeric IS NOT NULL AND $4::numeric > 0 THEN COALESCE(denial_date, CURRENT_DATE) ELSE denial_date END,
+            status = COALESCE($5::text, status),
+            billing_status = COALESCE($6::text, billing_status),
+            updated_at = NOW()
+        WHERE id = $1::uuid AND org_id = $7::uuid
+        """,
+        order_id,
+        billed,
+        paid,
+        denied,
+        inferred,
+        billing_status,
+        org_id,
+    )
+
+    await exec_write(
+        conn,
+        "DELETE FROM payment_outcomes WHERE order_id = $1::uuid AND eob_reference = 'lvco_import'",
+        order_id,
+    )
+    await exec_write(
+        conn,
+        "DELETE FROM denials WHERE order_id = $1::uuid AND COALESCE(notes, '') LIKE '[lvco_import]%%'",
+        order_id,
+    )
+
+    if paid is not None and paid > 0:
+        pid = str(uuid.uuid4())
+        await exec_write(
+            conn,
+            """
+            INSERT INTO payment_outcomes (
+                id, org_id, order_id, claim_number, payer_id, hcpcs_code, diagnosis_codes,
+                billed_amount, paid_amount, is_denial, payment_date, eob_reference, created_by
+            )
+            VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8::numeric, $9::numeric, false, CURRENT_DATE, 'lvco_import', $10::uuid)
+            """,
+            pid,
+            org_id,
+            order_id,
+            claim_ref,
+            payer_id,
+            hcpcs_primary,
+            diag_text,
+            billed,
+            paid,
+            user_sub,
+        )
+
+    if denied is not None and denied > 0:
+        did = str(uuid.uuid4())
+        await exec_write(
+            conn,
+            """
+            INSERT INTO denials (
+                id, org_id, order_id, payer_id, denied_amount, denial_date,
+                denial_category, denial_reason, status, notes, created_by
+            )
+            VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::numeric, CURRENT_DATE,
+                'LVCO Import', $6, 'new', '[lvco_import] snapshot from spreadsheet', $7::uuid)
+            """,
+            did,
+            org_id,
+            order_id,
+            payer_id,
+            denied,
+            claim_st or "Recorded from LVCO ingest",
+            user_sub,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2025,6 +2240,42 @@ async def import_orders(
                     patients_created += 1
                     patient_created = True
 
+                intake_payload_out: dict[str, Any] = dict(row.intake_payload or {})
+                intake_payload_out["_import_diag_sig"] = diagnosis_codes
+
+                existing_draft = await _import_find_existing_draft_duplicate(
+                    conn,
+                    str(user["org_id"]),
+                    patient_id,
+                    payer_id,
+                    hcpcs_codes,
+                    diagnosis_codes,
+                )
+                if existing_draft:
+                    duplicates_skipped += 1
+                    dup_note = _normalize_text(row.notes)
+                    if dup_note:
+                        prev = _normalize_text(existing_draft.get("notes"))
+                        merged = f"{prev}\n[dedup existing draft] {dup_note}" if prev else f"[dedup existing draft] {dup_note}"
+                        await exec_write(
+                            conn,
+                            """
+                            UPDATE orders
+                            SET notes = $1, updated_at = NOW()
+                            WHERE id = $2::uuid AND org_id = $3::uuid
+                            """,
+                            merged,
+                            str(existing_draft["id"]),
+                            user["org_id"],
+                        )
+                    results.append({
+                        "index": index,
+                        "status": "skipped_duplicate",
+                        "dedup_reason": "existing_draft_order",
+                        "duplicate_of_order_id": str(existing_draft["id"]),
+                    })
+                    continue
+
                 priority = _normalize_text(row.priority).lower() or "standard"
                 if priority not in {"standard", "urgent", "stat"}:
                     priority = "standard"
@@ -2070,7 +2321,7 @@ async def import_orders(
                     priority,
                     source_channel,
                     source_reference,
-                    json.dumps(row.intake_payload or {}),
+                    json.dumps(intake_payload_out),
                     user["sub"],
                 )
                 await audit_log(
@@ -2085,6 +2336,16 @@ async def import_orders(
                     "assigned_to": assigned_to,
                     "source_channel": source_channel,
                 }))
+                await _import_apply_financial_snapshot(
+                    conn,
+                    str(user["org_id"]),
+                    user["sub"],
+                    order_id,
+                    payer_id,
+                    row,
+                    hcpcs_codes,
+                    diagnosis_codes,
+                )
                 orders_created += 1
                 results.append({
                     "index": index,
@@ -2138,6 +2399,8 @@ async def list_orders(
                o.source_channel, o.source_reference,
                o.created_at, o.updated_at,
                o.denial_category, o.denied_amount,
+               o.total_billed, o.total_paid, o.paid_amount, o.billing_status,
+               o.eligibility_status, o.swo_status,
                o.swo_document_id, o.cms1500_document_id, o.pod_document_id
         FROM orders o
         JOIN patients p ON p.id = o.patient_id
@@ -5169,6 +5432,7 @@ async def v1_materialize_order_packages(
     user: dict = Depends(require_roles(UserRole.ADMIN)),
     limit: int = 500,
     skip_existing_trident: bool = True,
+    unlock_lvco_intake_gates: bool = False,
 ):
     """
     For each order (up to limit): call Trident score API, store JSON super-package on the order,
@@ -5180,6 +5444,20 @@ async def v1_materialize_order_packages(
         raise HTTPException(status_code=503, detail="TRIDENT_API_URL is not configured")
     results: list[dict[str, Any]] = []
     async with db.connection() as conn:
+        if unlock_lvco_intake_gates:
+            await exec_write(
+                conn,
+                """
+                UPDATE orders
+                SET eligibility_status = 'eligible',
+                    swo_status = 'ingested',
+                    updated_at = NOW()
+                WHERE org_id = $1::uuid
+                  AND status = 'draft'
+                  AND lower(btrim(coalesce(source_channel, ''))) IN ('lvco', 'import')
+                """,
+                user["org_id"],
+            )
         rows = await fetch_all(
             conn,
             """

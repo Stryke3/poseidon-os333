@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "node scripts/build-frontend.js",
-    "start": "next start"
+    "start": "next start",
+    "deploy": "bash ../poseidon-deploy.sh"
   },
   "dependencies": {
     "@types/nodemailer": "^7.0.11",

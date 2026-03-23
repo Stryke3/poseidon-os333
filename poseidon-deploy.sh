@@ -105,8 +105,12 @@ fi
 )
 
 header "POST DEPLOY"
+# vercel ls can exit non-zero under set -e; still print the production URL from the deploy step above.
+raw_json=""
+raw_json="$(cd "${APP_DIR}" && vercel ls --json 2>/dev/null)" || raw_json="[]"
+[[ -z "${raw_json}" ]] && raw_json="[]"
 DEPLOY_URL="$(
-  cd "${APP_DIR}" && vercel ls --json 2>/dev/null | node -e '
+  printf '%s' "${raw_json}" | node -e '
     const chunks = [];
     process.stdin.on("data", (d) => chunks.push(d));
     process.stdin.on("end", () => {

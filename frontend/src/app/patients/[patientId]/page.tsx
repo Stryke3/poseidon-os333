@@ -10,6 +10,7 @@ import {
   SectionHeading,
 } from "@/components/dashboard/DashboardPrimitives"
 import { PodDeliveryGuidancePanel, type PodDeliveryGuidancePayload } from "@/components/patient/PodDeliveryGuidancePanel"
+import { formatHcpcsList } from "@/lib/hcpcs"
 
 const CORE_API_URL =
   process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
@@ -32,6 +33,10 @@ type OrderBundle = {
   swo_status?: string
   tracking_number?: string
   tracking_status?: string
+  total_billed?: number | string
+  total_paid?: number | string
+  paid_amount?: number | string
+  denied_amount?: number | string
   documents?: ChartDocument[]
   primary_documents?: {
     swo?: ChartDocument | null
@@ -90,6 +95,7 @@ type PatientChartPayload = {
   denials: FinancialItem[]
   appeals: FinancialItem[]
   eobs: FinancialItem[]
+  pod_delivery_guidance?: PodDeliveryGuidancePayload | null
 }
 
 function formatCurrency(value: number | string | undefined) {
@@ -106,6 +112,27 @@ function formatDate(value?: string) {
   if (!value) return "Pending"
   const parsed = new Date(value)
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString()
+}
+
+function parseAmount(value: number | string | undefined) {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string") {
+    const n = Number.parseFloat(value)
+    if (Number.isFinite(n)) return n
+  }
+  return 0
+}
+
+function sumLedgerPaid(orderId: string, payments: FinancialItem[]) {
+  return payments
+    .filter((p) => p.order_id === orderId)
+    .reduce((s, p) => s + parseAmount(p.paid_amount), 0)
+}
+
+function sumLedgerDenied(orderId: string, denials: FinancialItem[]) {
+  return denials
+    .filter((d) => d.order_id === orderId)
+    .reduce((s, d) => s + parseAmount(d.denied_amount), 0)
 }
 
 function DocumentLink({ label, document }: { label: string; document?: ChartDocument | null }) {
@@ -154,7 +181,7 @@ export default async function PatientFilePage({
     [patient.first_name, patient.last_name].filter(Boolean).join(" ") || "Unknown Patient"
 
   return (
-    <PageShell contentClassName="max-w-7xl">
+    <PageShell contentClassName="max-w-[1820px]">
       <HeroPanel
         eyebrow="Patient Lifecycle"
         title={patientName}
@@ -205,7 +232,7 @@ export default async function PatientFilePage({
         className="mb-6"
       />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(320px,0.82fr)]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,1fr)]">
         <div className="space-y-6">
           <SectionCard>
             <SectionHeading
@@ -225,11 +252,43 @@ export default async function PatientFilePage({
                         Status: {order.status || "unknown"} · Priority: {order.priority || "standard"} · Billing: {order.billing_status || "pending"}
                       </p>
                       <p className="mt-1 text-xs text-slate-400">
-                        HCPCS: {(order.hcpcs_codes || []).join(", ") || "None"}
+                        Device: {formatHcpcsList(order.hcpcs_codes)}
                       </p>
                       <p className="mt-1 text-xs text-slate-400">
                         SWO: {order.swo_status || "not started"} · Tracking: {order.tracking_status || order.tracking_number || "not attached"}
                       </p>
+                      <div className="mt-3 rounded-xl border border-accent-green/20 bg-[rgba(15,168,106,0.06)] px-3 py-2 text-xs text-slate-300">
+                        <p className="text-[10px] uppercase tracking-[0.18em] text-accent-green">LVCO / remittance (this order)</p>
+                        <p className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+                          <span>
+                            <span className="text-slate-500">Reimbursed</span>{" "}
+                            <span className="font-semibold text-white">
+                              {formatCurrency(
+                                parseAmount(order.paid_amount) ||
+                                  parseAmount(order.total_paid) ||
+                                  sumLedgerPaid(order.id, chart.payments),
+                              )}
+                            </span>
+                          </span>
+                          <span>
+                            <span className="text-slate-500">Denied</span>{" "}
+                            <span className="font-semibold text-accent-red">
+                              {formatCurrency(
+                                parseAmount(order.denied_amount) || sumLedgerDenied(order.id, chart.denials),
+                              )}
+                            </span>
+                          </span>
+                          <span>
+                            <span className="text-slate-500">Billed</span>{" "}
+                            <span className="font-semibold text-slate-200">
+                              {formatCurrency(parseAmount(order.total_billed))}
+                            </span>
+                          </span>
+                          <span className="text-slate-400">
+                            Billing: {order.billing_status || "—"} · Order status: {order.status || "—"}
+                          </span>
+                        </p>
+                      </div>
                     </div>
                     <div className="grid gap-1 text-xs lg:text-right">
                       <DocumentLink label="SWO copy" document={order.primary_documents?.swo} />

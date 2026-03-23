@@ -3,8 +3,27 @@
   "tasks": [
     {
       "label": "Open Codex (CLI)",
-      "type": "shell",
-      "command": "node \"/Volumes/WORKSPACE/dev/node/lib/node_modules/@openai/codex/bin/codex.js\"",
+      "type": "process",
+      "command": "/Volumes/WORKSPACE/dev/node/bin/codex",
+      "args": [],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "/Volumes/WORKSPACE/dev/node/bin:/opt/homebrew/bin:/usr/local/bin:${userHome}/.nodejs/bin:${env:PATH}"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Open Claude (CLI)",
+      "type": "process",
+      "command": "/Volumes/WORKSPACE/dev/node/bin/claude",
+      "args": [],
       "options": {
         "cwd": "${workspaceFolder}",
         "env": {

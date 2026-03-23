@@ -113,6 +113,8 @@ Production notes:
 - `CORS_ALLOW_ORIGINS` and `TRUSTED_HOSTS` should be set to your real domains before internet exposure.
 - The frontend is pinned to `Next.js 16` and production builds run with `--webpack` for stable repeatable builds in this environment.
 - Live ingest now requires a real signed-in operator in production; service-account fallback is disabled unless explicitly enabled outside production.
+- Human dashboard logins are environment-managed and may be rotated independently of historical seed prompts. Do not rely on old docs that mention fixed credentials such as `admin@strykefox.com` / `StrykeFox2026!`.
+- `CORE_API_EMAIL` / `CORE_API_PASSWORD` are automation credentials for service-to-service and scripted ingest paths. They are not the canonical source of truth for operator-facing login instructions.
 - Public founder inquiries should set `PUBLIC_INQUIRY_ALLOWED_ORIGINS` to the exact allowed public site origin(s).
 - Intake-to-Core workflow automation now requires `INTERNAL_API_KEY` on the request path in addition to the Core bearer token.
 
@@ -155,6 +157,12 @@ Production notes:
 | `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
 | `GOOGLE_REFRESH_TOKEN` | — | Google refresh token for mailbox/calendar access |
 | `GOOGLE_CALENDAR_ID` | — | Calendar ID for operational scheduling |
+
+### Production Login Guidance
+
+- For human access, use the current operator account credentials managed in the live environment, not historical seeded passwords from planning prompts.
+- For automation, use `CORE_API_EMAIL` / `CORE_API_PASSWORD` or a bearer token only where the script explicitly supports service credentials.
+- If a prompt, runbook, or scratch note still references `admin@strykefox.com` with a fixed password, treat it as stale until revalidated against the current environment.
 
 ## Operations
 

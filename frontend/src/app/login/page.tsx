@@ -68,23 +68,6 @@ export default function LoginPage() {
             Access live patients, queue status, reimbursement activity, and operator workflow from one surface.
           </p>
 
-          <div className="mt-10 grid gap-4 sm:grid-cols-3">
-            <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
-              <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">Clinical</p>
-              <p className="mt-3 text-2xl font-semibold text-white">Patient records</p>
-              <p className="mt-3 text-sm leading-6 text-slate-400">Charts, documents, and order status in one workflow.</p>
-            </div>
-            <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
-              <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">Revenue</p>
-              <p className="mt-3 text-2xl font-semibold text-white">Billing status</p>
-              <p className="mt-3 text-sm leading-6 text-slate-400">Payments, denials, appeals, and payer activity.</p>
-            </div>
-            <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
-              <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">Operations</p>
-              <p className="mt-3 text-2xl font-semibold text-white">Queue control</p>
-              <p className="mt-3 text-sm leading-6 text-slate-400">Intake, review, follow-up, and completion status.</p>
-            </div>
-          </div>
         </section>
 
         <section className="rounded-[36px] border border-white/10 bg-[linear-gradient(180deg,rgba(10,14,26,0.94),rgba(6,10,18,0.92))] p-8 shadow-[0_36px_110px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-2xl sm:p-9">

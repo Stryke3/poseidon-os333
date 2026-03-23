@@ -1,5 +1,8 @@
-import RevenueCommandSurface from "@/components/executive/RevenueCommandSurface"
+import DashboardShell from "@/components/dashboard/DashboardShell"
+import { getLiveDashboardData } from "@/lib/dashboard-data"
 
-export default function ExecutivePage() {
-  return <RevenueCommandSurface />
+export default async function ExecutivePage() {
+  const data = await getLiveDashboardData()
+
+  return <DashboardShell {...data} variant="executive" />
 }

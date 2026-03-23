@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth"
 import { redirect } from "next/navigation"
 
 import { authOptions } from "@/lib/auth"
+import { getHcpcsShortDescription } from "@/lib/hcpcs"
 import type { AccountRecord, KanbanCard, KanbanColumn } from "@/lib/data"
 
 const CORE_API_URL =
@@ -35,6 +36,8 @@ type OrderRecord = {
   swo_status?: string
   billing_status?: string
   paid_amount?: number | string
+  total_paid?: number | string
+  total_billed?: number | string
   payment_date?: string
   updated_at?: string
   created_at?: string
@@ -139,17 +142,31 @@ function parseAmount(value?: number | string) {
 }
 
 function getOrderAmount(order: OrderRecord, denialsByOrderId: Map<string, DenialRecord[]>) {
-  const denialAmount = denialsByOrderId
+  const status = (order.status || "").toLowerCase()
+  const reimbursed =
+    parseAmount(order.paid_amount) || parseAmount(order.total_paid)
+  const denialFromRows = denialsByOrderId
     .get(order.id)
     ?.reduce((sum, denial) => sum + parseAmount(denial.amount), 0)
+  const deniedOrder = parseAmount(order.denied_amount)
+  const denialTotal = denialFromRows || deniedOrder
 
-  const amount =
-    denialAmount ||
-    parseAmount(order.denied_amount) ||
+  if ((status === "paid" || status === "closed") && reimbursed > 0) {
+    return reimbursed
+  }
+  if (denialTotal > 0) {
+    return denialTotal
+  }
+  if (reimbursed > 0) {
+    return reimbursed
+  }
+
+  const billedFallback =
+    parseAmount(order.total_billed) ||
     parseAmount(order.billed_amount) ||
     parseAmount(order.expected_amount)
 
-  return amount > 0 ? amount : null
+  return billedFallback > 0 ? billedFallback : null
 }
 
 function getColumnId(status?: string) {
@@ -428,12 +445,14 @@ export function buildDashboardData(orders: OrderRecord[], denials: DenialRecord[
       id: patient.id,
       patientId: patient.patientId,
       businessLine: patient.businessLine,
-      title: `${patient.name} - ${patient.topCode} - ${patient.payer}`,
+      title: patient.name,
       value: formatAmountDisplay(patient.amount),
       priority: patient.priority,
       assignee: patient.assignee,
       payer: patient.payer,
-      type: `${patient.orderCount} ${patient.orderCount === 1 ? "order" : "orders"}`,
+      type: [getHcpcsShortDescription(patient.topCode), `${patient.orderCount} ${patient.orderCount === 1 ? "order" : "orders"}`]
+        .filter(Boolean)
+        .join(" · "),
       due: patient.due,
       orderCount: patient.orderCount,
       href: `/patients/${patient.patientId}`,
@@ -541,11 +560,11 @@ export async function getLiveDashboardData() {
     "Content-Type": "application/json",
   }
 
-  const [ordersRes, denialsRes, communicationsRes, integrationsRes, matiaRes] = await Promise.all([
+  const [ordersRes, denialsRes, communicationsRes, integrationsRes] = await Promise.all([
     fetch(`${CORE_API_URL}/orders?limit=200`, {
       headers,
       cache: "no-store",
-    }),
+    }).catch(() => null),
     fetch(`${CORE_API_URL}/denials?limit=200`, {
       headers,
       cache: "no-store",
@@ -558,17 +577,30 @@ export async function getLiveDashboardData() {
       headers,
       cache: "no-store",
     }).catch(() => null),
-    fetch(`${MATIA_API_URL}/orders/pipeline`, {
-      cache: "no-store",
-    }).catch(() => null),
   ])
 
-  if (!ordersRes.ok) {
-    const statusCode = ordersRes.status
+  if (!ordersRes || !ordersRes.ok) {
+    const statusCode = ordersRes?.status
     if (statusCode === 401 || statusCode === 403) {
       redirect("/login")
     }
-    throw new Error(`Core orders request failed with status ${statusCode}`)
+
+    console.warn(
+      `Dashboard data unavailable from core orders endpoint${
+        statusCode ? ` (status ${statusCode})` : ""
+      }. Falling back to empty dashboard state.`,
+    )
+
+    const fallback = buildDashboardData([], [])
+    return {
+      ...fallback,
+      initialCommunications: [],
+      initialIntegrations: {
+        email: { configured: false, provider: null },
+        calendar: { configured: false, provider: null },
+        in_app_push: { configured: true, sources: [] },
+      },
+    }
   }
 
   const ordersPayload = (await ordersRes.json()) as {
@@ -586,15 +618,7 @@ export async function getLiveDashboardData() {
     integrationsRes && integrationsRes.ok
       ? ((await integrationsRes.json()) as Record<string, unknown>)
       : null
-  const matiaPayload =
-    matiaRes && matiaRes.ok
-      ? ((await matiaRes.json()) as MatiaPipelineRecord[])
-      : []
-
-  const base = buildDashboardData(
-    [...(ordersPayload.orders || []), ...mapMatiaPipelineToOrders(matiaPayload)],
-    denialsPayload?.denials || [],
-  )
+  const base = buildDashboardData(ordersPayload.orders || [], denialsPayload?.denials || [])
   return {
     ...base,
     initialCommunications: communicationsPayload?.items || [],

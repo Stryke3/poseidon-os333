@@ -107,6 +107,12 @@ For the self-hosted services in this repo, complete `/.env` before go-live:
 - `GMAIL_OAUTH_CLIENT_SECRET`
 - `GMAIL_OAUTH_REFRESH_TOKEN`
 
+Credential guidance:
+
+- Treat `CORE_API_EMAIL` / `CORE_API_PASSWORD` as automation credentials for ingest and service workflows.
+- Do not publish fixed human login passwords in deployment prompts or runbooks. Production operator credentials should be managed separately and rotated without requiring doc edits.
+- If an older prompt still references `admin@strykefox.com` with a static password, consider that guidance stale until the live environment is revalidated.
+
 ## Step 4 - Security Hardening
 
 Security headers are now defined in [frontend/next.config.js](/Volumes/WORKSPACE/poseidon%202/frontend/next.config.js).

@@ -29,28 +29,36 @@ check_line() {
   fi
 }
 
+scan_dockerfiles() {
+  while IFS= read -r dockerfile; do
+    n=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      n=$((n + 1))
+      if [[ "$line" =~ ^FROM[[:space:]]+([^[:space:]]+) ]]; then
+        printf '%s\t%s\t%s\n' "$dockerfile" "$n" "${BASH_REMATCH[1]}"
+      fi
+    done <"$dockerfile"
+  done < <(
+    find "${ROOT_DIR}/services" "${ROOT_DIR}/frontend" \( -name 'Dockerfile' -o -name 'Dockerfile.*' \) -type f 2>/dev/null
+  )
+}
+
 while IFS=$'\t' read -r file line_number image_ref; do
   [[ -n "$file" ]] || continue
   check_line "$file" "$line_number" "$image_ref" "dockerfile"
-done < <(
-  rg -n --no-heading '^FROM[[:space:]]+[^[:space:]]+' \
-    --with-filename \
-    "${ROOT_DIR}/services" "${ROOT_DIR}/frontend" -g 'Dockerfile*' |
-    while IFS=: read -r file line_number content; do
-      image_ref="$(printf '%s\n' "$content" | awk '{print $2}')"
-      printf '%s\t%s\t%s\n' "$file" "$line_number" "$image_ref"
-    done
-)
+done < <(scan_dockerfiles)
 
 while IFS=$'\t' read -r file line_number image_ref; do
   [[ -n "$file" ]] || continue
   check_line "$file" "$line_number" "$image_ref" "compose"
 done < <(
-  rg -n --no-heading --with-filename '^[[:space:]]*image:[[:space:]]+[^[:space:]]+' "${ROOT_DIR}/docker-compose.yml" |
-    while IFS=: read -r file line_number content; do
-      image_ref="$(printf '%s\n' "$content" | awk '{print $2}')"
-      printf '%s\t%s\t%s\n' "$file" "$line_number" "$image_ref"
-    done
+  n=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    n=$((n + 1))
+    if [[ "$line" =~ ^[[:space:]]*image:[[:space:]]+([^[:space:]]+) ]]; then
+      printf '%s\t%s\t%s\n' "${ROOT_DIR}/docker-compose.yml" "$n" "${BASH_REMATCH[1]}"
+    fi
+  done <"${ROOT_DIR}/docker-compose.yml"
 )
 
 if ((${#failures[@]} > 0)); then
