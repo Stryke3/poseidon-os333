@@ -1,22 +1,17 @@
 "use client"
 
 import Link from "next/link"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { signOut, useSession } from "next-auth/react"
 
-import {
-  HeroPanel,
-  MetricCard,
-  PageShell,
-  SectionCard,
-  SectionHeading,
-} from "@/components/dashboard/DashboardPrimitives"
 import CommunicationsPanel from "@/components/dashboard/CommunicationsPanel"
 import NeuralOsDashboard from "@/components/dashboard/NeuralOsDashboard"
 import KanbanBoard from "@/components/kanban/KanbanBoard"
 import LiveIngestDropzone from "@/components/ingest/LiveIngestDropzone"
 import { queryTrident } from "@/lib/api"
 import type { AccountRecord, KanbanCard, KanbanColumn } from "@/lib/data"
+
+/* ── types ─────────────────────────────────────────── */
 
 interface DashboardShellProps {
   initialKPIs: {
@@ -40,85 +35,68 @@ interface DashboardShellProps {
   variant?: "intake" | "executive" | "os" | "ceo"
 }
 
-const pipelineOrder = [
-  "pendingAuth",
-  "authorized",
-  "submitted",
-  "denied",
-  "appealed",
-  "paid",
-] as const
+type Variant = NonNullable<DashboardShellProps["variant"]>
 
-const pipelineAccents: Record<string, string> = {
-  pendingAuth: "border-accent-gold/50 bg-accent-gold/10 text-accent-gold-2",
-  authorized: "border-accent-blue/50 bg-accent-blue/10 text-accent-blue",
-  submitted: "border-accent-teal/50 bg-accent-teal/10 text-accent-teal",
-  denied: "border-accent-red/50 bg-accent-red/10 text-accent-red",
-  appealed: "border-accent-purple/50 bg-accent-purple/10 text-accent-purple",
-  paid: "border-accent-green/50 bg-accent-green/10 text-accent-green",
+const PIPELINE_ORDER = ["pendingAuth", "authorized", "submitted", "denied", "appealed", "paid"] as const
+
+const COLUMN_LABELS: Record<string, string> = {
+  pendingAuth: "Pending Auth",
+  authorized: "Authorized",
+  submitted: "Submitted",
+  denied: "Denied",
+  appealed: "Appealed",
+  paid: "Paid",
 }
 
-const statusAccents: Record<AccountRecord["status"], string> = {
-  active: "bg-accent-green/10 text-accent-green",
-  pending: "bg-accent-gold/10 text-accent-gold-2",
-  appeal: "bg-accent-purple/10 text-accent-purple",
-  denied: "bg-accent-red/10 text-accent-red",
+const COLUMN_DOT: Record<string, string> = {
+  pendingAuth: "bg-amber-400",
+  authorized: "bg-blue-400",
+  submitted: "bg-cyan-400",
+  denied: "bg-red-400",
+  appealed: "bg-purple-400",
+  paid: "bg-emerald-400",
 }
 
-const signatureThemes: Record<
-  NonNullable<DashboardShellProps["variant"]>,
-  {
-    border: string
-    background: string
-    label: string
-    glow: string
-    heroEyebrow: string
-    searchField: string
-    activeButton: string
-    inactiveButton: string
-  }
-> = {
-  os: {
-    border: "border-[rgba(118,243,255,0.16)]",
-    background: "bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(7,14,26,0.18))]",
-    label: "text-[#8ec5ff]",
-    glow: "drop-shadow-[0_0_18px_rgba(118,243,255,0.12)]",
-    heroEyebrow: "border-[rgba(118,243,255,0.35)] bg-[rgba(118,243,255,0.08)] text-[#a8dcff]",
-    searchField: "border-[rgba(118,243,255,0.16)] focus:border-[#76f3ff] focus:shadow-[0_0_0_1px_rgba(118,243,255,0.24),0_0_24px_rgba(118,243,255,0.1)]",
-    activeButton: "border-[#76f3ff] bg-[linear-gradient(180deg,rgba(118,243,255,0.18),rgba(26,110,245,0.18))] text-white shadow-[0_12px_32px_rgba(10,30,58,0.22)]",
-    inactiveButton: "border-white/10 bg-white/5 text-slate-200 hover:border-[#76f3ff]/50",
-  },
-  executive: {
-    border: "border-[rgba(26,110,245,0.22)]",
-    background: "bg-[linear-gradient(180deg,rgba(26,110,245,0.12),rgba(7,14,26,0.18))]",
-    label: "text-accent-blue",
-    glow: "drop-shadow-[0_0_18px_rgba(26,110,245,0.18)]",
-    heroEyebrow: "border-accent-blue/40 bg-accent-blue/10 text-accent-blue",
-    searchField: "border-accent-blue/20 focus:border-accent-blue focus:shadow-[0_0_0_1px_rgba(26,110,245,0.25),0_0_24px_rgba(26,110,245,0.12)]",
-    activeButton: "border-accent-blue bg-accent-blue text-white shadow-[0_12px_32px_rgba(26,110,245,0.18)]",
-    inactiveButton: "border-white/10 bg-white/5 text-slate-200 hover:border-accent-blue",
-  },
-  ceo: {
-    border: "border-[rgba(240,180,50,0.22)]",
-    background: "bg-[linear-gradient(180deg,rgba(240,180,50,0.12),rgba(7,14,26,0.18))]",
-    label: "text-accent-gold-2",
-    glow: "drop-shadow-[0_0_18px_rgba(240,180,50,0.18)]",
-    heroEyebrow: "border-accent-gold-2/40 bg-accent-gold-2/10 text-accent-gold-2",
-    searchField: "border-accent-gold-2/20 focus:border-accent-gold-2 focus:shadow-[0_0_0_1px_rgba(240,180,50,0.22),0_0_24px_rgba(240,180,50,0.12)]",
-    activeButton: "border-accent-gold-2 bg-accent-gold-2 text-navy shadow-[0_12px_32px_rgba(240,180,50,0.18)]",
-    inactiveButton: "border-white/10 bg-white/5 text-slate-200 hover:border-accent-gold-2",
-  },
-  intake: {
-    border: "border-[rgba(15,168,106,0.22)]",
-    background: "bg-[linear-gradient(180deg,rgba(15,168,106,0.12),rgba(7,14,26,0.18))]",
-    label: "text-accent-green",
-    glow: "drop-shadow-[0_0_18px_rgba(15,168,106,0.18)]",
-    heroEyebrow: "border-accent-green/40 bg-accent-green/10 text-accent-green",
-    searchField: "border-accent-green/20 focus:border-accent-green focus:shadow-[0_0_0_1px_rgba(15,168,106,0.22),0_0_24px_rgba(15,168,106,0.12)]",
-    activeButton: "border-accent-green bg-accent-green text-white shadow-[0_12px_32px_rgba(15,168,106,0.18)]",
-    inactiveButton: "border-white/10 bg-white/5 text-slate-200 hover:border-accent-green",
-  },
+const STATUS_COLORS: Record<AccountRecord["status"], string> = {
+  active: "bg-emerald-400/15 text-emerald-300",
+  pending: "bg-amber-400/15 text-amber-300",
+  appeal: "bg-purple-400/15 text-purple-300",
+  denied: "bg-red-400/15 text-red-300",
 }
+
+const VARIANT_ACCENT: Record<Variant, { border: string; bg: string; text: string; kpi: string }> = {
+  os: { border: "border-cyan-400/30", bg: "bg-cyan-400/10", text: "text-cyan-200", kpi: "text-cyan-300" },
+  executive: { border: "border-blue-400/30", bg: "bg-blue-400/10", text: "text-blue-200", kpi: "text-blue-300" },
+  ceo: { border: "border-amber-400/30", bg: "bg-amber-400/10", text: "text-amber-200", kpi: "text-amber-300" },
+  intake: { border: "border-emerald-400/30", bg: "bg-emerald-400/10", text: "text-emerald-200", kpi: "text-emerald-300" },
+}
+
+const VARIANT_TITLES: Record<Variant, { title: string; subtitle: string }> = {
+  os: { title: "Operations Deck", subtitle: "Live OS" },
+  executive: { title: "Revenue Command", subtitle: "Executive" },
+  ceo: { title: "Enterprise View", subtitle: "CEO" },
+  intake: { title: "Intake Workspace", subtitle: "Intake" },
+}
+
+/* ── helpers ────────────────────────────────────────── */
+
+function cn(...values: Array<string | undefined | false>) {
+  return values.filter(Boolean).join(" ")
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value)
+}
+
+function sumColumnValues(col: KanbanColumn | undefined) {
+  if (!col) return 0
+  return col.cards.reduce((s, c) => {
+    const n = Number.parseFloat(c.value.replace(/[$,]/g, ""))
+    return s + (Number.isFinite(n) ? n : 0)
+  }, 0)
+}
+
+/* ── main shell ──────────────────────────────────────── */
 
 export default function DashboardShell({
   initialKPIs,
@@ -130,31 +108,7 @@ export default function DashboardShell({
   initialIntegrations = {},
   variant = "os",
 }: DashboardShellProps) {
-  const { data: session } = useSession()
-  const [accounts, setAccounts] = useState(initialAccounts)
-  const [kanbanColumns, setKanbanColumns] = useState(initialKanban)
-  const [patientSearch, setPatientSearch] = useState("")
-  const [prompt, setPrompt] = useState("")
-  const [tridentResponse, setTridentResponse] = useState(
-    "Run a queue, denial, or reimbursement check.",
-  )
-  const [queryLoading, setQueryLoading] = useState(false)
-  const displayIdentity =
-    session?.user?.name || session?.user?.email || "secured user"
-  const displayRole = session?.user?.role || "protected"
-  const canManageUsers =
-    session?.user?.role === "admin" || (session?.user?.permissions || []).includes("manage_users")
-  const navItems = [
-    { href: "/", label: "Live OS", sublabel: "Main board", active: variant === "os" },
-    { href: "/executive", label: "Executive Dashboard", sublabel: "Revenue view", active: variant === "executive" },
-    { href: "/ceo", label: "CEO Dashboard", sublabel: "Leadership view", active: variant === "ceo" },
-    { href: "/intake", label: "Patient Intake", sublabel: "Intake queue", active: variant === "intake" },
-    ...(canManageUsers
-      ? [{ href: "/settings", label: "Settings Admin", sublabel: "System controls", active: false }]
-      : []),
-  ]
-  const signatureTheme = signatureThemes[variant]
-
+  // OS variant → dedicated NeuralOsDashboard
   if (variant === "os") {
     return (
       <NeuralOsDashboard
@@ -169,457 +123,682 @@ export default function DashboardShell({
     )
   }
 
-  const normalizedSearch = patientSearch.trim().toLowerCase()
-  const filteredAccounts = normalizedSearch
-    ? accounts.filter((account) =>
-        [account.name, account.payer, account.id, account.type]
-          .filter(Boolean)
-          .some((value) => value.toLowerCase().includes(normalizedSearch)),
-      )
-    : accounts
+  // All other variants share this shell
+  return (
+    <VariantShell
+      variant={variant}
+      initialKPIs={initialKPIs}
+      initialPipeline={initialPipeline}
+      initialAccounts={initialAccounts}
+      initialSystemState={initialSystemState}
+      initialKanban={initialKanban}
+      initialCommunications={initialCommunications}
+      initialIntegrations={initialIntegrations}
+    />
+  )
+}
 
-  const filteredKanbanColumns = normalizedSearch
-    ? Object.fromEntries(
-        Object.entries(kanbanColumns).map(([key, column]) => [
-          key,
-          {
-            ...column,
-            cards: column.cards.filter((card) =>
-              [
-                card.title,
-                card.payer,
-                card.id,
-                card.type,
-                card.href,
-                ...(card.orderIds || []),
-              ]
-                .filter(Boolean)
-                .some((value) => String(value).toLowerCase().includes(normalizedSearch)),
-            ),
-          },
-        ]),
-      )
-    : kanbanColumns
+/* ── shared shell for exec/ceo/intake ───────────────── */
 
-  const kpiCards = [
-    {
-      label: "Clean Claim Rate",
-      value: `${initialKPIs.cleanClaimRate.value}%`,
-      supportingText: initialKPIs.cleanClaimRate.delta,
-      tone: "text-accent-green",
-    },
-    {
-      label: "Days in AR",
-      value: `${initialKPIs.daysInAR.value}`,
-      supportingText: initialKPIs.daysInAR.delta,
-      tone: "text-accent-blue",
-    },
-    {
-      label: "Appeal Win Rate",
-      value: `${initialKPIs.appealWinRate.value}%`,
-      supportingText: initialKPIs.appealWinRate.delta,
-      tone: "text-accent-gold-2",
-    },
-    {
-      label: "Outstanding Orders",
-      value: `${initialKPIs.outstandingOrders.value}`,
-      supportingText: `${initialKPIs.outstandingOrders.urgent} urgent`,
-      tone: "text-accent-red",
-    },
-  ]
+function VariantShell({
+  variant,
+  initialKPIs,
+  initialPipeline,
+  initialAccounts,
+  initialSystemState,
+  initialKanban,
+  initialCommunications,
+  initialIntegrations,
+}: Omit<DashboardShellProps, "variant"> & { variant: Variant; initialCommunications: Array<Record<string, unknown>>; initialIntegrations: Record<string, unknown> }) {
+  const { data: session } = useSession()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [search, setSearch] = useState("")
+  const [accounts, setAccounts] = useState(initialAccounts)
+  const [kanban, setKanban] = useState(initialKanban)
+  const [tridentOpen, setTridentOpen] = useState(false)
+  const [prompt, setPrompt] = useState("")
+  const [tridentResponse, setTridentResponse] = useState("Ask about queue status, denials, or reimbursement risk.")
+  const [queryLoading, setQueryLoading] = useState(false)
 
-  const systemCards = [
-    {
-      eyebrow: "System State",
-      title: initialSystemState.status,
-      details: [
-        `Services: ${initialSystemState.services.join(", ")}`,
-        `Ports: ${initialSystemState.ports}`,
-      ],
-      className: "border-accent-green/30 bg-accent-green/10",
-      eyebrowClassName: "text-accent-green",
-    },
-    {
-      eyebrow: "Operators",
-      title: initialSystemState.operators.join(", "),
-      details: [`Signed in as ${displayIdentity}`, `Role: ${displayRole}`],
-      className: "border-white/10 bg-navy-3/80",
-      eyebrowClassName: "text-slate-400",
-    },
-    {
-      eyebrow: "Session",
-      title: "Last Sync",
-      details: [new Date(initialSystemState.lastSync).toLocaleString()],
-      className: "border-white/10 bg-navy-3/80",
-      eyebrowClassName: "text-slate-400",
-    },
+  const userName = session?.user?.name || session?.user?.email || "Active Session"
+  const userRole = session?.user?.role || "admin"
+  const canManageUsers = session?.user?.role === "admin" || (session?.user?.permissions || []).includes("manage_users")
+  const accent = VARIANT_ACCENT[variant]
+  const titles = VARIANT_TITLES[variant]
+
+  const normalizedSearch = search.trim().toLowerCase()
+
+  const filteredAccounts = useMemo(() => {
+    if (!normalizedSearch) return accounts
+    return accounts.filter((a) =>
+      [a.name, a.payer, a.id, a.type, a.value].filter(Boolean).some((v) => v.toLowerCase().includes(normalizedSearch)),
+    )
+  }, [accounts, normalizedSearch])
+
+  const filteredKanban = useMemo(() => {
+    if (!normalizedSearch) return kanban
+    return Object.fromEntries(
+      Object.entries(kanban).map(([k, col]) => [
+        k,
+        {
+          ...col,
+          cards: col.cards.filter((c) =>
+            [c.title, c.payer, c.id, c.type, ...(c.orderIds || [])].filter(Boolean).some((v) => String(v).toLowerCase().includes(normalizedSearch)),
+          ),
+        },
+      ]),
+    )
+  }, [kanban, normalizedSearch])
+
+  const totalCards = PIPELINE_ORDER.reduce((s, k) => s + (kanban[k]?.cards.length || 0), 0)
+  const totalValue = PIPELINE_ORDER.reduce((s, k) => s + sumColumnValues(kanban[k]), 0)
+  const paidValue = sumColumnValues(kanban.paid)
+  const deniedCount = (kanban.denied?.cards.length || 0) + (kanban.appealed?.cards.length || 0)
+  const urgentCount = PIPELINE_ORDER.reduce((s, k) => s + (kanban[k]?.cards.filter((c) => c.priority === "high").length || 0), 0)
+  const blockedCount = PIPELINE_ORDER.reduce((s, k) => s + (kanban[k]?.cards.filter((c) => c.locked).length || 0), 0)
+  const collectionRate = totalValue > 0 ? Math.round((paidValue / totalValue) * 100) : 0
+
+  const navItems = [
+    { href: "/", label: "Live OS", active: variant === "os" },
+    { href: "/executive", label: "Executive", active: variant === "executive" },
+    { href: "/ceo", label: "CEO", active: variant === "ceo" },
+    { href: "/intake", label: "Intake", active: variant === "intake" },
+    ...(canManageUsers ? [{ href: "/settings", label: "Settings", active: false }] : []),
   ]
 
   async function handleTridentSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!prompt.trim()) return
-
     setQueryLoading(true)
     try {
       const result = await queryTrident(prompt, {
-        accounts: accounts.slice(0, 8).map((account) => ({
-          name: account.name,
-          payer: account.payer,
-          type: account.type,
-          value: account.value,
-        })),
-        pipeline: Object.fromEntries(
-          Object.entries(kanbanColumns).map(([key, column]) => [key, column.cards.length]),
-        ),
+        accounts: accounts.slice(0, 8).map((a) => ({ name: a.name, payer: a.payer, type: a.type, value: a.value })),
+        pipeline: Object.fromEntries(Object.entries(kanban).map(([k, col]) => [k, col.cards.length])),
       })
-      setTridentResponse(result.response || "Trident returned no response.")
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Unable to reach Trident."
-      setTridentResponse(message)
+      setTridentResponse(result.response || "No response.")
+    } catch (err) {
+      setTridentResponse(err instanceof Error ? err.message : "Unable to reach Trident.")
     } finally {
       setQueryLoading(false)
     }
   }
 
-  function handleLiveIngest(payload: {
-    patients: AccountRecord[]
-    cards: KanbanCard[]
-  }) {
+  function handleIngest(payload: { patients: AccountRecord[]; cards: KanbanCard[] }) {
     if (payload.patients.length) {
       setAccounts((prev) => {
         const merged = new Map<string, AccountRecord>()
-        for (const account of [...payload.patients, ...prev]) {
-          merged.set(account.id, account)
-        }
+        for (const a of [...payload.patients, ...prev]) merged.set(a.id, a)
         return Array.from(merged.values())
       })
     }
-
     if (payload.cards.length) {
-      setKanbanColumns((prev) => ({
+      setKanban((prev) => ({
         ...prev,
         pendingAuth: {
           ...prev.pendingAuth,
-          cards: Array.from(
-            new Map(
-              [...payload.cards, ...prev.pendingAuth.cards].map((card) => [card.id, card]),
-            ).values(),
-          ),
+          cards: Array.from(new Map([...payload.cards, ...prev.pendingAuth.cards].map((c) => [c.id, c])).values()),
         },
       }))
     }
   }
 
   return (
-    <PageShell>
-      <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="glass-panel-strong hud-outline rounded-[32px] p-4 sm:p-5">
-          <div className="rounded-[24px] border border-[rgba(142,197,255,0.18)] bg-[linear-gradient(180deg,rgba(119,188,255,0.16),rgba(17,35,68,0.22))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]">
-            <p className="text-[10px] uppercase tracking-[0.3em] text-accent-blue">Poseidon OS</p>
-            <p className="mt-2 font-display text-3xl uppercase tracking-[0.12em] text-white">Flight Deck</p>
-            <p className="mt-2 text-xs leading-5 text-slate-300">
-              Main operating shell
-            </p>
-          </div>
-
-          <div className={`mt-4 rounded-[24px] border px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)] ${signatureTheme.border} ${signatureTheme.background}`}>
-            <p className={`text-[10px] uppercase tracking-[0.34em] ${signatureTheme.label}`}>
-              Trident Signature
-            </p>
-            <p className={`mt-2 font-display text-2xl uppercase leading-[0.92] tracking-[0.12em] text-white ${signatureTheme.glow}`}>
-              Clinical.
-              <br />
-              Revenue.
-              <br />
-              Control.
-            </p>
-          </div>
-
-          <nav className="mt-4 grid gap-2">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                className={`rounded-[22px] border px-4 py-3 transition ${
-                  item.active
-                    ? "border-[rgba(118,243,255,0.28)] bg-[linear-gradient(180deg,rgba(118,243,255,0.12),rgba(26,110,245,0.08))] shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_10px_32px_rgba(5,12,25,0.24)]"
-                    : "border-white/10 bg-white/[0.045] hover:border-accent-blue/30 hover:bg-white/[0.08]"
-                }`}
-                href={item.href}
-              >
-                <p className={`text-sm font-semibold ${item.active ? "text-white" : "text-slate-200"}`}>{item.label}</p>
-                <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-slate-500">{item.sublabel}</p>
-              </Link>
-            ))}
-          </nav>
-
-          <div className="mt-4 grid gap-3 text-xs text-slate-300">
-            {systemCards.map((card, index) => (
-              <div
-                key={card.eyebrow}
-                className={`rounded-[24px] border p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] ${card.className}`}
-              >
-                <p className={`text-[10px] uppercase tracking-[0.3em] ${card.eyebrowClassName}`}>
-                  {card.eyebrow}
-                </p>
-                <p className="mt-2 text-lg font-semibold text-white">
-                  {card.title}
-                </p>
-                {card.details.map((detail) => (
-                  <p key={detail} className="mt-1 text-slate-300">
-                    {detail}
-                  </p>
-                ))}
-                {index === 2 && (
-                  <button
-                    className="mt-3 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-200 transition hover:border-accent-blue hover:text-white"
-                    onClick={() => signOut({ callbackUrl: "/login" })}
-                    type="button"
-                  >
-                    Sign out
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        </aside>
-
-        <div>
-          <HeroPanel
-            eyebrowClassName={signatureTheme.heroEyebrow}
-            eyebrow={
-              variant === "executive"
-                ? "Poseidon OS Executive Command"
-                : variant === "ceo"
-                  ? "Poseidon OS CEO Command"
-                  : variant === "intake"
-                    ? "Poseidon OS Intake Workspace"
-                    : "Poseidon OS Morning Command"
-            }
-            title={variant === "ceo" ? "Enterprise command." : variant === "executive" ? "Revenue command." : variant === "intake" ? "Patient intake." : "Live operating system."}
-            description={
-              variant === "executive"
-                ? "Executive KPIs, payment activity, and patient movement."
-                : variant === "ceo"
-                  ? "Organization status, queue pressure, and reimbursement exposure."
-                  : variant === "intake"
-                    ? "Intake status, patient movement, and worklist execution."
-                    : "Queue status, pressure points, and patient movement."
-            }
-            actions={
-              <>
-                <Link
-                  className={`rounded-2xl border px-4 py-3 text-sm transition ${signatureTheme.inactiveButton}`}
-                  href="/"
-                >
-                  Live OS
-                </Link>
-                <Link
-                  className={`rounded-2xl border px-4 py-3 text-sm transition ${
-                    variant === "executive"
-                      ? signatureTheme.activeButton
-                      : signatureTheme.inactiveButton
-                  }`}
-                  href="/executive"
-                >
-                  Executive Dashboard
-                </Link>
-                <Link
-                  className={`rounded-2xl border px-4 py-3 text-sm transition ${
-                    variant === "ceo"
-                      ? signatureTheme.activeButton
-                      : signatureTheme.inactiveButton
-                  }`}
-                  href="/ceo"
-                >
-                  CEO Dashboard
-                </Link>
-                <Link
-                  className={`rounded-2xl border px-4 py-3 text-sm transition ${
-                    variant === "intake"
-                      ? signatureTheme.activeButton
-                      : signatureTheme.inactiveButton
-                  }`}
-                  href="/intake"
-                >
-                  Patient Intake
-                </Link>
-              </>
-            }
-            className="mb-8"
-          />
-
-          <SectionCard className="mb-8">
-            <SectionHeading
-              eyebrow="Patient Search"
-              title="Find Any Patient Fast"
-              description="Search by patient name, payer, patient ID, order ID, or card title."
-            />
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
-              <input
-                className={`w-full rounded-[22px] border bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(10,16,28,0.18))] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 ${signatureTheme.searchField}`}
-                onChange={(e) => setPatientSearch(e.target.value)}
-                placeholder="Search Rosa Alvarez, Aetna, order ID, or chart card..."
-                type="search"
-                value={patientSearch}
-              />
-              <div className="rounded-[22px] border border-white/10 bg-white/[0.05] px-4 py-3 text-sm text-slate-300">
-                {normalizedSearch
-                  ? `${filteredAccounts.length} patient ${filteredAccounts.length === 1 ? "match" : "matches"}`
-                  : `${accounts.length} patients indexed`}
-              </div>
-            </div>
-          </SectionCard>
-
-          <div className="mb-8 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {kpiCards.map((kpi) => (
-          <div
-            key={kpi.label}
-            className="rounded-2xl border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-4"
+    <div className="min-h-screen text-white">
+      {/* ── Top Bar ──────────────────────────────── */}
+      <header className="sticky top-0 z-40 border-b border-white/8 bg-[rgba(8,16,28,0.92)] backdrop-blur-xl">
+        <div className="mx-auto flex max-w-[2200px] items-center gap-4 px-4 py-3">
+          <button
+            className="flex h-10 w-10 flex-col items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 transition hover:border-cyan-300/30 hover:bg-white/10"
+            onClick={() => setMenuOpen(true)}
+            type="button"
+            aria-label="Open menu"
           >
-            <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">
-              {kpi.label}
-            </p>
-            <div className="mt-3 flex items-end justify-between gap-3">
-              <p className="font-display text-4xl text-white">{kpi.value}</p>
-              <p className={`text-sm font-semibold ${kpi.tone}`}>{kpi.supportingText}</p>
+            <span className="block h-0.5 w-5 rounded-full bg-slate-300" />
+            <span className="block h-0.5 w-5 rounded-full bg-slate-300" />
+            <span className="block h-0.5 w-5 rounded-full bg-slate-300" />
+          </button>
+
+          <div className="mr-4 hidden sm:block">
+            <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-slate-500">Poseidon</p>
+            <p className="text-sm font-semibold text-white">{titles.title}</p>
+          </div>
+
+          <label className="flex flex-1 max-w-xl items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 transition focus-within:border-cyan-300/40 focus-within:bg-white/8">
+            <svg className="h-4 w-4 flex-shrink-0 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+            </svg>
+            <input
+              className="w-full bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search patient, payer, order..."
+              type="search"
+              value={search}
+            />
+          </label>
+
+          <div className="hidden items-center gap-3 lg:flex">
+            <span className="rounded-md bg-white/5 px-2 py-1 font-mono text-[11px] text-slate-300">{totalCards} cases</span>
+            <span className="rounded-md bg-white/5 px-2 py-1 font-mono text-[11px] text-slate-300">{formatCurrency(totalValue)}</span>
+            {urgentCount > 0 && <span className="rounded-md bg-red-400/15 px-2 py-1 font-mono text-[11px] text-red-300">{urgentCount} urgent</span>}
+          </div>
+
+          <button
+            className={cn(
+              "rounded-lg border px-3 py-2 text-xs font-medium transition",
+              tridentOpen ? `${accent.border} ${accent.bg} ${accent.text}` : "border-white/10 bg-white/5 text-slate-300 hover:text-white",
+            )}
+            onClick={() => setTridentOpen((p) => !p)}
+            type="button"
+          >
+            Trident AI
+          </button>
+
+          <div className="hidden items-center gap-2 md:flex">
+            <div className="text-right">
+              <p className="text-xs font-medium text-white">{userName}</p>
+              <p className="font-mono text-[10px] text-slate-500">{String(userRole)}</p>
             </div>
           </div>
-        ))}
-          </div>
+        </div>
+      </header>
 
-          <section className="grid gap-6 2xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.95fr)]">
-        <div className="space-y-6">
-          {variant === "intake" && <LiveIngestDropzone onIngested={handleLiveIngest} />}
-
-          <SectionCard className="backdrop-blur">
-            <SectionHeading
-              eyebrow="Worklist Lanes"
-              title="Operational Queue"
-              description={
-                variant === "executive"
-                  ? "Cross-stage visibility including paid movement"
-                  : "Pipeline totals and intake status"
-              }
-            />
-
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-              {pipelineOrder.map((key) => (
-                <MetricCard
-                  key={key}
-                  className={pipelineAccents[key]}
-                  label={
-                    key === "pendingAuth"
-                      ? "Pending Auth"
-                      : key.charAt(0).toUpperCase() + key.slice(1)
-                  }
-                  value={`${initialPipeline[key].count}`}
-                  supportingText={initialPipeline[key].value}
-                />
+      {/* ── Hamburger Menu ───────────────────────── */}
+      {menuOpen && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMenuOpen(false)} />
+          <aside className="absolute left-0 top-0 h-full w-72 border-r border-white/10 bg-[#0a1420] p-5 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-slate-500">Poseidon OS</p>
+                <p className="mt-1 text-lg font-semibold text-white">Navigation</p>
+              </div>
+              <button
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-slate-400 transition hover:text-white"
+                onClick={() => setMenuOpen(false)}
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+            <nav className="space-y-1">
+              {navItems.map((item) => (
+                <Link
+                  key={item.href}
+                  className={cn(
+                    "block rounded-lg px-3 py-2.5 text-sm transition",
+                    item.active ? `${accent.bg} ${accent.text} font-medium` : "text-slate-300 hover:bg-white/5 hover:text-white",
+                  )}
+                  href={item.href}
+                  onClick={() => setMenuOpen(false)}
+                >
+                  {item.label}
+                </Link>
               ))}
+            </nav>
+            <div className="mt-8 space-y-3">
+              <div className="rounded-lg border border-white/8 bg-white/[0.03] p-3">
+                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">System</p>
+                <p className="mt-1 text-sm text-emerald-300">{initialSystemState.status}</p>
+                <p className="mt-1 text-xs text-slate-400">Services: {initialSystemState.services.join(", ")}</p>
+              </div>
+              <div className="rounded-lg border border-white/8 bg-white/[0.03] p-3">
+                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Pipeline</p>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  {PIPELINE_ORDER.map((k) => (
+                    <div key={k} className="flex items-center justify-between">
+                      <span className="text-slate-400">{COLUMN_LABELS[k]}</span>
+                      <span className="text-white">{kanban[k]?.cards.length || 0}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
-          </SectionCard>
+            <button
+              className="mt-8 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-slate-300 transition hover:border-red-400/30 hover:text-red-300"
+              onClick={() => signOut({ callbackUrl: "/login" })}
+              type="button"
+            >
+              Sign out
+            </button>
+          </aside>
+        </div>
+      )}
 
-          <SectionCard className="bg-navy-2/80">
-            <SectionHeading
-              eyebrow="Kanban Worklist"
-              title="Drag And Drop Queue"
-              description="Live worklist rendered from production orders"
-            />
+      {/* ── Variant Content ──────────────────────── */}
+      {variant === "executive" && (
+        <ExecutiveContent
+          kpis={initialKPIs}
+          pipeline={initialPipeline}
+          accounts={filteredAccounts}
+          kanban={filteredKanban}
+          totalValue={totalValue}
+          paidValue={paidValue}
+          deniedCount={deniedCount}
+          collectionRate={collectionRate}
+          accent={accent}
+        />
+      )}
 
-            <KanbanBoard initialColumns={filteredKanbanColumns} />
-          </SectionCard>
+      {variant === "ceo" && (
+        <CeoContent
+          kpis={initialKPIs}
+          accounts={filteredAccounts}
+          kanban={kanban}
+          totalCards={totalCards}
+          totalValue={totalValue}
+          paidValue={paidValue}
+          collectionRate={collectionRate}
+          urgentCount={urgentCount}
+          blockedCount={blockedCount}
+          accent={accent}
+        />
+      )}
+
+      {variant === "intake" && (
+        <IntakeContent
+          kpis={initialKPIs}
+          pipeline={initialPipeline}
+          accounts={filteredAccounts}
+          kanban={filteredKanban}
+          communications={initialCommunications}
+          integrations={initialIntegrations}
+          onIngest={handleIngest}
+          blockedCount={blockedCount}
+          accent={accent}
+        />
+      )}
+
+      {/* ── Trident Bar ──────────────────────────── */}
+      {tridentOpen && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-[rgba(8,16,28,0.96)] backdrop-blur-xl">
+          <div className="mx-auto max-w-[2200px] px-4 py-4">
+            <div className="flex items-start gap-4">
+              <div className="flex-1">
+                <form className="flex gap-3" onSubmit={handleTridentSubmit}>
+                  <input
+                    className="flex-1 rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40"
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="Ask Trident: which queue needs attention? highest reimbursement risk?"
+                    value={prompt}
+                  />
+                  <button
+                    className={cn("rounded-lg border px-4 py-2.5 text-xs font-semibold transition hover:opacity-80 disabled:opacity-50", accent.border, accent.bg, accent.text)}
+                    disabled={queryLoading}
+                    type="submit"
+                  >
+                    {queryLoading ? "Running..." : "Ask"}
+                  </button>
+                </form>
+              </div>
+              <div className="w-px self-stretch bg-white/10" />
+              <div className="max-h-24 min-w-[300px] max-w-md overflow-y-auto text-sm leading-6 text-slate-300">
+                {tridentResponse}
+              </div>
+              <button className="rounded-lg border border-white/10 px-2 py-2 text-xs text-slate-400 hover:text-white" onClick={() => setTridentOpen(false)} type="button">✕</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ══════════════════════════════════════════════════════
+   EXECUTIVE — Revenue focus
+   ══════════════════════════════════════════════════════ */
+
+function ExecutiveContent({
+  kpis,
+  pipeline,
+  accounts,
+  kanban,
+  totalValue,
+  paidValue,
+  deniedCount,
+  collectionRate,
+  accent,
+}: {
+  kpis: DashboardShellProps["initialKPIs"]
+  pipeline: DashboardShellProps["initialPipeline"]
+  accounts: AccountRecord[]
+  kanban: Record<string, KanbanColumn>
+  totalValue: number
+  paidValue: number
+  deniedCount: number
+  collectionRate: number
+  accent: typeof VARIANT_ACCENT.executive
+}) {
+  return (
+    <>
+      {/* KPI strip */}
+      <div className="border-b border-white/5 bg-[rgba(8,16,28,0.6)]">
+        <div className="mx-auto flex max-w-[2200px] items-center gap-6 overflow-x-auto px-4 py-2.5">
+          <KpiChip label="Pipeline Value" value={formatCurrency(totalValue)} sub={`${Object.values(pipeline).reduce((s, p) => s + p.count, 0)} orders`} color="text-blue-300" />
+          <KpiChip label="Collected" value={formatCurrency(paidValue)} sub={`${collectionRate}% rate`} color="text-emerald-300" />
+          <KpiChip label="Denied / Appealed" value={`${deniedCount}`} sub={kpis.cleanClaimRate.delta} color="text-red-300" />
+          <KpiChip label="Appeal Win" value={`${kpis.appealWinRate.value}%`} sub={kpis.appealWinRate.delta} color="text-amber-300" />
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-[2200px] px-4 py-4 space-y-6">
+        {/* Pipeline summary bar */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {PIPELINE_ORDER.map((k) => (
+            <div key={k} className="rounded-lg border border-white/8 bg-[rgba(255,255,255,0.025)] p-3">
+              <div className="flex items-center gap-2">
+                <span className={cn("h-2 w-2 rounded-full", COLUMN_DOT[k])} />
+                <span className="text-xs font-medium text-white">{COLUMN_LABELS[k]}</span>
+              </div>
+              <p className="mt-2 text-xl font-semibold text-white">{pipeline[k]?.count || 0}</p>
+              <p className="text-xs text-slate-500">{pipeline[k]?.value || "$0"}</p>
+            </div>
+          ))}
         </div>
 
-        <aside className="space-y-6">
-          <SectionCard className="bg-[linear-gradient(180deg,rgba(12,20,36,0.95),rgba(7,12,24,0.95))]">
-            <SectionHeading
-              eyebrow="Patients"
-              title={
-                variant === "executive"
-                  ? "Executive Patient Snapshot"
-                  : "Consolidated Patient Cards"
-              }
-              description="Patients with the highest current workflow relevance."
-            />
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 2xl:grid-cols-1">
-              {filteredAccounts.map((account) => (
-                <Link
-                  key={account.id}
-                  href={account.href || "/intake"}
-                  className="rounded-2xl border border-white/10 bg-white/5 p-4 transition hover:border-accent-blue/40 hover:bg-white/[0.07]"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-white">
-                        {account.name}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-400">
-                        {account.id} · {account.payer} · {account.type}
-                      </p>
-                    </div>
-                    <span
-                      className={`rounded-full px-2 py-1 text-[10px] uppercase tracking-[0.18em] ${statusAccents[account.status]}`}
-                    >
-                      {account.status}
-                    </span>
-                  </div>
-                  <p className="mt-3 text-lg font-semibold text-accent-gold-2">
-                    {account.value}
-                  </p>
-                </Link>
-              ))}
-              {!filteredAccounts.length ? (
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-500">
-                  No patients matched that search yet.
+        {/* Revenue by payer */}
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-white">Revenue by Payer</h2>
+          <PayerBreakdown accounts={accounts} />
+        </section>
+
+        {/* Patient roster sorted by value */}
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-white">Patient Roster — {accounts.length} patients</h2>
+          <PatientTable accounts={accounts} />
+        </section>
+      </div>
+    </>
+  )
+}
+
+/* ══════════════════════════════════════════════════════
+   CEO — Enterprise overview
+   ══════════════════════════════════════════════════════ */
+
+function CeoContent({
+  kpis,
+  accounts,
+  kanban,
+  totalCards,
+  totalValue,
+  paidValue,
+  collectionRate,
+  urgentCount,
+  blockedCount,
+  accent,
+}: {
+  kpis: DashboardShellProps["initialKPIs"]
+  accounts: AccountRecord[]
+  kanban: Record<string, KanbanColumn>
+  totalCards: number
+  totalValue: number
+  paidValue: number
+  collectionRate: number
+  urgentCount: number
+  blockedCount: number
+  accent: typeof VARIANT_ACCENT.ceo
+}) {
+  const allCards = PIPELINE_ORDER.flatMap((k) => kanban[k]?.cards || [])
+  const bizLines = ["dme", "implants", "biologics", "matia"] as const
+  const bizData = bizLines.map((bl) => {
+    const cards = allCards.filter((c) => c.businessLine === bl)
+    const value = cards.reduce((s, c) => {
+      const n = Number.parseFloat(c.value.replace(/[$,]/g, ""))
+      return s + (Number.isFinite(n) ? n : 0)
+    }, 0)
+    return { id: bl, label: bl === "dme" ? "DME" : bl.charAt(0).toUpperCase() + bl.slice(1), count: cards.length, value }
+  })
+
+  const completionRate = totalCards > 0 ? Math.round(((kanban.paid?.cards.length || 0) / totalCards) * 100) : 0
+
+  return (
+    <>
+      {/* KPI strip */}
+      <div className="border-b border-white/5 bg-[rgba(8,16,28,0.6)]">
+        <div className="mx-auto flex max-w-[2200px] items-center gap-6 overflow-x-auto px-4 py-2.5">
+          <KpiChip label="Total Pipeline" value={formatCurrency(totalValue)} sub={`${totalCards} cases`} color="text-amber-300" />
+          <KpiChip label="Collected" value={formatCurrency(paidValue)} sub={`${collectionRate}% collected`} color="text-emerald-300" />
+          <KpiChip label="Completion" value={`${completionRate}%`} sub={`${kanban.paid?.cards.length || 0} resolved`} color="text-blue-300" />
+          <KpiChip label="Risk Items" value={`${urgentCount + blockedCount}`} sub={`${urgentCount} urgent · ${blockedCount} blocked`} color="text-red-300" />
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-[2200px] px-4 py-4 space-y-6">
+        {/* Business line cards */}
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-white">Business Lines</h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {bizData.map((bl) => (
+              <div key={bl.id} className="rounded-lg border border-white/8 bg-[rgba(255,255,255,0.025)] p-4">
+                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{bl.label}</p>
+                <p className="mt-2 text-2xl font-semibold text-white">{bl.count}</p>
+                <p className="mt-1 text-sm text-slate-400">{formatCurrency(bl.value)}</p>
+                <div className="mt-3 h-1.5 rounded-full bg-white/5">
+                  <div
+                    className="h-full rounded-full bg-amber-400/60"
+                    style={{ width: `${totalCards > 0 ? Math.round((bl.count / totalCards) * 100) : 0}%` }}
+                  />
                 </div>
-              ) : null}
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Pipeline funnel */}
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-white">Pipeline Funnel</h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {PIPELINE_ORDER.map((k) => {
+              const count = kanban[k]?.cards.length || 0
+              const value = sumColumnValues(kanban[k])
+              return (
+                <div key={k} className="rounded-lg border border-white/8 bg-[rgba(255,255,255,0.025)] p-3">
+                  <div className="flex items-center gap-2">
+                    <span className={cn("h-2 w-2 rounded-full", COLUMN_DOT[k])} />
+                    <span className="text-xs font-medium text-white">{COLUMN_LABELS[k]}</span>
+                  </div>
+                  <p className="mt-2 text-xl font-semibold text-white">{count}</p>
+                  <p className="text-xs text-slate-500">{formatCurrency(value)}</p>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        {/* Top patients by value */}
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-white">Top Patients by Value</h2>
+          <PatientTable accounts={accounts} />
+        </section>
+      </div>
+    </>
+  )
+}
+
+/* ══════════════════════════════════════════════════════
+   INTAKE — Operational intake workspace
+   ══════════════════════════════════════════════════════ */
+
+function IntakeContent({
+  kpis,
+  pipeline,
+  accounts,
+  kanban,
+  communications,
+  integrations,
+  onIngest,
+  blockedCount,
+  accent,
+}: {
+  kpis: DashboardShellProps["initialKPIs"]
+  pipeline: DashboardShellProps["initialPipeline"]
+  accounts: AccountRecord[]
+  kanban: Record<string, KanbanColumn>
+  communications: Array<Record<string, unknown>>
+  integrations: Record<string, unknown>
+  onIngest: (payload: { patients: AccountRecord[]; cards: KanbanCard[] }) => void
+  blockedCount: number
+  accent: typeof VARIANT_ACCENT.intake
+}) {
+  const pendingCount = kanban.pendingAuth?.cards.length || 0
+  const authCount = kanban.authorized?.cards.length || 0
+  const ordersToPlace = pendingCount + authCount
+
+  return (
+    <>
+      {/* KPI strip */}
+      <div className="border-b border-white/5 bg-[rgba(8,16,28,0.6)]">
+        <div className="mx-auto flex max-w-[2200px] items-center gap-6 overflow-x-auto px-4 py-2.5">
+          <KpiChip label="Pending Auth" value={`${pendingCount}`} sub="awaiting authorization" color="text-amber-300" />
+          <KpiChip label="Orders to Place" value={`${ordersToPlace}`} sub="intake + authorized" color="text-cyan-300" />
+          <KpiChip label="Blocked" value={`${blockedCount}`} sub="verification needed" color="text-red-300" />
+          <KpiChip label="Total Queue" value={`${kpis.outstandingOrders.value}`} sub={`${kpis.outstandingOrders.urgent} urgent`} color="text-emerald-300" />
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-[2200px] px-4 py-4 space-y-6">
+        {/* CSV Ingest */}
+        <LiveIngestDropzone onIngested={onIngest} />
+
+        {/* Pipeline summary */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {PIPELINE_ORDER.map((k) => (
+            <div key={k} className="rounded-lg border border-white/8 bg-[rgba(255,255,255,0.025)] p-3">
+              <div className="flex items-center gap-2">
+                <span className={cn("h-2 w-2 rounded-full", COLUMN_DOT[k])} />
+                <span className="text-xs font-medium text-white">{COLUMN_LABELS[k]}</span>
+              </div>
+              <p className="mt-2 text-xl font-semibold text-white">{pipeline[k]?.count || 0}</p>
+              <p className="text-xs text-slate-500">{pipeline[k]?.value || "$0"}</p>
             </div>
-          </SectionCard>
+          ))}
+        </div>
 
-          <SectionCard>
-            <SectionHeading
-              eyebrow="Communications"
-              title="Team Feed"
-              description="Integration status and in-app order updates."
-            />
-            <CommunicationsPanel
-              initialItems={initialCommunications}
-              integrations={initialIntegrations}
-            />
-          </SectionCard>
+        {/* Kanban worklist */}
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-white">Intake Worklist</h2>
+          <KanbanBoard initialColumns={kanban} />
+        </section>
 
-          <SectionCard>
-            <SectionHeading
-              eyebrow="Trident Intelligence"
-              title="Query Engine"
-              description="Checks against the live queue."
-            />
-
-            <form className="mt-5 space-y-3" onSubmit={handleTridentSubmit}>
-              <textarea
-                className="min-h-[140px] w-full rounded-2xl border border-white/10 bg-black/10 p-4 text-sm text-slate-200 outline-none transition placeholder:text-slate-500 focus:border-accent-blue"
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Which queue needs attention first?"
-                value={prompt}
-              />
-              <button
-                className="w-full rounded-2xl bg-accent-blue px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#1459c9] disabled:cursor-not-allowed disabled:bg-[#0f3a7a]"
-                disabled={queryLoading}
-                type="submit"
-              >
-                {queryLoading ? "Running check..." : "Run Trident"}
-              </button>
-            </form>
-
-            <div className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-4 text-sm leading-6 text-slate-300">
-              {tridentResponse}
+        {/* Patient list + Communications side by side */}
+        <div className="grid gap-6 xl:grid-cols-2">
+          <section>
+            <h2 className="mb-3 text-sm font-semibold text-white">Patients — {accounts.length}</h2>
+            <PatientTable accounts={accounts} />
+          </section>
+          <section>
+            <h2 className="mb-3 text-sm font-semibold text-white">Communications</h2>
+            <div className="rounded-lg border border-white/8 bg-[rgba(255,255,255,0.025)] p-4">
+              <CommunicationsPanel initialItems={communications} integrations={integrations} />
             </div>
-          </SectionCard>
-        </aside>
           </section>
         </div>
       </div>
-    </PageShell>
+    </>
+  )
+}
+
+/* ══════════════════════════════════════════════════════
+   SHARED COMPONENTS
+   ══════════════════════════════════════════════════════ */
+
+function KpiChip({ label, value, sub, color }: { label: string; value: string; sub: string; color: string }) {
+  return (
+    <div className="flex flex-shrink-0 items-center gap-3">
+      <div>
+        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">{label}</p>
+        <p className={cn("text-lg font-semibold leading-tight", color)}>{value}</p>
+      </div>
+      <span className="text-[11px] text-slate-500">{sub}</span>
+    </div>
+  )
+}
+
+function PatientTable({ accounts }: { accounts: AccountRecord[] }) {
+  const sorted = useMemo(() => {
+    return [...accounts].sort((a, b) => {
+      const av = Number.parseFloat(a.value.replace(/[$,]/g, "")) || 0
+      const bv = Number.parseFloat(b.value.replace(/[$,]/g, "")) || 0
+      return bv - av
+    })
+  }, [accounts])
+
+  if (!sorted.length) {
+    return <div className="rounded-lg border border-white/8 bg-white/[0.02] p-4 text-sm text-slate-500">No patients matched.</div>
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-white/8">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-white/5 bg-[rgba(255,255,255,0.02)]">
+            <th className="px-3 py-2.5 text-left text-[10px] font-medium uppercase tracking-[0.2em] text-slate-500">Patient</th>
+            <th className="px-3 py-2.5 text-left text-[10px] font-medium uppercase tracking-[0.2em] text-slate-500">Payer</th>
+            <th className="px-3 py-2.5 text-left text-[10px] font-medium uppercase tracking-[0.2em] text-slate-500">Type</th>
+            <th className="px-3 py-2.5 text-left text-[10px] font-medium uppercase tracking-[0.2em] text-slate-500">Status</th>
+            <th className="px-3 py-2.5 text-right text-[10px] font-medium uppercase tracking-[0.2em] text-slate-500">Value</th>
+            <th className="px-3 py-2.5 text-right text-[10px] font-medium uppercase tracking-[0.2em] text-slate-500">Orders</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((a) => (
+            <tr key={a.id} className="border-b border-white/[0.03] transition hover:bg-white/[0.02]">
+              <td className="px-3 py-2.5">
+                <Link href={a.href || "/intake"} className="text-sm font-medium text-white hover:text-cyan-200 transition">
+                  {a.name}
+                </Link>
+                <p className="text-[10px] text-slate-500">{a.id}</p>
+              </td>
+              <td className="px-3 py-2.5 text-slate-300">{a.payer}</td>
+              <td className="px-3 py-2.5 text-slate-400 text-xs">{a.type}</td>
+              <td className="px-3 py-2.5">
+                <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium uppercase", STATUS_COLORS[a.status])}>
+                  {a.status}
+                </span>
+              </td>
+              <td className="px-3 py-2.5 text-right font-medium text-white">{a.value}</td>
+              <td className="px-3 py-2.5 text-right text-slate-400">{a.orderCount || 1}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function PayerBreakdown({ accounts }: { accounts: AccountRecord[] }) {
+  const payers = useMemo(() => {
+    const map = new Map<string, { count: number; value: number }>()
+    for (const a of accounts) {
+      const existing = map.get(a.payer) || { count: 0, value: 0 }
+      existing.count += a.orderCount || 1
+      existing.value += Number.parseFloat(a.value.replace(/[$,]/g, "")) || 0
+      map.set(a.payer, existing)
+    }
+    return Array.from(map.entries())
+      .map(([payer, data]) => ({ payer, ...data }))
+      .sort((a, b) => b.value - a.value)
+  }, [accounts])
+
+  const maxValue = payers[0]?.value || 1
+
+  return (
+    <div className="space-y-2">
+      {payers.map((p) => (
+        <div key={p.payer} className="rounded-lg border border-white/8 bg-[rgba(255,255,255,0.025)] p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <span className="text-sm font-medium text-white">{p.payer}</span>
+              <span className="ml-2 text-xs text-slate-500">{p.count} orders</span>
+            </div>
+            <span className="text-sm font-semibold text-white">{formatCurrency(p.value)}</span>
+          </div>
+          <div className="h-1.5 rounded-full bg-white/5">
+            <div className="h-full rounded-full bg-blue-400/50" style={{ width: `${Math.round((p.value / maxValue) * 100)}%` }} />
+          </div>
+        </div>
+      ))}
+      {!payers.length && <div className="text-sm text-slate-500">No payer data available.</div>}
+    </div>
   )
 }
