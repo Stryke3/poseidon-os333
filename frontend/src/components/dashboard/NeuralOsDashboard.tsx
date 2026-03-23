@@ -583,7 +583,7 @@ function KpiChip({ label, value, sub, color }: { label: string; value: string; s
   )
 }
 
-/* ── Patient Card ───────────────────────────────────── */
+/* ── Patient Card (3D Flip) ──────────────────────────── */
 
 function PatientCard({
   card,
@@ -600,111 +600,154 @@ function PatientCard({
   onDragStart: () => void
   onDragEnd: () => void
 }) {
+  const orderId = card.orderIds?.[0] || card.id
+
   return (
     <div
-      className={cn(
-        "rounded-lg border bg-[rgba(255,255,255,0.035)] transition cursor-pointer select-none",
-        card.locked ? "border-amber-400/25" : "border-white/8",
-        expanded && "border-cyan-300/30 bg-[rgba(255,255,255,0.055)]",
-      )}
-      draggable
-      onClick={onToggle}
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = "move"
-        onDragStart()
-      }}
+      className="select-none [perspective:900px]"
+      style={{ minHeight: expanded ? 340 : undefined }}
+      draggable={!expanded}
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; onDragStart() }}
       onDragEnd={onDragEnd}
     >
-      {/* Compact view — always visible */}
-      <div className="px-3 py-2.5">
-        <div className="flex items-start justify-between gap-2">
-          <p className="text-sm font-medium text-white leading-tight">{card.title}</p>
-          <span className={cn("flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase", PRIORITY_STYLES[card.priority])}>
-            {card.priority === "high" ? "URG" : card.priority === "med" ? "MED" : "LOW"}
-          </span>
-        </div>
-
-        <p className="mt-1 text-xs text-slate-400 leading-tight">{card.payer}</p>
-
-        <div className="mt-2 flex items-center justify-between">
-          <span className="text-sm font-semibold text-white">{card.value}</span>
-          <span className="text-[10px] text-slate-500">{formatDateLabel(card.due)}</span>
-        </div>
-
-        {card.locked && (
-          <div className="mt-2 flex items-center gap-1.5 rounded bg-amber-400/10 px-2 py-1 text-[10px] text-amber-300">
-            <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-            </svg>
-            Blocked
-          </div>
-        )}
-      </div>
-
-      {/* Expanded view — details + documents */}
-      {expanded && (
-        <div className="border-t border-white/5 px-3 py-3 space-y-3" onClick={(e) => e.stopPropagation()}>
-          {/* Info rows */}
-          <div className="grid gap-1.5 text-xs">
-            <div className="flex justify-between">
-              <span className="text-slate-500">Type</span>
-              <span className="text-slate-200">{card.type}</span>
+      <div
+        className="relative w-full transition-transform duration-500 [transform-style:preserve-3d]"
+        style={{ transform: expanded ? "rotateY(180deg)" : "rotateY(0deg)", minHeight: expanded ? 340 : undefined }}
+      >
+        {/* ── FRONT: Compact card ── */}
+        <div
+          className={cn(
+            "rounded-lg border bg-[rgba(255,255,255,0.035)] cursor-pointer [backface-visibility:hidden]",
+            card.locked ? "border-amber-400/25" : "border-white/8",
+          )}
+          style={{ backfaceVisibility: "hidden" }}
+          onClick={onToggle}
+        >
+          <div className="px-3 py-2.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-white leading-tight">{card.title}</p>
+              <span className={cn("flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase", PRIORITY_STYLES[card.priority])}>
+                {card.priority === "high" ? "URG" : card.priority === "med" ? "MED" : "LOW"}
+              </span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Assignee</span>
-              <span className="text-slate-200">{card.assignee}</span>
+            <p className="mt-1 text-xs text-slate-400 leading-tight">{card.payer}</p>
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-sm font-semibold text-white">{card.value}</span>
+              <span className="text-[10px] text-slate-500">{formatDateLabel(card.due)}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Orders</span>
-              <span className="text-slate-200">{card.orderCount || card.orderIds?.length || 1}</span>
-            </div>
-            {card.locked && card.lockReason && (
-              <div className="mt-1 rounded bg-amber-400/8 px-2 py-1.5 text-[11px] text-amber-200 leading-relaxed">
-                {card.lockReason}
+            {card.locked && (
+              <div className="mt-2 flex items-center gap-1.5 rounded bg-amber-400/10 px-2 py-1 text-[10px] text-amber-300">
+                <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                </svg>
+                Blocked
               </div>
             )}
-          </div>
-
-          {/* Document links */}
-          <div>
-            <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Documents</p>
-            <div className="flex flex-wrap gap-1.5">
-              <DocPill label="SWO" href={`/api/documents/swo/${card.orderIds?.[0] || card.id}`} />
-              <DocPill label="CMS-1500" href={`/api/documents/cms1500/${card.orderIds?.[0] || card.id}`} />
-              <DocPill label="EOB" href={`/api/documents/eob/${card.orderIds?.[0] || card.id}`} />
-              {columnId === "paid" && (
-                <DocPill label="POD" href={`/api/documents/pod/${card.orderIds?.[0] || card.id}`} />
-              )}
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-2">
-            <Link
-              className="flex-1 rounded-md border border-cyan-400/25 bg-cyan-400/10 py-2 text-center text-[11px] font-medium text-cyan-200 transition hover:bg-cyan-400/20"
-              href={card.href || "/intake"}
-            >
-              Open Chart
-            </Link>
+            <p className="mt-2 text-center font-mono text-[9px] uppercase tracking-[0.18em] text-slate-600">Click to open chart</p>
           </div>
         </div>
-      )}
+
+        {/* ── BACK: Full chart with PDFs ── */}
+        <div
+          className="absolute inset-0 rounded-lg border border-cyan-400/20 bg-[linear-gradient(160deg,rgba(4,10,22,0.98),rgba(9,18,35,0.98))] [backface-visibility:hidden]"
+          style={{ transform: "rotateY(180deg)", backfaceVisibility: "hidden" }}
+        >
+          <div className="flex h-full flex-col p-3">
+            {/* Chart header */}
+            <div className="flex items-start justify-between gap-2 border-b border-white/8 pb-2.5">
+              <div className="min-w-0">
+                <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-cyan-300">Patient Chart</p>
+                <p className="mt-1 text-sm font-semibold text-white truncate">{card.title}</p>
+                <p className="text-[11px] text-slate-400">{card.payer} · {card.type}</p>
+              </div>
+              <button
+                className="flex-shrink-0 rounded border border-white/10 px-2 py-1 text-[10px] text-slate-400 transition hover:text-white"
+                onClick={onToggle}
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Chart details */}
+            <div className="mt-2.5 grid gap-1.5 text-[11px]">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Value</span>
+                <span className="font-semibold text-white">{card.value}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Assignee</span>
+                <span className="text-slate-200">{card.assignee}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Orders</span>
+                <span className="text-slate-200">{card.orderCount || card.orderIds?.length || 1}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Due</span>
+                <span className="text-slate-200">{formatDateLabel(card.due)}</span>
+              </div>
+              {card.locked && (
+                <div className="rounded bg-amber-400/8 px-2 py-1 text-[10px] text-amber-200">
+                  {card.lockReason || "Blocked — verification required"}
+                </div>
+              )}
+            </div>
+
+            {/* PDF Attachments */}
+            <div className="mt-3">
+              <p className="mb-2 font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500">Documents &amp; PDFs</p>
+              <div className="grid gap-1.5">
+                <DocRow icon="📄" label="Signed Work Order (SWO)" href={`/api/documents/swo/${orderId}`} />
+                <DocRow icon="📋" label="CMS-1500 Claim Form" href={`/api/documents/cms1500/${orderId}`} />
+                <DocRow icon="📑" label="Explanation of Benefits" href={`/api/documents/eob/${orderId}`} />
+                {(columnId === "paid" || columnId === "submitted") && (
+                  <DocRow icon="🚚" label="Proof of Delivery" href={`/api/documents/pod/${orderId}`} />
+                )}
+                <DocRow icon="📝" label="Clinical Notes" href={`/api/patients/${card.patientId}/chart`} />
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="mt-auto flex gap-2 pt-3">
+              <Link
+                className="flex-1 rounded-md border border-cyan-400/25 bg-cyan-400/10 py-2 text-center text-[10px] font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
+                href={card.href || `/patients/${card.patientId}`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                Full Record
+              </Link>
+              <button
+                className="flex-1 rounded-md border border-white/10 bg-white/5 py-2 text-[10px] font-semibold text-slate-300 transition hover:text-white"
+                onClick={onToggle}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
 
-/* ── Doc Pill ───────────────────────────────────────── */
+/* ── Doc Row (chart back) ───────────────────────────── */
 
-function DocPill({ label, href }: { label: string; href: string }) {
+function DocRow({ icon, label, href }: { icon: string; label: string; href: string }) {
   return (
     <a
-      className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] font-medium text-slate-300 transition hover:border-cyan-300/30 hover:text-cyan-200"
+      className="flex items-center gap-2 rounded border border-white/8 bg-white/[0.02] px-2.5 py-2 text-[11px] text-slate-300 transition hover:border-cyan-300/25 hover:bg-white/[0.04] hover:text-cyan-200"
       href={href}
       onClick={(e) => e.stopPropagation()}
       target="_blank"
       rel="noreferrer"
     >
-      {label}
+      <span className="text-sm">{icon}</span>
+      <span className="flex-1 truncate">{label}</span>
+      <svg className="h-3 w-3 flex-shrink-0 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+      </svg>
     </a>
   )
 }
