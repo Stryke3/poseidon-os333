@@ -20,12 +20,15 @@ from pydantic import BaseModel
 
 from app.database import get_db, get_db_transaction, audit_log, to_json
 from app.builders.claim_837p import fetch_claim_data, build_837p_payload
+from app.builders.x12_837p import generate_837p
 from app.clients.stedi import stedi_client
+from app.clients.availity_sftp import availity_sftp
 
 log = logging.getLogger("edi.routes.claims")
 router = APIRouter(prefix="/api/v1/claims", tags=["837P Claims"])
 
 DRY_RUN = False  # set from env in main.py
+SUBMISSION_METHOD = "availity_sftp"  # set from env in main.py: availity_sftp or stedi_api
 
 
 class BatchSubmitRequest(BaseModel):
@@ -40,7 +43,7 @@ class SubmissionResponse(BaseModel):
     errors: Optional[list] = None
 
 
-# ─── PRE-SUBMISSION VALIDATION ───────────────────────────────────────────────
+# --- PRE-SUBMISSION VALIDATION ---
 
 async def _validate_order_for_submission(order_id: str, conn) -> list:
     """Check all required fields exist before building 837P."""
@@ -106,13 +109,13 @@ async def _validate_order_for_submission(order_id: str, conn) -> list:
     return errors
 
 
-# ─── SUBMIT SINGLE CLAIM ────────────────────────────────────────────────────
+# --- SUBMIT SINGLE CLAIM ---
 
 @router.post("/submit/{order_id}", response_model=SubmissionResponse)
 async def submit_claim(order_id: str, background_tasks: BackgroundTasks, triggered_by: Optional[str] = None):
     """
     Submit a single 837P claim for an order.
-    Validates, builds payload, submits to Stedi, stores result.
+    Validates, builds payload, submits via Availity SFTP or Stedi API, stores result.
     """
     oid = uuid.UUID(order_id)
     triggered_uuid = uuid.UUID(triggered_by) if triggered_by else None
@@ -159,49 +162,81 @@ async def submit_claim(order_id: str, background_tasks: BackgroundTasks, trigger
                         new_status="validated", details={"order_id": str(oid), "icn": icn})
 
         if DRY_RUN:
+            # Also generate raw X12 for preview
+            raw_x12 = generate_837p(order, diags, lines, icn)
             await conn.execute(
-                "UPDATE claim_submissions SET status='dry_run' WHERE id=$1", sub_id
+                "UPDATE claim_submissions SET status='dry_run', raw_x12_outbound=$2 WHERE id=$1",
+                sub_id, raw_x12,
             )
             return SubmissionResponse(
                 status="dry_run", submission_id=str(sub_id), icn=icn,
                 message="Payload built successfully (dry run mode — not submitted to clearinghouse)",
             )
 
-        # Submit to Stedi
+        # -- SUBMIT: Branch on method ---
         try:
-            result = await stedi_client.submit_837p(payload)
+            if SUBMISSION_METHOD == "availity_sftp":
+                # Generate raw X12 837P and upload to Availity SFTP
+                raw_x12 = generate_837p(order, diags, lines, icn)
+                result = await availity_sftp.submit_837p(raw_x12)
 
-            stedi_tx_id = result.get("transactionId", "")
-            raw_x12 = result.get("rawX12", "")
-            ack_status = result.get("acknowledgmentStatus", "pending")
+                await conn.execute("""
+                    UPDATE claim_submissions
+                    SET status='submitted', submission_method='availity_sftp',
+                        clearinghouse='availity', raw_x12_outbound=$2,
+                        acknowledgment_payload=$3::JSONB, submitted_at=NOW(), updated_at=NOW()
+                    WHERE id=$1
+                """, sub_id, raw_x12, to_json(result))
 
-            status = "accepted" if ack_status in ("accepted", "A") else "submitted"
+                await conn.execute(
+                    "UPDATE orders SET claim_status='submitted', last_submitted_at=NOW() WHERE id=$1",
+                    oid,
+                )
 
-            await conn.execute("""
-                UPDATE claim_submissions
-                SET status=$2, stedi_transaction_id=$3, raw_x12_outbound=$4,
-                    acknowledgment_payload=$5::JSONB, submitted_at=NOW(), updated_at=NOW()
-                WHERE id=$1
-            """, sub_id, status, stedi_tx_id, raw_x12, to_json(result))
+                await audit_log(conn, "claim_submission", sub_id, "submitted_sftp",
+                                old_status="validated", new_status="submitted",
+                                details={"filename": result.get("filename"), "host": result.get("host")})
 
-            # Update order
-            await conn.execute(
-                "UPDATE orders SET claim_status=$2, last_submitted_at=NOW() WHERE id=$1",
-                oid, "submitted",
-            )
+                return SubmissionResponse(
+                    status="submitted", submission_id=str(sub_id), icn=icn,
+                    message=f"837P uploaded to Availity SFTP ({result.get('filename')})",
+                )
 
-            await audit_log(conn, "claim_submission", sub_id, "submitted",
-                            old_status="validated", new_status=status,
-                            details={"stedi_tx_id": stedi_tx_id})
+            else:
+                # Submit via Stedi API (JSON -> X12 handled by Stedi)
+                result = await stedi_client.submit_837p(payload)
 
-            # Schedule ack polling if not immediately accepted
-            if status == "submitted":
-                background_tasks.add_task(_poll_acknowledgment_task, sub_id, stedi_tx_id)
+                stedi_tx_id = result.get("transactionId", "")
+                raw_x12 = result.get("rawX12", "")
+                ack_status = result.get("acknowledgmentStatus", "pending")
 
-            return SubmissionResponse(
-                status=status, submission_id=str(sub_id), icn=icn,
-                message=f"Claim submitted via Stedi (tx: {stedi_tx_id})",
-            )
+                status = "accepted" if ack_status in ("accepted", "A") else "submitted"
+
+                await conn.execute("""
+                    UPDATE claim_submissions
+                    SET status=$2, submission_method='stedi_api', clearinghouse='stedi',
+                        stedi_transaction_id=$3, raw_x12_outbound=$4,
+                        acknowledgment_payload=$5::JSONB, submitted_at=NOW(), updated_at=NOW()
+                    WHERE id=$1
+                """, sub_id, status, stedi_tx_id, raw_x12, to_json(result))
+
+                await conn.execute(
+                    "UPDATE orders SET claim_status='submitted', last_submitted_at=NOW() WHERE id=$1",
+                    oid,
+                )
+
+                await audit_log(conn, "claim_submission", sub_id, "submitted_stedi",
+                                old_status="validated", new_status=status,
+                                details={"stedi_tx_id": stedi_tx_id})
+
+                # Schedule ack polling if not immediately accepted
+                if status == "submitted":
+                    background_tasks.add_task(_poll_acknowledgment_task, sub_id, stedi_tx_id)
+
+                return SubmissionResponse(
+                    status=status, submission_id=str(sub_id), icn=icn,
+                    message=f"Claim submitted via Stedi (tx: {stedi_tx_id})",
+                )
 
         except Exception as e:
             await conn.execute("""
@@ -211,7 +246,7 @@ async def submit_claim(order_id: str, background_tasks: BackgroundTasks, trigger
 
             await audit_log(conn, "claim_submission", sub_id, "submission_failed",
                             old_status="validated", new_status="failed",
-                            details={"error": str(e)[:500]})
+                            details={"error": str(e)[:500], "method": SUBMISSION_METHOD})
 
             log.error(f"Claim submission failed for order {order_id}: {e}")
             return SubmissionResponse(
@@ -220,7 +255,7 @@ async def submit_claim(order_id: str, background_tasks: BackgroundTasks, trigger
             )
 
 
-# ─── BATCH SUBMIT ────────────────────────────────────────────────────────────
+# --- BATCH SUBMIT ---
 
 @router.post("/submit/batch", response_model=dict)
 async def submit_batch(request: BatchSubmitRequest, background_tasks: BackgroundTasks, triggered_by: Optional[str] = None):
@@ -252,7 +287,7 @@ async def submit_batch(request: BatchSubmitRequest, background_tasks: Background
     }
 
 
-# ─── RESUBMIT ───────────────────────────────────────────────────────────────
+# --- RESUBMIT ---
 
 @router.post("/resubmit/{submission_id}", response_model=SubmissionResponse)
 async def resubmit_claim(submission_id: str, background_tasks: BackgroundTasks, triggered_by: Optional[str] = None):
@@ -279,7 +314,7 @@ async def resubmit_claim(submission_id: str, background_tasks: BackgroundTasks, 
         return result
 
 
-# ─── VALIDATE ONLY (DRY RUN) ────────────────────────────────────────────────
+# --- VALIDATE ONLY (DRY RUN) ---
 
 @router.post("/validate/{order_id}")
 async def validate_claim(order_id: str):
@@ -304,7 +339,7 @@ async def validate_claim(order_id: str):
         }
 
 
-# ─── STATUS CHECK ───────────────────────────────────────────────────────────
+# --- STATUS CHECK ---
 
 @router.get("/status/{order_id}")
 async def get_submission_status(order_id: str):
@@ -331,7 +366,7 @@ async def get_submission_status(order_id: str):
         }
 
 
-# ─── LIST SUBMISSIONS ───────────────────────────────────────────────────────
+# --- LIST SUBMISSIONS ---
 
 @router.get("/submissions")
 async def list_submissions(
@@ -377,7 +412,7 @@ async def list_submissions(
         return {"total": total, "submissions": [dict(r) for r in rows]}
 
 
-# ─── ACK POLLING ─────────────────────────────────────────────────────────────
+# --- ACK POLLING ---
 
 @router.post("/poll-ack/{submission_id}")
 async def poll_acknowledgment(submission_id: str):

@@ -8,8 +8,37 @@ export interface EdiHealthResponse {
   service: string
   version: string
   dry_run: boolean
+  submission_method: string
   database: string
+  availity_sftp: string
   stedi: string
+}
+
+export interface SftpMailboxFile {
+  filename: string
+  size: number
+  modified: string | null
+  is_dir: boolean
+}
+
+export interface SftpMailboxResponse {
+  host: string
+  files: SftpMailboxFile[]
+}
+
+export interface SftpPollResult {
+  files_processed?: number
+  files_found?: number
+  results?: Array<{
+    filename: string
+    status: string
+    claims?: number
+    paid?: number
+    denials?: number
+    error?: string
+  }>
+  files?: Array<{ filename: string; size: number }>
+  message?: string
 }
 
 export interface ClaimSubmission {
@@ -170,4 +199,18 @@ export async function autoPostBatch(batchId: string): Promise<{
   errors: Array<{ claim_id: string; error: string }>
 }> {
   return ediPost(`/api/v1/remittance/batch/${batchId}/post`)
+}
+
+// --- SFTP Mailbox ---
+
+export async function getSftpMailbox(): Promise<SftpMailboxResponse> {
+  return ediGet("/api/v1/sftp/mailbox")
+}
+
+export async function pollSftp835s(): Promise<SftpPollResult> {
+  return ediPost("/api/v1/sftp/poll-835")
+}
+
+export async function pollSftpAcks(): Promise<SftpPollResult> {
+  return ediPost("/api/v1/sftp/poll-acks")
 }

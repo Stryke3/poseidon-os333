@@ -14,6 +14,7 @@ import type {
   EdiHealthResponse,
   RemittanceBatch,
   RemittanceStats,
+  SftpMailboxFile,
 } from "@/lib/edi-api"
 import {
   getClaimSubmissions,
@@ -21,11 +22,14 @@ import {
   getEdiHealth,
   getRemittanceBatches,
   getRemittanceStats,
+  getSftpMailbox,
+  pollSftp835s,
+  pollSftpAcks,
 } from "@/lib/edi-api"
 
 import styles from "./EdiCommandSurface.module.css"
 
-type ViewKey = "overview" | "claims" | "remittance" | "denials"
+type ViewKey = "overview" | "claims" | "remittance" | "denials" | "sftp"
 
 function fmt$(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "$0"
@@ -102,6 +106,9 @@ export default function EdiCommandSurface() {
   const [denialCategories, setDenialCategories] = useState<
     Record<string, { count: number; total_amount: number }>
   >({})
+  const [sftpHost, setSftpHost] = useState("")
+  const [sftpFiles, setSftpFiles] = useState<SftpMailboxFile[]>([])
+  const [sftpPolling, setSftpPolling] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -129,6 +136,16 @@ export default function EdiCommandSurface() {
         setBatchesTotal(bat.total)
         setDenials(den.denials)
         setDenialCategories(den.by_category)
+
+        // Load SFTP mailbox (non-blocking)
+        getSftpMailbox()
+          .then((mb) => {
+            if (!cancelled) {
+              setSftpHost(mb.host)
+              setSftpFiles(mb.files)
+            }
+          })
+          .catch(() => {})
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load EDI data")
       } finally {
@@ -161,6 +178,7 @@ export default function EdiCommandSurface() {
     { key: "claims", label: "837P Claims" },
     { key: "remittance", label: "835 Remittance" },
     { key: "denials", label: "Denial Worklist" },
+    { key: "sftp", label: "SFTP" },
   ]
 
   const summary = stats?.summary
@@ -189,7 +207,11 @@ export default function EdiCommandSurface() {
                     : "bg-red-500/15 text-red-400"
                 }`}
               >
-                {health.dry_run ? "DRY RUN" : health.stedi === "connected" ? "LIVE" : "OFFLINE"}
+                {health.dry_run
+                    ? "DRY RUN"
+                    : health.availity_sftp === "connected" || health.stedi === "connected"
+                      ? "LIVE"
+                      : "OFFLINE"}
               </span>
             )}
             <span className={`${styles.mono} text-sm text-zinc-500`}>{clock}</span>
@@ -613,6 +635,153 @@ export default function EdiCommandSurface() {
                             </td>
                           </tr>
                         ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SFTP */}
+            {view === "sftp" && (
+              <div className="space-y-6">
+                {/* SFTP actions */}
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className={`${styles.glossCard} px-4 py-3`}>
+                    <p className="text-xs text-zinc-500">Host</p>
+                    <p className={`${styles.mono} text-sm text-zinc-300`}>
+                      {sftpHost || "not connected"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={sftpPolling}
+                    onClick={async () => {
+                      setSftpPolling(true)
+                      try {
+                        const mb = await getSftpMailbox()
+                        setSftpHost(mb.host)
+                        setSftpFiles(mb.files)
+                      } catch {}
+                      setSftpPolling(false)
+                    }}
+                    className="rounded-lg bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-400 transition-colors hover:bg-sky-500/20 disabled:opacity-50"
+                  >
+                    {sftpPolling ? "Refreshing..." : "Refresh Mailbox"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={sftpPolling}
+                    onClick={async () => {
+                      setSftpPolling(true)
+                      try {
+                        await pollSftp835s()
+                        const mb = await getSftpMailbox()
+                        setSftpHost(mb.host)
+                        setSftpFiles(mb.files)
+                      } catch {}
+                      setSftpPolling(false)
+                    }}
+                    className="rounded-lg bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
+                  >
+                    Poll 835s
+                  </button>
+                  <button
+                    type="button"
+                    disabled={sftpPolling}
+                    onClick={async () => {
+                      setSftpPolling(true)
+                      try {
+                        await pollSftpAcks()
+                        const mb = await getSftpMailbox()
+                        setSftpHost(mb.host)
+                        setSftpFiles(mb.files)
+                      } catch {}
+                      setSftpPolling(false)
+                    }}
+                    className="rounded-lg bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-400 transition-colors hover:bg-amber-500/20 disabled:opacity-50"
+                  >
+                    Poll 999/277
+                  </button>
+                </div>
+
+                {/* Mailbox file listing */}
+                <div className={`${styles.glossCard} overflow-hidden`}>
+                  <div className={styles.gloss} />
+                  <div className="border-b border-white/5 p-5">
+                    <h3 className="text-sm font-semibold text-zinc-300">
+                      Availity SFTP Mailbox ({sftpFiles.length} files)
+                    </h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-white/5 text-xs uppercase tracking-wider text-zinc-500">
+                          <th className="px-5 py-3">Filename</th>
+                          <th className="px-5 py-3">Size</th>
+                          <th className="px-5 py-3">Type</th>
+                          <th className="px-5 py-3">Modified</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sftpFiles.length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="px-5 py-12 text-center text-zinc-600">
+                              {sftpHost
+                                ? "Mailbox is empty or not yet connected"
+                                : "SFTP not configured — set AVAILITY_SFTP_USER/PASS"}
+                            </td>
+                          </tr>
+                        )}
+                        {sftpFiles.map((f) => {
+                          const name = f.filename.toLowerCase()
+                          const fileType = name.includes("835") || name.includes("era") || name.includes("remit")
+                            ? "835 ERA"
+                            : name.includes("999") || name.includes("277") || name.includes("ack")
+                              ? "999/277"
+                              : name.includes("837")
+                                ? "837P"
+                                : f.is_dir
+                                  ? "DIR"
+                                  : "FILE"
+                          const typeColor =
+                            fileType === "835 ERA"
+                              ? "bg-emerald-500/20 text-emerald-400"
+                              : fileType === "999/277"
+                                ? "bg-amber-500/20 text-amber-400"
+                                : fileType === "837P"
+                                  ? "bg-sky-500/20 text-sky-400"
+                                  : "bg-zinc-500/20 text-zinc-400"
+                          return (
+                            <tr
+                              key={f.filename}
+                              className={`${styles.tableRow} border-b border-white/[0.03] transition-colors`}
+                            >
+                              <td className={`${styles.mono} px-5 py-3 text-zinc-300`}>
+                                {f.filename}
+                              </td>
+                              <td className="px-5 py-3 text-xs text-zinc-400">
+                                {f.size != null
+                                  ? f.size > 1024
+                                    ? `${(f.size / 1024).toFixed(1)} KB`
+                                    : `${f.size} B`
+                                  : "—"}
+                              </td>
+                              <td className="px-5 py-3">
+                                <span
+                                  className={`${styles.statusBadge} ${typeColor}`}
+                                >
+                                  {fileType}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3 text-xs text-zinc-500">
+                                {f.modified
+                                  ? new Date(f.modified).toLocaleString()
+                                  : "—"}
+                              </td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>

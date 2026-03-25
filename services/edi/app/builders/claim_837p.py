@@ -32,10 +32,21 @@ from app.database import clean_nones
 log = logging.getLogger("edi.builder_837p")
 
 # ISA envelope config — clearinghouse assigns these during enrollment
-ISA_SENDER_ID     = os.environ.get("ISA_SENDER_ID", "STRYKEFOX      ")  # 15 chars
+ISA_SENDER_ID     = os.environ.get("ISA_SENDER_ID", "AV09311993     ")  # 15 chars
 ISA_RECEIVER_ID   = os.environ.get("ISA_RECEIVER_ID", "030240928      ")  # 15 chars
 ISA_SENDER_QUAL   = os.getenv("ISA_SENDER_QUAL", "ZZ")
-ISA_RECEIVER_QUAL = os.getenv("ISA_RECEIVER_QUAL", "ZZ")
+ISA_RECEIVER_QUAL = os.getenv("ISA_RECEIVER_QUAL", "01")
+
+# Billing provider identity — env fallback when org record is incomplete
+BILLING_NPI      = os.getenv("BILLING_NPI", "")
+BILLING_TAX_ID   = os.getenv("BILLING_TAX_ID", "")
+BILLING_ORG_NAME = os.getenv("BILLING_ORG_NAME", "")
+BILLING_TAXONOMY = os.getenv("BILLING_TAXONOMY", "332B00000X")
+BILLING_PHONE    = os.getenv("BILLING_PHONE", "")
+BILLING_ADDR     = os.getenv("BILLING_ADDR", "")
+BILLING_CITY     = os.getenv("BILLING_CITY", "")
+BILLING_STATE    = os.getenv("BILLING_STATE", "")
+BILLING_ZIP      = os.getenv("BILLING_ZIP", "")
 
 # Claim filing indicator codes by payer type
 FILING_CODES = {
@@ -241,10 +252,10 @@ def build_837p_payload(order: dict, diags: list, lines: list, icn: str) -> dict:
         "controlNumber": icn,
         "tradingPartnerServiceId": payer_code,
         "submitter": {
-            "organizationName": order["org_name"],
+            "organizationName": order.get("org_name") or BILLING_ORG_NAME,
             "contactInformation": {
-                "name": order["org_name"],
-                "phoneNumber": "0000000000",  # org phone not in canonical schema
+                "name": order.get("org_name") or BILLING_ORG_NAME,
+                "phoneNumber": BILLING_PHONE or "0000000000",
             },
         },
         "receiver": {
@@ -267,15 +278,15 @@ def build_837p_payload(order: dict, diags: list, lines: list, icn: str) -> dict:
         },
         "billing": {
             "providerType": "billingProvider",
-            "npi": order.get("npi_billing") or order.get("org_npi") or "",
-            "taxId": (order.get("tax_id") or "").replace("-", ""),
-            "taxonomy": "332B00000X",  # DME supplier default
-            "organizationName": order["org_name"],
+            "npi": order.get("npi_billing") or order.get("org_npi") or BILLING_NPI,
+            "taxId": (order.get("tax_id") or BILLING_TAX_ID).replace("-", ""),
+            "taxonomy": BILLING_TAXONOMY,
+            "organizationName": order.get("org_name") or BILLING_ORG_NAME,
             "address": {
-                "address1": billing_addr.get("address1") or billing_addr.get("street") or "",
-                "city": billing_addr.get("city") or "",
-                "state": billing_addr.get("state") or "",
-                "postalCode": (billing_addr.get("zip") or billing_addr.get("postalCode") or "")[:5],
+                "address1": billing_addr.get("address1") or billing_addr.get("street") or BILLING_ADDR,
+                "city": billing_addr.get("city") or BILLING_CITY,
+                "state": billing_addr.get("state") or BILLING_STATE,
+                "postalCode": (billing_addr.get("zip") or billing_addr.get("postalCode") or BILLING_ZIP)[:5],
             },
         },
         "claimInformation": {
