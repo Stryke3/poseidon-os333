@@ -117,7 +117,6 @@ export default function DashboardShell({
         initialIntegrations={initialIntegrations}
         initialKanban={initialKanban}
         initialKPIs={initialKPIs}
-        initialPipeline={initialPipeline}
         initialSystemState={initialSystemState}
       />
     )
@@ -203,6 +202,7 @@ function VariantShell({
     { href: "/executive", label: "Executive", active: variant === "executive" },
     { href: "/ceo", label: "CEO", active: variant === "ceo" },
     { href: "/intake", label: "Intake", active: variant === "intake" },
+    { href: "/edi", label: "EDI", active: false },
     ...(canManageUsers ? [{ href: "/settings", label: "Settings", active: false }] : []),
   ]
 
@@ -744,7 +744,7 @@ function PatientTable({ accounts }: { accounts: AccountRecord[] }) {
           {sorted.map((a) => (
             <tr key={a.id} className="border-b border-white/[0.03] transition hover:bg-white/[0.02]">
               <td className="px-3 py-2.5">
-                <Link href={a.href || "/intake"} className="text-sm font-medium text-white hover:text-cyan-200 transition">
+                <Link href={a.href || `/patients/${a.id}`} className="text-sm font-medium text-white hover:text-cyan-200 transition">
                   {a.name}
                 </Link>
                 <p className="text-[10px] text-slate-500">{a.id}</p>

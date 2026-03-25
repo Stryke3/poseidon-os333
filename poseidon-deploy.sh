@@ -18,6 +18,37 @@ warn() { printf "${GOLD}  WARN${NC} %s\n" "$1"; }
 fail() { printf "${RED}  FAIL${NC} %s\n" "$1" >&2; exit 1; }
 info() { printf "${BLUE}  ->${NC} %s\n" "$1"; }
 
+# Full stack: Vercel frontend + Docker Compose (infra + APIs + Availity + EDI + dashboard + nginx).
+#   bash poseidon-deploy.sh --all
+#   POSEIDON_DEPLOY_ALL=1 bash poseidon-deploy.sh
+# Frontend only (no Docker on this machine):
+#   bash poseidon-deploy.sh --vercel-only
+DEPLOY_MODE="vercel"
+[[ "${POSEIDON_DEPLOY_ALL:-}" == "1" ]] && DEPLOY_MODE="all"
+for arg in "$@"; do
+  case "$arg" in
+    --all)
+      DEPLOY_MODE="all"
+      ;;
+    --vercel-only)
+      DEPLOY_MODE="vercel"
+      ;;
+    --help|-h)
+      printf "%s\n" \
+        "Usage: bash poseidon-deploy.sh [--all | --vercel-only]" \
+        "" \
+        "  --all          Deploy frontend to Vercel, then rebuild/restart full Docker stack (incl. EDI)" \
+        "  --vercel-only  Deploy frontend to Vercel only (default unless POSEIDON_DEPLOY_ALL=1)" \
+        "" \
+        "Environment: POSEIDON_DEPLOY_ALL=1 is equivalent to --all."
+      exit 0
+      ;;
+    *)
+      fail "Unknown option: $arg (try --help)"
+      ;;
+  esac
+done
+
 [[ -d "${APP_DIR}" ]] || fail "Expected frontend app at ${APP_DIR}"
 [[ -f "${APP_DIR}/package.json" ]] || fail "Missing frontend/package.json"
 
@@ -135,4 +166,19 @@ fi
 printf "\n"
 ok "Build validated"
 ok "Frontend deployed from frontend/"
-warn "If this is a Docker-hosted release instead of Vercel, use docker compose for dashboard/nginx instead"
+
+if [[ "${DEPLOY_MODE}" == "all" ]]; then
+  header "DOCKER COMPOSE (FULL STACK)"
+  command -v docker >/dev/null 2>&1 || fail "Docker is required for --all / POSEIDON_DEPLOY_ALL=1"
+  docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required (docker compose)"
+  [[ -f "${ROOT_DIR}/.env" ]] || fail "Root .env is required for Docker deploy. Copy .env.template and fill secrets."
+
+  info "Building and starting full Compose stack (all services in docker-compose.yml)"
+  (
+    cd "${ROOT_DIR}"
+    docker compose up -d --build
+  )
+  ok "Docker Compose stack is up"
+else
+  info "Skipping Docker Compose (use --all or POSEIDON_DEPLOY_ALL=1 for full stack on this host)"
+fi

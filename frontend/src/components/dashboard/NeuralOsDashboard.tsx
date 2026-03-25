@@ -1,9 +1,11 @@
 "use client"
 
 import Link from "next/link"
+import type { ComponentProps } from "react"
 import { useEffect, useMemo, useState } from "react"
 import { signOut, useSession } from "next-auth/react"
 
+import CommunicationsPanel from "@/components/dashboard/CommunicationsPanel"
 import { queryTrident } from "@/lib/api"
 import type { AccountRecord, KanbanCard, KanbanColumn } from "@/lib/data"
 
@@ -119,14 +121,14 @@ function cardMatchesBusinessLine(card: KanbanCard, bl: BusinessLineId) {
 
 export default function NeuralOsDashboard({
   initialKPIs,
-  initialPipeline,
   initialAccounts,
   initialSystemState,
   initialKanban,
+  initialCommunications = [],
+  initialIntegrations = {},
   initialBusinessLine = "all",
 }: {
   initialKPIs: DashboardKpis
-  initialPipeline: Record<string, { count: number; value: string }>
   initialAccounts: AccountRecord[]
   initialSystemState: SystemState
   initialCommunications?: Array<Record<string, unknown>>
@@ -243,6 +245,7 @@ export default function NeuralOsDashboard({
     { href: "/executive", label: "Executive", active: false },
     { href: "/ceo", label: "CEO", active: false },
     { href: "/intake", label: "Intake", active: false },
+    { href: "/edi", label: "EDI", active: false },
     ...(canManageUsers ? [{ href: "/settings", label: "Settings", active: false }] : []),
   ]
 
@@ -513,6 +516,16 @@ export default function NeuralOsDashboard({
               </section>
             )
           })}
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-[2200px] border-t border-white/5 px-4 py-6">
+        <h2 className="mb-3 text-sm font-semibold text-white">Communications</h2>
+        <div className="rounded-lg border border-white/8 bg-[rgba(255,255,255,0.025)] p-4">
+          <CommunicationsPanel
+            initialItems={initialCommunications as ComponentProps<typeof CommunicationsPanel>["initialItems"]}
+            integrations={initialIntegrations as ComponentProps<typeof CommunicationsPanel>["integrations"]}
+          />
         </div>
       </div>
 
