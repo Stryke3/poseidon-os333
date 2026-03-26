@@ -2,34 +2,6 @@
 # Poseidon — Render Blueprint
 # ============================================================================
 
-envVarGroups:
-  - name: poseidon-shared
-    envVars:
-      - key: DATABASE_URL
-        sync: false
-      - key: REDIS_URL
-        value: ""
-      - key: JWT_SECRET
-        generateValue: true
-      - key: SECRET_KEY
-        generateValue: true
-      - key: NEXTAUTH_SECRET
-        generateValue: true
-      - key: MINIO_ENDPOINT
-        value: ""
-      - key: MINIO_ACCESS_KEY
-        value: ""
-      - key: MINIO_SECRET_KEY
-        value: ""
-      - key: STEDI_API_KEY
-        value: ""
-      - key: SINCH_PROJECT_ID
-        sync: false
-      - key: SINCH_KEY_ID
-        sync: false
-      - key: SINCH_KEY_SECRET
-        sync: false
-
 services:
   # ── Core API ───────────────────────────────────────────────────────────────
   - type: web
@@ -39,15 +11,27 @@ services:
     dockerContext: services
     plan: free
     healthCheckPath: /ready
-    envVarGroups:
-      - poseidon-shared
     envVars:
       - key: PORT
         value: "8001"
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        value: ""
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SECRET_KEY
+        generateValue: true
       - key: JWT_ALGORITHM
         value: HS256
       - key: JWT_EXPIRY_HOURS
         value: "8"
+      - key: MINIO_ENDPOINT
+        value: ""
+      - key: MINIO_ACCESS_KEY
+        value: ""
+      - key: MINIO_SECRET_KEY
+        value: ""
       - key: MINIO_BUCKET
         value: poseidon-docs
       - key: MINIO_SECURE
@@ -69,11 +53,17 @@ services:
     dockerContext: services
     plan: free
     healthCheckPath: /ready
-    envVarGroups:
-      - poseidon-shared
     envVars:
       - key: PORT
         value: "8002"
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        value: ""
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SECRET_KEY
+        generateValue: true
       - key: SERVICE_NAME
         value: trident
 
@@ -85,11 +75,17 @@ services:
     dockerContext: services
     plan: free
     healthCheckPath: /ready
-    envVarGroups:
-      - poseidon-shared
     envVars:
       - key: PORT
         value: "8003"
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        value: ""
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SECRET_KEY
+        generateValue: true
       - key: SERVICE_NAME
         value: intake
 
@@ -101,11 +97,17 @@ services:
     dockerContext: services
     plan: free
     healthCheckPath: /ready
-    envVarGroups:
-      - poseidon-shared
     envVars:
       - key: PORT
         value: "8004"
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        value: ""
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SECRET_KEY
+        generateValue: true
       - key: SERVICE_NAME
         value: ml
 
@@ -117,11 +119,15 @@ services:
     dockerContext: services/edi
     plan: free
     healthCheckPath: /health
-    envVarGroups:
-      - poseidon-shared
     envVars:
       - key: PORT
         value: "8006"
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        value: ""
+      - key: STEDI_API_KEY
+        value: ""
       - key: EDI_DRY_RUN
         value: "true"
       - key: SUBMISSION_METHOD
@@ -137,11 +143,11 @@ services:
     dockerContext: frontend
     plan: free
     healthCheckPath: /api/health
-    envVarGroups:
-      - poseidon-shared
     envVars:
       - key: PORT
         value: "3000"
+      - key: NEXTAUTH_SECRET
+        generateValue: true
       - key: NEXTAUTH_URL
         sync: false
       - key: CORE_API_URL
@@ -153,4 +159,10 @@ services:
       - key: ML_API_URL
         sync: false
       - key: EDI_API_URL
+        sync: false
+      - key: SINCH_PROJECT_ID
+        sync: false
+      - key: SINCH_KEY_ID
+        sync: false
+      - key: SINCH_KEY_SECRET
         sync: false
