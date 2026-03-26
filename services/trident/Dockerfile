@@ -1,4 +1,4 @@
-FROM python:3.11.15-slim-bookworm
+FROM python:3.11-slim-bookworm
 
 # Build deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,6 +17,6 @@ RUN pip install --no-cache-dir -r ./requirements.txt
 # Copy service
 COPY trident /app
 
-EXPOSE ${PORT:-8001}
+EXPOSE ${PORT:-8002}
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8001} --workers 2 --log-level info"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8002} --workers 2 --log-level info"]
