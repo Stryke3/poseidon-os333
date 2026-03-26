@@ -63,7 +63,7 @@ export const ACCOUNTS: AccountRecord[] = [
   { id: "ACC-001", businessLine: "dme", name: "Rosa Alvarez", payer: "Aetna", status: "active", value: "$12,400", type: "DME" },
   { id: "ACC-002", businessLine: "implants", name: "Marcus T.", payer: "BCBS", status: "pending", value: "$28,100", type: "Surgical" },
   { id: "ACC-003", businessLine: "biologics", name: "Linda R.", payer: "UHC", status: "appeal", value: "$9,200", type: "Biologics" },
-  { id: "ACC-004", businessLine: "matia", name: "James K.", payer: "Medicare", status: "active", value: "$4,800", type: "Mobility" },
+  { id: "ACC-004", businessLine: "matia", name: "James K.", payer: "Medicare", status: "active", value: "$35,999", type: "Mobility" },
   { id: "ACC-005", businessLine: "implants", name: "Sarah M.", payer: "Cigna", status: "denied", value: "$31,600", type: "Surgical" },
   { id: "ACC-006", businessLine: "dme", name: "Robert A.", payer: "Aetna", status: "active", value: "$7,300", type: "DME" },
   { id: "ACC-007", businessLine: "dme", name: "Emma P.", payer: "Medicaid", status: "active", value: "$2,900", type: "DME" },
@@ -76,7 +76,7 @@ export const KANBAN_DATA: Record<string, KanbanColumn> = {
     label: "Pending Auth",
     color: "#c9921a",
     cards: [
-      { id: "K-001", businessLine: "matia", title: "Power Wheelchair L8000 — Medicare", value: "$4,800", priority: "high", assignee: "RC", payer: "Medicare", type: "Mobility", due: "2026-03-20" },
+      { id: "K-001", businessLine: "matia", title: "Power Wheelchair L8000 — Medicare", value: "$35,999", priority: "high", assignee: "RC", payer: "Medicare", type: "Mobility", due: "2026-03-20" },
       { id: "K-002", businessLine: "biologics", title: "ACL Reconstruction Biologics Bundle", value: "$19,200", priority: "high", assignee: "KL", payer: "Aetna", type: "Biologics", due: "2026-03-22" },
       { id: "K-003", businessLine: "dme", title: "TENS Unit — BCBS prior auth", value: "$1,200", priority: "low", assignee: "MM", payer: "BCBS", type: "DME", due: "2026-03-25" },
     ],

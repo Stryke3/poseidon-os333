@@ -1,10 +1,13 @@
 """
 POSEIDON EDI Service — 837P Claim Builder
 Constructs Stedi Healthcare API-compatible JSON from PostgreSQL order data.
-Maps POSEIDON canonical schema → ASC X12 837P Professional structure.
+Maps POSEIDON canonical schema -> ASC X12 837P Professional structure.
+
+Stedi payload schema:
+  https://www.stedi.com/docs/api-reference/healthcare/post-healthcare-claims
 
 Loop structure:
-  ISA → GS → ST
+  ISA -> GS -> ST
     1000A: Submitter (billing entity)
     1000B: Receiver (clearinghouse/payer)
     2000A: Billing Provider
@@ -17,7 +20,7 @@ Loop structure:
         2310B: Rendering Provider (if different from billing)
         2310D: Referring Provider (ordering physician)
         2400: Service Lines
-  SE → GE → IEA
+  SE -> GE -> IEA
 """
 import json
 import os
@@ -36,6 +39,7 @@ ISA_SENDER_ID     = os.environ.get("ISA_SENDER_ID", "AV09311993     ")  # 15 cha
 ISA_RECEIVER_ID   = os.environ.get("ISA_RECEIVER_ID", "030240928      ")  # 15 chars
 ISA_SENDER_QUAL   = os.getenv("ISA_SENDER_QUAL", "ZZ")
 ISA_RECEIVER_QUAL = os.getenv("ISA_RECEIVER_QUAL", "01")
+ISA_TEST_IND      = os.getenv("ISA_TEST_INDICATOR", "T")
 
 # Billing provider identity — env fallback when org record is incomplete
 BILLING_NPI      = os.getenv("BILLING_NPI", "")
@@ -90,8 +94,10 @@ async def fetch_claim_data(order_id, conn: asyncpg.Connection) -> tuple:
             org.name AS org_name, org.npi AS org_npi, org.tax_id,
             org.billing_address AS org_billing_address,
 
-            -- Payer (from payer_rules if exists)
-            pr.payer_name AS payer_rule_name,
+            -- Payer name from `payer_rules` would normally go here, but that
+            -- table is not present in all environments. Keep payload builder
+            -- deterministic by returning NULL and letting it fall back.
+            NULL::TEXT AS payer_rule_name,
 
             -- Ordering Physician
             ph.first_name AS ph_first, ph.last_name AS ph_last,
@@ -101,7 +107,6 @@ async def fetch_claim_data(order_id, conn: asyncpg.Connection) -> tuple:
         JOIN patients p        ON p.id = o.patient_id
         LEFT JOIN patient_insurances pi ON pi.patient_id = p.id AND pi.is_primary = TRUE
         JOIN organizations org ON org.id = o.org_id
-        LEFT JOIN payer_rules pr ON pr.id::TEXT = o.payer_id
         LEFT JOIN physicians ph ON ph.id = o.physician_id
         WHERE o.id = $1
     """, order_id)
@@ -168,35 +173,67 @@ def _get_first_hcpcs(hcpcs_codes) -> Optional[str]:
     return None
 
 
+def _fmt_zip(z: Optional[str]) -> str:
+    """Format zip code — Stedi requires 9-digit format without separator."""
+    if not z:
+        return ""
+    z = z.replace("-", "").replace(" ", "")
+    return z[:9]
+
+
+def _fmt_phone(p: Optional[str]) -> str:
+    """Format phone to 10-digit numeric only (AAABBBCCCC)."""
+    if not p:
+        return "0000000000"
+    digits = "".join(c for c in p if c.isdigit())
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return digits[:10] if len(digits) >= 10 else digits.ljust(10, "0")
+
+
 def build_837p_payload(order: dict, diags: list, lines: list, icn: str) -> dict:
     """
-    Build Stedi-compatible 837P JSON.
-    Stedi's Healthcare API accepts structured JSON and handles
-    X12 serialization + clearinghouse routing internally.
+    Build Stedi Healthcare API-compatible 837P JSON payload.
+    Matches: POST /change/medicalnetwork/professionalclaims/v3/submission
+
+    Stedi accepts this JSON and handles X12 serialization + clearinghouse routing.
     """
     dos = _fmt_date(order.get("date_of_service"))
     billing_addr = _extract_billing_address(order.get("org_billing_address"))
     patient_dob = order.get("dob") or order.get("date_of_birth")
 
-    # ── Service Lines ────────────────────────────────────────────────────
+    # -- Diagnosis codes (healthCareCodeInformation) -----------------------
+    health_care_codes = []
+    for i, d in enumerate(diags[:12]):  # max 12 per claim
+        health_care_codes.append({
+            "diagnosisTypeCode": "ABK" if i == 0 else "ABF",
+            "diagnosisCode": d["icd10_code"].replace(".", ""),
+        })
+
+    # -- Service Lines -----------------------------------------------------
     service_lines = []
     if lines:
         for i, line in enumerate(lines, 1):
+            modifiers = [m.strip() for m in (line.get("modifier") or "").split(",") if m.strip()]
             sl = {
-                "assignedNumber": str(i),
                 "serviceDate": _fmt_date(line.get("dos_start") or order.get("date_of_service")),
-                "serviceDateEnd": _fmt_date(line.get("dos_end") or line.get("dos_start") or order.get("date_of_service")),
                 "professionalService": {
                     "procedureIdentifier": "HC",
                     "procedureCode": line["hcpcs_code"],
-                    "procedureModifiers": [m.strip() for m in (line.get("modifier") or "").split(",") if m.strip()] or None,
                     "lineItemChargeAmount": str(line.get("charge_amount") or order.get("total_billed") or "0"),
                     "measurementUnit": "UN",
                     "serviceUnitCount": str(line.get("units", 1) or 1),
-                    "placeOfServiceCode": str(line.get("place_of_service") or order.get("place_of_service", "12")),
                     "diagnosisCodePointers": _parse_diag_pointers(line.get("diagnosis_pointers"), len(diags)),
                 },
+                "providerControlNumber": str(i),
             }
+            if modifiers:
+                sl["professionalService"]["procedureModifiers"] = modifiers
+            if line.get("place_of_service") or order.get("place_of_service"):
+                sl["professionalService"]["placeOfServiceCode"] = str(
+                    line.get("place_of_service") or order.get("place_of_service", "12")
+                )
+
             if order.get("prior_auth_number") or order.get("insurance_auth_number"):
                 sl["priorAuthorizationNumber"] = order.get("prior_auth_number") or order["insurance_auth_number"]
 
@@ -205,41 +242,35 @@ def build_837p_payload(order: dict, diags: list, lines: list, icn: str) -> dict:
         # Single line from order header HCPCS
         hcpcs = _get_first_hcpcs(order.get("hcpcs_codes"))
         if not hcpcs:
-            hcpcs = "99999"  # placeholder — validation should catch this
-        service_lines = [{
-            "assignedNumber": "1",
+            hcpcs = "99999"  # placeholder -- validation should catch this
+        modifiers = [m.strip() for m in (order.get("modifier") or "").split(",") if m.strip()]
+        sl = {
             "serviceDate": dos,
-            "serviceDateEnd": dos,
             "professionalService": {
                 "procedureIdentifier": "HC",
                 "procedureCode": hcpcs,
-                "procedureModifiers": [m.strip() for m in (order.get("modifier") or "").split(",") if m.strip()] or None,
                 "lineItemChargeAmount": str(order.get("total_billed") or "0"),
                 "measurementUnit": "UN",
                 "serviceUnitCount": "1",
                 "placeOfServiceCode": str(order.get("place_of_service", "12")),
                 "diagnosisCodePointers": ["1"] if diags else [],
             },
-        }]
+            "providerControlNumber": "1",
+        }
+        if modifiers:
+            sl["professionalService"]["procedureModifiers"] = modifiers
         auth = order.get("prior_auth_number") or order.get("insurance_auth_number")
         if auth:
-            service_lines[0]["priorAuthorizationNumber"] = auth
+            sl["priorAuthorizationNumber"] = auth
+        service_lines = [sl]
 
-    # ── Total charge ─────────────────────────────────────────────────────
+    # -- Total charge ------------------------------------------------------
     if lines:
         total_charge = sum(float(l.get("charge_amount") or 0) for l in lines)
     else:
         total_charge = float(order.get("total_billed") or 0)
 
-    # ── Diagnosis codes ──────────────────────────────────────────────────
-    diagnosis_codes = []
-    for i, d in enumerate(diags[:12]):  # max 12 per claim
-        diagnosis_codes.append({
-            "diagnosisTypeCode": "ABK" if i == 0 else "ABF",
-            "diagnosisCode": d["icd10_code"].replace(".", ""),
-        })
-
-    # ── Payer name resolution ────────────────────────────────────────────
+    # -- Payer resolution --------------------------------------------------
     payer_name = (
         order.get("payer_rule_name")
         or order.get("ins_payer_name")
@@ -247,20 +278,32 @@ def build_837p_payload(order: dict, diags: list, lines: list, icn: str) -> dict:
     )
     payer_code = order.get("ins_payer_id") or order.get("payer_id") or ""
 
-    # ── Build full payload ───────────────────────────────────────────────
+    # -- Billing provider identifiers --------------------------------------
+    npi = order.get("npi_billing") or order.get("org_npi") or BILLING_NPI
+    tax_id = (order.get("tax_id") or BILLING_TAX_ID).replace("-", "")
+    org_name = order.get("org_name") or BILLING_ORG_NAME
+
+    # -- Build full Stedi payload ------------------------------------------
     payload = {
-        "controlNumber": icn,
-        "tradingPartnerServiceId": payer_code,
+        # T = test, P = production (maps to ISA15 usage indicator)
+        "usageIndicator": "P" if ISA_TEST_IND.upper() == "P" else "T",
+
+        "tradingPartnerServiceId": str(payer_code),
+        "tradingPartnerName": payer_name,
+
         "submitter": {
-            "organizationName": order.get("org_name") or BILLING_ORG_NAME,
+            "organizationName": org_name,
+            "submitterIdentification": ISA_SENDER_ID.strip(),
             "contactInformation": {
-                "name": order.get("org_name") or BILLING_ORG_NAME,
-                "phoneNumber": BILLING_PHONE or "0000000000",
+                "name": org_name[:60],
+                "phoneNumber": _fmt_phone(BILLING_PHONE),
             },
         },
+
         "receiver": {
             "organizationName": payer_name,
         },
+
         "subscriber": {
             "memberId": order.get("insurance_member_id") or "",
             "paymentResponsibilityLevelCode": "P",
@@ -273,24 +316,32 @@ def build_837p_payload(order: dict, diags: list, lines: list, icn: str) -> dict:
                 "address1": order.get("address_line1") or "",
                 "city": order.get("city") or "",
                 "state": order.get("state") or "",
-                "postalCode": (order.get("zip_code") or "")[:5],
+                "postalCode": _fmt_zip(order.get("zip_code")),
             },
         },
+
         "billing": {
-            "providerType": "billingProvider",
-            "npi": order.get("npi_billing") or order.get("org_npi") or BILLING_NPI,
-            "taxId": (order.get("tax_id") or BILLING_TAX_ID).replace("-", ""),
-            "taxonomy": BILLING_TAXONOMY,
-            "organizationName": order.get("org_name") or BILLING_ORG_NAME,
+            "providerType": "BillingProvider",
+            "npi": npi,
+            "employerId": tax_id,
+            "taxonomyCode": BILLING_TAXONOMY,
+            "organizationName": org_name,
             "address": {
                 "address1": billing_addr.get("address1") or billing_addr.get("street") or BILLING_ADDR,
                 "city": billing_addr.get("city") or BILLING_CITY,
                 "state": billing_addr.get("state") or BILLING_STATE,
-                "postalCode": (billing_addr.get("zip") or billing_addr.get("postalCode") or BILLING_ZIP)[:5],
+                "postalCode": _fmt_zip(
+                    billing_addr.get("zip") or billing_addr.get("postalCode") or BILLING_ZIP
+                ),
+            },
+            "contactInformation": {
+                "name": org_name[:60],
+                "phoneNumber": _fmt_phone(BILLING_PHONE),
             },
         },
+
         "claimInformation": {
-            "patientControlNumber": f"ORD-{str(order['id'])[:8].upper()}",
+            "patientControlNumber": f"ORD{str(order['id'])[:8].upper()}".replace("-", "")[:17],
             "claimChargeAmount": f"{total_charge:.2f}",
             "placeOfServiceCode": str(order.get("place_of_service", "12")),
             "claimFrequencyCode": "1",  # original claim
@@ -299,29 +350,31 @@ def build_837p_payload(order: dict, diags: list, lines: list, icn: str) -> dict:
             "benefitsAssignmentCertificationIndicator": "Y",
             "releaseOfInformationCode": "Y",
             "claimFilingCode": "CI",  # default commercial
+            "healthCareCodeInformation": health_care_codes,
+            "serviceLines": service_lines,
         },
-        "diagnosisCodes": diagnosis_codes,
-        "serviceLines": service_lines,
     }
 
-    # ── Referring/Ordering Provider (Loop 2310D) ─────────────────────────
+    # -- Referring/Ordering Provider (Loop 2310D) --------------------------
     if order.get("ph_npi"):
         payload["referring"] = {
-            "providerType": "referringProvider",
+            "providerType": "ReferringProvider",
             "npi": order["ph_npi"],
             "firstName": order.get("ph_first") or "",
             "lastName": order.get("ph_last") or "",
         }
     elif order.get("referring_physician_npi"):
         payload["referring"] = {
-            "providerType": "referringProvider",
+            "providerType": "ReferringProvider",
             "npi": order["referring_physician_npi"],
         }
 
-    # ── Prior Auth at claim level ────────────────────────────────────────
+    # -- Prior Auth at claim level -----------------------------------------
     auth = order.get("prior_auth_number") or order.get("insurance_auth_number")
     if auth:
-        payload["claimInformation"]["priorAuthorizationNumber"] = auth
+        payload["claimInformation"]["claimSupplementalInformation"] = {
+            "priorAuthorizationNumber": auth,
+        }
 
     return clean_nones(payload)
 

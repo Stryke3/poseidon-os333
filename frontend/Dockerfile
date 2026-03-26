@@ -6,6 +6,8 @@ RUN npm ci
 FROM node:20.20.1-alpine3.23 AS builder
 WORKDIR /app
 ENV NODE_ENV=production
+ARG NEXT_PUBLIC_AVAILITY_SERVICE_URL=/availity-api
+ENV NEXT_PUBLIC_AVAILITY_SERVICE_URL=${NEXT_PUBLIC_AVAILITY_SERVICE_URL}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build

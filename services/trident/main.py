@@ -102,7 +102,7 @@ PAYER_RULES: dict[str, dict] = {
         "name": "Medicare DMERC",
         "timely_filing_days": 365,
         "requires_cmn": True,
-        "requires_prior_auth": ["E0601", "E1399", "K0001", "K0002", "K0003", "K0004", "K0005"],
+        "requires_prior_auth": ["E0601", "E1399", "K0001", "K0002", "K0003", "K0004", "K0005", "K0333"],
         "statutory_exclusions": ["A4556", "A4557", "A9270"],
         "modifier_required": ["KX", "GA", "GZ"],
         "baseline_denial_rate": 0.905,
@@ -111,7 +111,7 @@ PAYER_RULES: dict[str, dict] = {
         "name": "UnitedHealthcare",
         "timely_filing_days": 180,
         "requires_cmn": False,
-        "requires_prior_auth": ["E0601", "K0001", "K0004", "K0005"],
+        "requires_prior_auth": ["E0601", "K0001", "K0004", "K0005", "K0333"],
         "statutory_exclusions": [],
         "modifier_required": [],
         "baseline_denial_rate": 0.32,
@@ -120,7 +120,7 @@ PAYER_RULES: dict[str, dict] = {
         "name": "Aetna",
         "timely_filing_days": 180,
         "requires_cmn": False,
-        "requires_prior_auth": ["E0601", "K0001"],
+        "requires_prior_auth": ["E0601", "K0001", "K0333"],
         "statutory_exclusions": [],
         "modifier_required": [],
         "baseline_denial_rate": 0.28,
@@ -129,7 +129,7 @@ PAYER_RULES: dict[str, dict] = {
         "name": "Blue Cross Blue Shield",
         "timely_filing_days": 365,
         "requires_cmn": False,
-        "requires_prior_auth": ["E0601", "K0001", "K0004"],
+        "requires_prior_auth": ["E0601", "K0001", "K0004", "K0333"],
         "statutory_exclusions": [],
         "modifier_required": [],
         "baseline_denial_rate": 0.25,
@@ -138,7 +138,7 @@ PAYER_RULES: dict[str, dict] = {
         "name": "Cigna",
         "timely_filing_days": 180,
         "requires_cmn": False,
-        "requires_prior_auth": ["E0601"],
+        "requires_prior_auth": ["E0601", "K0333"],
         "statutory_exclusions": [],
         "modifier_required": [],
         "baseline_denial_rate": 0.27,
@@ -147,7 +147,7 @@ PAYER_RULES: dict[str, dict] = {
         "name": "Humana",
         "timely_filing_days": 365,
         "requires_cmn": True,
-        "requires_prior_auth": ["E0601", "K0001", "K0004", "K0005"],
+        "requires_prior_auth": ["E0601", "K0001", "K0004", "K0005", "K0333"],
         "statutory_exclusions": [],
         "modifier_required": [],
         "baseline_denial_rate": 0.35,
@@ -263,13 +263,13 @@ class TridentEngine:
                 })
                 risk_score = min(risk_score + 0.25, 0.99)
 
-        # --- CMN check ---
+        # --- Doctor's notes check ---
         if payer.get("requires_cmn") and not req.has_cmn:
             flags.append({
                 "severity": "high",
-                "code": "CMN",
-                "message": f"Certificate of Medical Necessity required by {payer['name']}",
-                "action": "GENERATE_CMN",
+                "code": "DOCTORS_NOTES",
+                "message": f"Doctor's notes required by {payer['name']}",
+                "action": "OBTAIN_DOCTORS_NOTES",
             })
             risk_score = min(risk_score + 0.20, 0.99)
 

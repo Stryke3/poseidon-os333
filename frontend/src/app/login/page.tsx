@@ -1,8 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { Suspense, useState, useEffect } from "react"
 import { signIn } from "next-auth/react"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { PageShell } from "@/components/dashboard/DashboardPrimitives"
 
@@ -10,15 +10,52 @@ function cn(...values: Array<string | false | undefined>) {
   return values.filter(Boolean).join(" ")
 }
 
+type View = "login" | "forgot" | "reset" | "reset-success"
+
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginContent />
+    </Suspense>
+  )
+}
+
+function LoginContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
+
+  // Detect reset token in URL
+  const resetTokenParam = searchParams.get("reset_token")
+  // Some clients / links arrive in a nonstandard path form:
+  //   /login/reset_token=<token>
+  // Support both so the reset view reliably renders.
+  const resetTokenFromPath = (() => {
+    if (!pathname) return null
+    const m = pathname.match(/reset_token=([^/?#]+)/)
+    return m?.[1] || null
+  })()
+  const effectiveResetToken = resetTokenParam || resetTokenFromPath
+
+  const [view, setView] = useState<View>(effectiveResetToken ? "reset" : "login")
+  const [resetToken, setResetToken] = useState(effectiveResetToken || "")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
   const [error, setError] = useState("")
+  const [message, setMessage] = useState("")
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    if (effectiveResetToken) {
+      setResetToken(effectiveResetToken)
+      setView("reset")
+    }
+  }, [effectiveResetToken])
+
+  async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setLoading(true)
     setError("")
@@ -36,6 +73,299 @@ export default function LoginPage() {
     }
 
     router.push("/")
+  }
+
+  async function handleForgotPassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setLoading(true)
+    setError("")
+    setMessage("")
+
+    try {
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "request", email }),
+      })
+      const data = await res.json()
+
+      if (data.reset_token) {
+        // Dev mode: SMTP not configured, token returned directly
+        setResetToken(data.reset_token)
+        setView("reset")
+        setMessage("No email service configured. Reset token loaded directly.")
+      } else {
+        setMessage(data.message || "If that email is registered, a reset link has been sent.")
+      }
+    } catch {
+      setError("Unable to reach the server. Try again.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleResetPassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setLoading(true)
+    setError("")
+    setMessage("")
+
+    if (newPassword !== confirmPassword) {
+      setError("Passwords do not match.")
+      setLoading(false)
+      return
+    }
+    if (newPassword.length < 8) {
+      setError("Password must be at least 8 characters.")
+      setLoading(false)
+      return
+    }
+
+    try {
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reset",
+          token: resetToken,
+          new_password: newPassword,
+        }),
+      })
+      const data = await res.json()
+
+      if (res.ok) {
+        setView("reset-success")
+      } else {
+        setError(data.detail || data.message || "Reset failed. The link may have expired.")
+      }
+    } catch {
+      setError("Unable to reach the server. Try again.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // --- Form content by view ---
+  function renderForm() {
+    if (view === "reset-success") {
+      return (
+        <div className="space-y-5">
+          <div className="rounded-[22px] border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-300">
+            Password updated successfully.
+          </div>
+          <button
+            className="w-full rounded-full border border-[#d8b46a]/30 bg-[linear-gradient(180deg,rgba(216,180,106,0.18),rgba(216,180,106,0.08))] px-4 py-3.5 text-sm font-semibold uppercase tracking-[0.2em] text-[#f8e7bb] transition hover:bg-[linear-gradient(180deg,rgba(216,180,106,0.24),rgba(216,180,106,0.12))] hover:shadow-[0_0_30px_rgba(216,180,106,0.12)]"
+            onClick={() => { setView("login"); setPassword(""); setError(""); setMessage("") }}
+            type="button"
+          >
+            Back to Login
+          </button>
+        </div>
+      )
+    }
+
+    if (view === "forgot") {
+      return (
+        <form className="space-y-4" onSubmit={handleForgotPassword}>
+          <p className="text-sm leading-6 text-slate-400">
+            Enter your email address and we&apos;ll send you a link to reset your password.
+          </p>
+          <div>
+            <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
+              Email
+            </label>
+            <input
+              className="w-full rounded-[22px] border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[#d8b46a]/40 focus:bg-white/[0.03]"
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@strykefoxmedical.com"
+              required
+              type="email"
+              value={email}
+            />
+          </div>
+
+          {error && (
+            <div className="rounded-[22px] border border-accent-red/30 bg-accent-red/10 px-4 py-3 text-sm text-accent-red">
+              {error}
+            </div>
+          )}
+          {message && (
+            <div className="rounded-[22px] border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-300">
+              {message}
+            </div>
+          )}
+
+          <button
+            className={cn(
+              "w-full rounded-full border border-[#d8b46a]/30 bg-[linear-gradient(180deg,rgba(216,180,106,0.18),rgba(216,180,106,0.08))] px-4 py-3.5 text-sm font-semibold uppercase tracking-[0.2em] text-[#f8e7bb] transition",
+              "hover:bg-[linear-gradient(180deg,rgba(216,180,106,0.24),rgba(216,180,106,0.12))] hover:shadow-[0_0_30px_rgba(216,180,106,0.12)]",
+              loading && "cursor-not-allowed opacity-60",
+            )}
+            disabled={loading}
+            type="submit"
+          >
+            {loading ? "Sending..." : "Send Reset Link"}
+          </button>
+
+          <button
+            className="w-full text-center font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500 transition hover:text-slate-300"
+            onClick={() => { setView("login"); setError(""); setMessage("") }}
+            type="button"
+          >
+            Back to Login
+          </button>
+        </form>
+      )
+    }
+
+    if (view === "reset") {
+      return (
+        <form className="space-y-4" onSubmit={handleResetPassword}>
+          <p className="text-sm leading-6 text-slate-400">
+            Enter your new password below.
+          </p>
+
+          {message && (
+            <div className="rounded-[22px] border border-sky-400/30 bg-sky-400/10 px-4 py-3 text-sm text-sky-300">
+              {message}
+            </div>
+          )}
+
+          <div>
+            <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
+              New Password
+            </label>
+            <input
+              autoComplete="new-password"
+              className="w-full rounded-[22px] border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[#d8b46a]/40 focus:bg-white/[0.03]"
+              minLength={8}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="At least 8 characters"
+              required
+              type="password"
+              value={newPassword}
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
+              Confirm Password
+            </label>
+            <input
+              autoComplete="new-password"
+              className="w-full rounded-[22px] border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[#d8b46a]/40 focus:bg-white/[0.03]"
+              minLength={8}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Re-enter password"
+              required
+              type="password"
+              value={confirmPassword}
+            />
+          </div>
+
+          {error && (
+            <div className="rounded-[22px] border border-accent-red/30 bg-accent-red/10 px-4 py-3 text-sm text-accent-red">
+              {error}
+            </div>
+          )}
+
+          <button
+            className={cn(
+              "w-full rounded-full border border-[#d8b46a]/30 bg-[linear-gradient(180deg,rgba(216,180,106,0.18),rgba(216,180,106,0.08))] px-4 py-3.5 text-sm font-semibold uppercase tracking-[0.2em] text-[#f8e7bb] transition",
+              "hover:bg-[linear-gradient(180deg,rgba(216,180,106,0.24),rgba(216,180,106,0.12))] hover:shadow-[0_0_30px_rgba(216,180,106,0.12)]",
+              loading && "cursor-not-allowed opacity-60",
+            )}
+            disabled={loading}
+            type="submit"
+          >
+            {loading ? "Resetting..." : "Set New Password"}
+          </button>
+
+          <button
+            className="w-full text-center font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500 transition hover:text-slate-300"
+            onClick={() => { setView("login"); setError(""); setMessage("") }}
+            type="button"
+          >
+            Back to Login
+          </button>
+        </form>
+      )
+    }
+
+    // Default: login form
+    return (
+      <form className="space-y-4" onSubmit={handleLogin}>
+        <div>
+          <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
+            Email
+          </label>
+          <input
+            className="w-full rounded-[22px] border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[#d8b46a]/40 focus:bg-white/[0.03]"
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="you@strykefoxmedical.com"
+            required
+            type="email"
+            value={email}
+          />
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-center justify-between gap-4">
+            <label className="block font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
+              Password
+            </label>
+            <button
+              className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500 transition hover:text-slate-300"
+              onClick={() => setShowPassword((current) => !current)}
+              type="button"
+            >
+              {showPassword ? "Hide" : "Show"}
+            </button>
+          </div>
+          <input
+            className="w-full rounded-[22px] border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[#d8b46a]/40 focus:bg-white/[0.03]"
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="••••••••••••"
+            required
+            type={showPassword ? "text" : "password"}
+            value={password}
+          />
+        </div>
+
+        {error ? (
+          <div className="rounded-[22px] border border-accent-red/30 bg-accent-red/10 px-4 py-3 text-sm text-accent-red">
+            {error}
+          </div>
+        ) : null}
+
+        <button
+          className={cn(
+            "w-full rounded-full border border-[#d8b46a]/30 bg-[linear-gradient(180deg,rgba(216,180,106,0.18),rgba(216,180,106,0.08))] px-4 py-3.5 text-sm font-semibold uppercase tracking-[0.2em] text-[#f8e7bb] transition",
+            "hover:bg-[linear-gradient(180deg,rgba(216,180,106,0.24),rgba(216,180,106,0.12))] hover:shadow-[0_0_30px_rgba(216,180,106,0.12)]",
+            loading && "cursor-not-allowed opacity-60",
+          )}
+          disabled={loading}
+          type="submit"
+        >
+          {loading ? "Authenticating..." : "Enter Poseidon"}
+        </button>
+
+        <button
+          className="w-full text-center font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500 transition hover:text-slate-300"
+          onClick={() => { setView("forgot"); setError(""); setMessage("") }}
+          type="button"
+        >
+          Forgot Password?
+        </button>
+      </form>
+    )
+  }
+
+  const headingMap: Record<View, string> = {
+    login: "Secure Access",
+    forgot: "Reset Password",
+    reset: "New Password",
+    "reset-success": "Password Updated",
   }
 
   return (
@@ -78,7 +408,7 @@ export default function LoginPage() {
                   Poseidon Gateway
                 </p>
                 <h2 className="mt-3 font-display text-4xl uppercase tracking-[0.14em] text-white">
-                  Secure Access
+                  {headingMap[view]}
                 </h2>
               </div>
               <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">
@@ -86,79 +416,26 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="mt-5 grid grid-cols-3 gap-3">
-              {[
-                ["Auth", "Live"],
-                ["Session", "Encrypted"],
-                ["Org", "Stryke Fox"],
-              ].map(([label, value]) => (
-                <div
-                  key={label}
-                  className="rounded-[22px] border border-white/10 bg-white/[0.03] px-3 py-3 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-                >
-                  <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500">{label}</p>
-                  <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-white">{value}</p>
-                </div>
-              ))}
-            </div>
+            {view === "login" && (
+              <div className="mt-5 grid grid-cols-3 gap-3">
+                {[
+                  ["Auth", "Live"],
+                  ["Session", "Encrypted"],
+                  ["Org", "Stryke Fox"],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="rounded-[22px] border border-white/10 bg-white/[0.03] px-3 py-3 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                  >
+                    <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500">{label}</p>
+                    <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-white">{value}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          <form className="space-y-4" onSubmit={handleSubmit}>
-            <div>
-              <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
-                Email
-              </label>
-              <input
-                className="w-full rounded-[22px] border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[#d8b46a]/40 focus:bg-white/[0.03]"
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="you@strykefoxmedical.com"
-                required
-                type="email"
-                value={email}
-              />
-            </div>
-
-            <div>
-              <div className="mb-2 flex items-center justify-between gap-4">
-                <label className="block font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
-                  Password
-                </label>
-                <button
-                  className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500 transition hover:text-slate-300"
-                  onClick={() => setShowPassword((current) => !current)}
-                  type="button"
-                >
-                  {showPassword ? "Hide" : "Show"}
-                </button>
-              </div>
-              <input
-                className="w-full rounded-[22px] border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[#d8b46a]/40 focus:bg-white/[0.03]"
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="••••••••••••"
-                required
-                type={showPassword ? "text" : "password"}
-                value={password}
-              />
-            </div>
-
-            {error ? (
-              <div className="rounded-[22px] border border-accent-red/30 bg-accent-red/10 px-4 py-3 text-sm text-accent-red">
-                {error}
-              </div>
-            ) : null}
-
-            <button
-              className={cn(
-                "w-full rounded-full border border-[#d8b46a]/30 bg-[linear-gradient(180deg,rgba(216,180,106,0.18),rgba(216,180,106,0.08))] px-4 py-3.5 text-sm font-semibold uppercase tracking-[0.2em] text-[#f8e7bb] transition",
-                "hover:bg-[linear-gradient(180deg,rgba(216,180,106,0.24),rgba(216,180,106,0.12))] hover:shadow-[0_0_30px_rgba(216,180,106,0.12)]",
-                loading && "cursor-not-allowed opacity-60",
-              )}
-              disabled={loading}
-              type="submit"
-            >
-              {loading ? "Authenticating..." : "Enter Poseidon"}
-            </button>
-          </form>
+          {renderForm()}
 
           <div className="mt-6 rounded-[24px] border border-white/10 bg-black/20 p-4">
             <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">Access Notice</p>

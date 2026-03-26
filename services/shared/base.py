@@ -157,7 +157,7 @@ class Settings:
         return (
             f"host={self.db_host} port={self.db_port} "
             f"dbname={self.db_name} user={self.db_user} "
-            f"password={self.db_password}"
+            f"password={self.db_password} sslmode=require"
         )
 
     @property

@@ -3,9 +3,11 @@
 import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 
-import { PodDeliveryGuidancePanel, type PodDeliveryGuidancePayload } from "@/components/patient/PodDeliveryGuidancePanel"
-import { moveKanbanCard } from "@/lib/api"
-import { KANBAN_DATA, type KanbanCard, type KanbanColumn } from "@/lib/data"
+import { addPatientNote, assignPatientRep, fetchPatientNotes, fetchReps, moveKanbanCard } from "@/lib/api"
+import type { KanbanCard, KanbanColumn } from "@/lib/data"
+
+type RepUser = { id: string; email: string; first_name: string; last_name: string; role: string; display: string }
+type NoteRecord = { id: string; author_name: string; content: string; created_at: string }
 
 type ChartDocument = {
   id?: string
@@ -47,7 +49,7 @@ type PatientChart = {
     first_name?: string
     last_name?: string
   }
-  pod_delivery_guidance?: PodDeliveryGuidancePayload | null
+  pod_delivery_guidance?: unknown
   summary: {
     total_orders: number
     signed_swo_count: number
@@ -67,6 +69,19 @@ type PatientChart = {
 
 interface KanbanBoardProps {
   initialColumns?: Record<string, KanbanColumn>
+  userRole?: string
+}
+
+const EMPTY_KANBAN_COLUMNS: Record<string, KanbanColumn> = {
+  intake: { id: "intake", label: "Intake", color: "#c9921a", cards: [] },
+  eligibility_verification: { id: "eligibility_verification", label: "Eligibility", color: "#1a6ef5", cards: [] },
+  prior_auth: { id: "prior_auth", label: "Auth / CMN", color: "#0d9eaa", cards: [] },
+  documentation: { id: "documentation", label: "Documentation", color: "#7c5af0", cards: [] },
+  claim_submitted: { id: "claim_submitted", label: "Submitted", color: "#4a6a90", cards: [] },
+  pending_payment: { id: "pending_payment", label: "Pmt Pending", color: "#0fa86a", cards: [] },
+  denied: { id: "denied", label: "Denied", color: "#e03a3a", cards: [] },
+  appealed: { id: "appealed", label: "Appealed", color: "#7c5af0", cards: [] },
+  paid: { id: "paid", label: "Paid", color: "#0fa86a", cards: [] },
 }
 
 function formatCurrency(value: number | string | undefined) {
@@ -102,20 +117,24 @@ function deniedForOrder(order: ChartOrder, denials: ChartItem[]) {
 function DocumentPill({
   label,
   document,
+  patientId,
+  orderId,
 }: {
   label: string
   document?: ChartDocument | null
+  patientId: string
+  orderId: string
 }) {
   if (!document?.id) {
     return <span className="rounded-full bg-white/5 px-2 py-1 text-[9px] text-slate-500">{label}: none</span>
   }
-  if (!document.download_url) {
-    return <span className="rounded-full bg-white/5 px-2 py-1 text-[9px] text-slate-300">{label}</span>
-  }
+  // Use the frontend proxy route so the browser never needs to reach the
+  // internal MinIO hostname embedded in presigned URLs.
+  const proxyUrl = `/api/patients/${patientId}/orders/${orderId}/documents/${document.id}/download`
   return (
     <a
       className="rounded-full border border-accent-blue/30 bg-accent-blue/10 px-2 py-1 text-[9px] text-accent-blue transition hover:text-white"
-      href={document.download_url}
+      href={proxyUrl}
       rel="noreferrer"
       target="_blank"
     >
@@ -133,7 +152,8 @@ function SummaryPill({ label, value }: { label: string; value: string }) {
 }
 
 export default function KanbanBoard({
-  initialColumns = KANBAN_DATA,
+  initialColumns = EMPTY_KANBAN_COLUMNS,
+  userRole,
 }: KanbanBoardProps) {
   const [columns, setColumns] = useState(initialColumns)
   const [draggingId, setDraggingId] = useState<string | null>(null)
@@ -144,6 +164,25 @@ export default function KanbanBoard({
   const [patientCharts, setPatientCharts] = useState<Record<string, PatientChart>>({})
   const [loadingPatientId, setLoadingPatientId] = useState<string | null>(null)
   const [chartErrors, setChartErrors] = useState<Record<string, string>>({})
+
+  // Notes state
+  const [patientNotes, setPatientNotes] = useState<Record<string, NoteRecord[]>>({})
+  const [noteInputs, setNoteInputs] = useState<Record<string, string>>({})
+  const [savingNote, setSavingNote] = useState<string | null>(null)
+
+  // Rep assignment state
+  const [reps, setReps] = useState<RepUser[]>([])
+  const [repsLoaded, setRepsLoaded] = useState(false)
+  const [assigningPatient, setAssigningPatient] = useState<string | null>(null)
+  const isAdmin = userRole === "admin"
+
+  // Load reps list once for admin users
+  useEffect(() => {
+    if (!isAdmin || repsLoaded) return
+    fetchReps()
+      .then((users) => { setReps(users); setRepsLoaded(true) })
+      .catch(() => setRepsLoaded(true))
+  }, [isAdmin, repsLoaded])
 
   useEffect(() => {
     setColumns(initialColumns)
@@ -172,6 +211,57 @@ export default function KanbanBoard({
     }
   }, [])
 
+  const loadPatientNotes = useCallback(async (patientId: string) => {
+    try {
+      const notes = await fetchPatientNotes(patientId)
+      setPatientNotes((prev) => ({ ...prev, [patientId]: notes }))
+    } catch {
+      // silent — notes section will show empty
+    }
+  }, [])
+
+  const handleAddNote = useCallback(async (patientId: string) => {
+    const content = (noteInputs[patientId] || "").trim()
+    if (!content) return
+    setSavingNote(patientId)
+    try {
+      await addPatientNote(patientId, content)
+      setNoteInputs((prev) => ({ ...prev, [patientId]: "" }))
+      await loadPatientNotes(patientId)
+      showToast("Note saved")
+    } catch {
+      showToast("Failed to save note")
+    } finally {
+      setSavingNote(null)
+    }
+  }, [noteInputs, loadPatientNotes])
+
+  const handleAssignRep = useCallback(async (card: KanbanCard, repId: string) => {
+    if (!card.patientId || !repId) return
+    setAssigningPatient(card.patientId)
+    try {
+      const result = await assignPatientRep(card.patientId, repId)
+      // Update the assignee display on the card
+      setColumns((prev) => {
+        const next = { ...prev }
+        for (const colId of Object.keys(next)) {
+          next[colId] = {
+            ...next[colId],
+            cards: next[colId].cards.map((c) =>
+              c.patientId === card.patientId ? { ...c, assignee: result.assignee_display } : c,
+            ),
+          }
+        }
+        return next
+      })
+      showToast(`Assigned to ${result.assignee_display} (${result.orders_updated} orders)`)
+    } catch {
+      showToast("Failed to assign rep")
+    } finally {
+      setAssigningPatient(null)
+    }
+  }, [])
+
   const handleFlip = useCallback(
     async (card: KanbanCard) => {
       if (!card.patientId) return
@@ -180,8 +270,11 @@ export default function KanbanBoard({
       if (nextValue && !patientCharts[card.patientId] && loadingPatientId !== card.patientId) {
         await loadPatientChart(card.patientId)
       }
+      if (nextValue && !patientNotes[card.patientId]) {
+        await loadPatientNotes(card.patientId)
+      }
     },
-    [flippedCards, loadPatientChart, loadingPatientId, patientCharts],
+    [flippedCards, loadPatientChart, loadPatientNotes, loadingPatientId, patientCharts, patientNotes],
   )
 
   const refreshPatientChart = useCallback(
@@ -396,15 +489,37 @@ export default function KanbanBoard({
                         </div>
 
                         <div className="mt-3 flex items-center justify-between">
-                          <div className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-accent-blue text-[9px] font-bold text-white">
-                            {card.assignee}
-                          </div>
+                          {isAdmin && card.patientId ? (
+                            <select
+                              className="h-[22px] max-w-[90px] truncate rounded-full border border-accent-blue/30 bg-accent-blue/10 px-1.5 text-[9px] font-bold text-white outline-none"
+                              value=""
+                              disabled={assigningPatient === card.patientId}
+                              onChange={(e) => {
+                                e.stopPropagation()
+                                if (e.target.value) void handleAssignRep(card, e.target.value)
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              title="Assign rep"
+                            >
+                              <option value="">{card.assignee}</option>
+                              {reps.map((rep) => (
+                                <option key={rep.id} value={rep.id}>
+                                  {rep.first_name && rep.last_name ? `${rep.first_name} ${rep.last_name}` : rep.email} ({rep.role})
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <div className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-accent-blue text-[9px] font-bold text-white">
+                              {card.assignee}
+                            </div>
+                          )}
                           <div className="flex items-center gap-2">
-                            {card.href && (
+                            {(card.href || card.patientId) && (
                               <Link
-                                href={card.href}
+                                href={card.href || `/patients/${card.patientId}`}
                                 className="rounded-full border border-[rgba(26,110,245,0.28)] px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-accent-blue hover:border-accent-blue"
                                 onClick={(e) => e.stopPropagation()}
+                                target="_blank"
                               >
                                 Chart
                               </Link>
@@ -495,9 +610,9 @@ export default function KanbanBoard({
                                         {formatCurrency(parseAmt(order.total_billed))}
                                       </p>
                                       <div className="mt-2 flex flex-wrap gap-1">
-                                        <DocumentPill label="SWO" document={order.primary_documents?.swo} />
-                                        <DocumentPill label="CMS1500" document={order.primary_documents?.cms1500} />
-                                        <DocumentPill label="POD" document={order.primary_documents?.pod} />
+                                        <DocumentPill label="SWO" document={order.primary_documents?.swo} patientId={card.patientId!} orderId={order.id} />
+                                        <DocumentPill label="CMS1500" document={order.primary_documents?.cms1500} patientId={card.patientId!} orderId={order.id} />
+                                        <DocumentPill label="POD" document={order.primary_documents?.pod} patientId={card.patientId!} orderId={order.id} />
                                       </div>
                                     </div>
                                   ))}
@@ -530,11 +645,54 @@ export default function KanbanBoard({
                                 <SummaryPill label="Denied" value={formatCurrency(chart.summary.denied_amount_total)} />
                               </div>
 
-                              {chart.pod_delivery_guidance ? (
-                                <div className="shrink-0">
-                                  <PodDeliveryGuidancePanel compact data={chart.pod_delivery_guidance} />
+                              {/* Contact Notes */}
+                              <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+                                <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Contact Notes</p>
+                                <div className="mt-2 max-h-[120px] space-y-2 overflow-y-auto">
+                                  {(patientNotes[card.patientId!] || []).length === 0 ? (
+                                    <p className="text-[10px] text-slate-500">No notes yet.</p>
+                                  ) : (
+                                    (patientNotes[card.patientId!] || []).map((note) => (
+                                      <div key={note.id} className="rounded-lg border border-white/5 bg-white/5 px-2 py-1.5">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <span className="text-[9px] font-semibold text-accent-blue">{note.author_name || "Unknown"}</span>
+                                          <span className="text-[8px] text-slate-600">{new Date(note.created_at).toLocaleDateString()}</span>
+                                        </div>
+                                        <p className="mt-0.5 text-[10px] leading-relaxed text-slate-300">{note.content}</p>
+                                      </div>
+                                    ))
+                                  )}
                                 </div>
-                              ) : null}
+                                <div className="mt-2 flex gap-1.5">
+                                  <input
+                                    className="flex-1 rounded-lg border border-white/10 bg-black/20 px-2 py-1.5 text-[10px] text-slate-200 outline-none placeholder:text-slate-600 focus:border-accent-blue/40"
+                                    placeholder="Add a note..."
+                                    value={noteInputs[card.patientId!] || ""}
+                                    onChange={(e) => {
+                                      const pid = card.patientId!
+                                      setNoteInputs((prev) => ({ ...prev, [pid]: e.target.value }))
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" && !e.shiftKey) {
+                                        e.preventDefault()
+                                        void handleAddNote(card.patientId!)
+                                      }
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                  <button
+                                    className="rounded-lg border border-accent-blue/30 bg-accent-blue/10 px-2 py-1 text-[9px] font-semibold text-accent-blue transition hover:bg-accent-blue/20 disabled:opacity-40"
+                                    disabled={savingNote === card.patientId || !(noteInputs[card.patientId!] || "").trim()}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      void handleAddNote(card.patientId!)
+                                    }}
+                                    type="button"
+                                  >
+                                    {savingNote === card.patientId ? "..." : "Save"}
+                                  </button>
+                                </div>
+                              </div>
 
                               <div className="mt-auto flex items-center justify-between gap-2 pt-1">
                                 <div className="flex gap-2">
@@ -559,10 +717,11 @@ export default function KanbanBoard({
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <span className="text-[10px] text-slate-500">Patient lifecycle</span>
-                                  {card.href && (
+                                  {(card.href || card.patientId) && (
                                     <Link
                                       className="rounded-full border border-accent-blue/30 px-2 py-1 text-[9px] uppercase tracking-[0.14em] text-accent-blue transition hover:border-accent-blue hover:text-white"
-                                      href={card.href}
+                                      href={card.href || `/patients/${card.patientId}`}
+                                      target="_blank"
                                     >
                                       Open chart
                                     </Link>

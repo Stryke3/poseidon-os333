@@ -297,28 +297,6 @@ CREATE TABLE IF NOT EXISTS payer_auth_requirements (
 );
 
 -- =============================================================================
--- CLAIMS & EDI
--- =============================================================================
-CREATE SEQUENCE IF NOT EXISTS edi_icn_seq START 100 INCREMENT 1 MAXVALUE 999999999 CYCLE;
-
-CREATE TABLE IF NOT EXISTS claim_submissions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    order_id UUID NOT NULL REFERENCES orders(id),
-    org_id UUID NOT NULL,
-    payer_id VARCHAR(50),
-    interchange_control_number VARCHAR(20),
-    stedi_transaction_id VARCHAR(100),
-    submission_format VARCHAR(20) DEFAULT '837p',
-    submission_payload JSONB,
-    acknowledgment_payload JSONB,
-    status VARCHAR(30) DEFAULT 'pending',
-    failure_reason TEXT,
-    submitted_at TIMESTAMPTZ,
-    acknowledged_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- =============================================================================
 -- EOB / PAYMENT / DENIALS
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS eob_claims (
@@ -603,6 +581,20 @@ CREATE TABLE IF NOT EXISTS communications_messages (
 );
 
 -- =============================================================================
+-- PATIENT CONTACT NOTES
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS patient_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id),
+    patient_id UUID NOT NULL REFERENCES patients(id),
+    author_id UUID NOT NULL REFERENCES users(id),
+    author_name VARCHAR(200),
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_patient_notes_patient ON patient_notes(patient_id);
+
+-- =============================================================================
 -- INDEXES
 -- =============================================================================
 CREATE INDEX IF NOT EXISTS idx_patients_org ON patients(org_id);
@@ -759,9 +751,7 @@ ALTER TABLE payment_outcomes ADD COLUMN IF NOT EXISTS created_by UUID;
 -- SEED DATA
 -- =============================================================================
 INSERT INTO organizations (id, name, slug, entity_type) VALUES
-  ('00000000-0000-0000-0000-000000000001', 'StrykeFox DME', 'strykefox-dme', 'dme'),
-  ('00000000-0000-0000-0000-000000000002', 'StrykeFox Biologics', 'strykefox-biologics', 'biologics'),
-  ('00000000-0000-0000-0000-000000000003', 'StrykeFox Mobility', 'strykefox-mobility', 'mobility')
+  ('00000000-0000-0000-0000-000000000001', 'StrykeFox Medical', 'strykefox-medical', 'multi')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO timely_filing_windows (payer_id, payer_name, window_days, window_type) VALUES
@@ -796,14 +786,6 @@ INSERT INTO payers (id, name, timely_filing_days, requires_cmn, requires_prior_a
   ('MAGELLAN', 'Magellan Health', 180, false, '[]', 0.2900, true),
   ('CHAMP_VA', 'ChampVA', 365, false, '[]', 0.1600, true)
 ON CONFLICT (id) DO NOTHING;
-
--- Line items: derive from order HCPCS when no rows exist (idempotent per order)
-INSERT INTO order_line_items (id, order_id, hcpcs_code, quantity, is_billable)
-SELECT gen_random_uuid(), o.id, upper(trim(elem)), 1, true
-FROM orders o
-CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(o.hcpcs_codes, '[]'::jsonb)) AS t(elem)
-WHERE NOT EXISTS (SELECT 1 FROM order_line_items li WHERE li.order_id = o.id)
-  AND jsonb_array_length(COALESCE(o.hcpcs_codes, '[]'::jsonb)) > 0;
 
 -- =============================================================================
 -- EDI SERVICE TABLES (837P Outbound / 835 Inbound)
@@ -844,6 +826,22 @@ CREATE INDEX IF NOT EXISTS idx_cs_status ON claim_submissions(status, submitted_
 CREATE INDEX IF NOT EXISTS idx_cs_icn    ON claim_submissions(interchange_control_number);
 CREATE INDEX IF NOT EXISTS idx_cs_stedi  ON claim_submissions(stedi_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_cs_batch  ON claim_submissions(batch_id);
+
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS icn VARCHAR(50);
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS edi_filename VARCHAR(500);
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS edi_content TEXT;
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS isa_control_number VARCHAR(20);
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS gs_control_number VARCHAR(20);
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS clearinghouse_response JSONB;
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS ack_type VARCHAR(20);
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS ack_errors JSONB;
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(12,2);
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS adjustment_amount NUMERIC(12,2);
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS payment_date DATE;
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS error_message TEXT;
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0;
+ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS dry_run BOOLEAN DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS remittance_batches (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -966,3 +964,31 @@ DO $$ BEGIN
     ALTER TABLE payment_outcomes ADD COLUMN IF NOT EXISTS service_date DATE;
     ALTER TABLE payment_outcomes ADD COLUMN IF NOT EXISTS payment_status VARCHAR(30);
 END $$;
+
+-- =============================================================================
+-- PASSWORD RESET TOKENS
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id),
+    token_hash  VARCHAR(64) NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    used_at     TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_prt_token ON password_reset_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_prt_user  ON password_reset_tokens(user_id);
+
+-- =============================================================================
+-- SEED: Default admin user
+-- Password: Poseidon!2026  (change immediately after first login)
+-- =============================================================================
+INSERT INTO users (id, org_id, email, password_hash, first_name, last_name, role, active, is_active, permissions)
+VALUES (
+    '00000000-0000-0000-0000-000000000099',
+    '00000000-0000-0000-0000-000000000001',
+    'admin@strykefox.com',
+    '$2b$12$Q6fcSVopF05evYvpk76v7eVTnxsbOD5doYGQj8u7sXWo81IKF2DbS',
+    'Adam', 'Stryker', 'admin', true, true,
+    '{"grant":["manage_users","reset_passwords","view_reports","manage_fulfillment"]}'::jsonb
+) ON CONFLICT (email) DO NOTHING;

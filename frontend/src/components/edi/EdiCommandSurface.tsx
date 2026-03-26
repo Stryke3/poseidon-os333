@@ -25,6 +25,8 @@ import {
   getSftpMailbox,
   pollSftp835s,
   pollSftpAcks,
+  submitClaim,
+  validateClaim,
 } from "@/lib/edi-api"
 
 import styles from "./EdiCommandSurface.module.css"
@@ -109,6 +111,12 @@ export default function EdiCommandSurface() {
   const [sftpHost, setSftpHost] = useState("")
   const [sftpFiles, setSftpFiles] = useState<SftpMailboxFile[]>([])
   const [sftpPolling, setSftpPolling] = useState(false)
+
+  // Claim submission form
+  const [claimOrderId, setClaimOrderId] = useState("")
+  const [claimLoading, setClaimLoading] = useState(false)
+  const [claimResult, setClaimResult] = useState<{ type: "validate" | "submit"; data: Record<string, unknown> } | null>(null)
+  const [claimError, setClaimError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -408,6 +416,76 @@ export default function EdiCommandSurface() {
 
             {/* CLAIMS */}
             {view === "claims" && (
+              <>
+              {/* Submit claim form */}
+              <div className={`${styles.glossCard} overflow-hidden`}>
+                <div className={styles.gloss} />
+                <div className="border-b border-white/5 p-5">
+                  <h3 className="text-sm font-semibold text-zinc-300">Submit 837P Claim</h3>
+                </div>
+                <div className="p-5">
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="flex-1">
+                      <label className="mb-1 block text-xs text-zinc-500">Order ID</label>
+                      <input
+                        className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-sky-500/50"
+                        placeholder="Enter order UUID"
+                        value={claimOrderId}
+                        onChange={(e) => setClaimOrderId(e.target.value)}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={claimLoading || !claimOrderId.trim()}
+                      onClick={async () => {
+                        setClaimLoading(true)
+                        setClaimError(null)
+                        setClaimResult(null)
+                        try {
+                          const data = await validateClaim(claimOrderId.trim())
+                          setClaimResult({ type: "validate", data: data as unknown as Record<string, unknown> })
+                        } catch (e) {
+                          setClaimError(e instanceof Error ? e.message : "Validation failed")
+                        } finally {
+                          setClaimLoading(false)
+                        }
+                      }}
+                      className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-400 transition hover:bg-sky-500/20 disabled:opacity-50"
+                    >
+                      {claimLoading ? "Working\u2026" : "Validate"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={claimLoading || !claimOrderId.trim()}
+                      onClick={async () => {
+                        setClaimLoading(true)
+                        setClaimError(null)
+                        setClaimResult(null)
+                        try {
+                          const data = await submitClaim(claimOrderId.trim())
+                          setClaimResult({ type: "submit", data: data as unknown as Record<string, unknown> })
+                          // Reload submissions list
+                          getClaimSubmissions(100).then((r) => { setSubmissions(r.submissions); setSubmissionsTotal(r.total) }).catch(() => {})
+                        } catch (e) {
+                          setClaimError(e instanceof Error ? e.message : "Submission failed")
+                        } finally {
+                          setClaimLoading(false)
+                        }
+                      }}
+                      className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-400 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                    >
+                      Submit 837P
+                    </button>
+                  </div>
+                  {claimError && <p className="mt-3 text-xs text-red-400">{claimError}</p>}
+                  {claimResult && (
+                    <pre className="mt-3 max-h-48 overflow-auto rounded-lg border border-white/5 bg-black/30 p-3 text-xs text-zinc-300">
+                      {JSON.stringify(claimResult.data, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              </div>
+
               <div className={`${styles.glossCard} overflow-hidden`}>
                 <div className={styles.gloss} />
                 <div className="border-b border-white/5 p-5">
@@ -470,6 +548,7 @@ export default function EdiCommandSurface() {
                   </table>
                 </div>
               </div>
+              </>
             )}
 
             {/* REMITTANCE */}

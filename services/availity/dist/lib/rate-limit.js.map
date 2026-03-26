@@ -1,0 +1,1 @@
+{"version":3,"file":"rate-limit.js","sourceRoot":"","sources":["../../src/lib/rate-limit.ts"],"names":[],"mappings":";;;;;;AAAA,4EAA2C;AAE3C,6DAA6D;AAChD,QAAA,sBAAsB,GAAG,IAAA,4BAAS,EAAC;IAC9C,QAAQ,EAAE,MAAM;IAChB,GAAG,EAAE,EAAE;IACP,eAAe,EAAE,IAAI;IACrB,aAAa,EAAE,KAAK;IACpB,OAAO,EAAE,EAAE,KAAK,EAAE,qCAAqC,EAAE;CAC1D,CAAC,CAAC"}

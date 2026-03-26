@@ -1,51 +1,24 @@
 "use client"
 
+/**
+ * Executive revenue surface — pipeline + calendar fed from Core via `/api/dashboard/revenue-context`.
+ * For the standard exec KPIs and tables, `/executive` (`DashboardShell`) is the primary route.
+ */
+
 import { useEffect, useState } from "react"
+import { useSession } from "next-auth/react"
+
+import type {
+  RevenueCalendarEvent as CalendarEvent,
+  RevenueCommandPatient as Patient,
+  RevenueEventType as EventType,
+  RevenueStageKey as StageKey,
+} from "@/lib/revenue-command-map"
 
 import styles from "./RevenueCommandSurface.module.css"
 
 type ViewKey = "pipeline" | "calendar" | "analytics" | "roster"
-type StageKey =
-  | "intake"
-  | "eligibility"
-  | "auth"
-  | "submitted"
-  | "pending"
-  | "denied"
-  | "paid"
 type CheckKey = "swo" | "notes" | "ins" | "cmn"
-type EventType = "ops" | "case" | "intel"
-
-type Patient = {
-  id: string
-  name: string
-  dob: string
-  mrn: string
-  payer: string
-  mid: string
-  hcpcs: string
-  dx: string
-  product: string
-  doc: string
-  npi: string
-  stage: StageKey
-  tri: number
-  ar: number
-  amt: number
-  surg: string | null
-  org: string
-  checks: Record<CheckKey, boolean>
-}
-
-type CalendarEvent = {
-  id: number
-  t: string
-  time: string
-  dur: number
-  type: EventType
-  date: string
-  who: string
-}
 
 type StageMeta = {
   k: StageKey
@@ -54,35 +27,9 @@ type StageMeta = {
   n: number
 }
 
-const PATIENTS: Patient[] = [
-  { id: "P-4012", name: "Rosa Alvarez", dob: "1958-03-14", mrn: "MRN-4012", payer: "Medicare DMERC", mid: "1EG4-TE5-MK72", hcpcs: "E0601", dx: "G47.33", product: "CPAP System", doc: "Dr. Sarah Chen", npi: "1234567890", stage: "auth", tri: 94, ar: 2, amt: 1847, surg: "2026-03-24", org: "PMP", checks: { swo: true, notes: true, ins: true, cmn: false } },
-  { id: "P-4013", name: "James Whitfield", dob: "1971-08-22", mrn: "MRN-4013", payer: "UnitedHealthcare", mid: "UHC-882341", hcpcs: "L1832", dx: "M21.6", product: "Knee Orthosis", doc: "Dr. Mark Rivera", npi: "9876543210", stage: "submitted", tri: 87, ar: 5, amt: 2340, surg: "2026-03-26", org: "Momentum", checks: { swo: true, notes: true, ins: true, cmn: true } },
-  { id: "P-4014", name: "Maria Santos", dob: "1965-11-03", mrn: "MRN-4014", payer: "Aetna", mid: "AET-774521", hcpcs: "K0823", dx: "G82.50", product: "Power Wheelchair", doc: "Dr. Lisa Park", npi: "5678901234", stage: "eligibility", tri: 71, ar: 1, amt: 4250, surg: null, org: "Momentum", checks: { swo: false, notes: true, ins: false, cmn: false } },
-  { id: "P-4015", name: "David Park", dob: "1982-05-19", mrn: "MRN-4015", payer: "BCBS", mid: "BCB-339201", hcpcs: "A4253", dx: "E11.65", product: "Glucose Strips", doc: "Dr. Amy Tran", npi: "3456789012", stage: "paid", tri: 96, ar: 12, amt: 890, surg: null, org: "LVCO", checks: { swo: true, notes: true, ins: true, cmn: true } },
-  { id: "P-4016", name: "Linda Okafor", dob: "1974-09-08", mrn: "MRN-4016", payer: "Cigna", mid: "CIG-551823", hcpcs: "E0470", dx: "J44.1", product: "BiPAP System", doc: "Dr. Sarah Chen", npi: "1234567890", stage: "pending", tri: 82, ar: 8, amt: 3120, surg: "2026-03-28", org: "PMP", checks: { swo: true, notes: true, ins: true, cmn: true } },
-  { id: "P-4017", name: "Robert Chen", dob: "1969-02-27", mrn: "MRN-4017", payer: "Humana", mid: "HUM-229134", hcpcs: "E2402", dx: "G12.21", product: "Speech Device", doc: "Dr. James Ortiz", npi: "7890123456", stage: "intake", tri: 78, ar: 0, amt: 5680, surg: "2026-04-02", org: "PMP", checks: { swo: false, notes: false, ins: false, cmn: false } },
-  { id: "P-4018", name: "Angela Williams", dob: "1955-07-16", mrn: "MRN-4018", payer: "Medicare DMERC", mid: "1FH7-QW3-NR89", hcpcs: "E0601", dx: "G47.33", product: "CPAP + Humidifier", doc: "Dr. Lisa Park", npi: "5678901234", stage: "auth", tri: 91, ar: 3, amt: 2100, surg: "2026-03-25", org: "PMP", checks: { swo: true, notes: true, ins: true, cmn: false } },
-  { id: "P-4019", name: "Thomas Jackson", dob: "1988-12-01", mrn: "MRN-4019", payer: "Molina", mid: "MOL-881245", hcpcs: "L3000", dx: "M72.2", product: "Foot Orthosis", doc: "Dr. Mark Rivera", npi: "9876543210", stage: "denied", tri: 44, ar: 18, amt: 1560, surg: null, org: "Momentum", checks: { swo: true, notes: false, ins: true, cmn: false } },
-  { id: "P-4020", name: "Patricia Nguyen", dob: "1963-04-11", mrn: "MRN-4020", payer: "Aetna", mid: "AET-663289", hcpcs: "A6531", dx: "L97.529", product: "Wound Care Kit", doc: "Dr. Amy Tran", npi: "3456789012", stage: "submitted", tri: 88, ar: 4, amt: 760, surg: null, org: "LVCO", checks: { swo: true, notes: true, ins: true, cmn: true } },
-  { id: "P-4021", name: "Michael Reeves", dob: "1977-10-30", mrn: "MRN-4021", payer: "UnitedHealthcare", mid: "UHC-441297", hcpcs: "E0784", dx: "G47.33", product: "Infusion Pump", doc: "Dr. Sarah Chen", npi: "1234567890", stage: "pending", tri: 85, ar: 6, amt: 3890, surg: "2026-04-01", org: "LVCO", checks: { swo: true, notes: true, ins: true, cmn: true } },
-  { id: "P-4022", name: "Sandra Gomez", dob: "1960-06-05", mrn: "MRN-4022", payer: "BCBS", mid: "BCB-772318", hcpcs: "K0856", dx: "G80.0", product: "Power Chair Custom", doc: "Dr. James Ortiz", npi: "7890123456", stage: "auth", tri: 76, ar: 7, amt: 8900, surg: "2026-04-04", org: "Momentum", checks: { swo: true, notes: true, ins: false, cmn: false } },
-  { id: "P-4023", name: "Kevin Marshall", dob: "1985-01-18", mrn: "MRN-4023", payer: "Cigna", mid: "CIG-338812", hcpcs: "E0260", dx: "L89.154", product: "Hospital Bed", doc: "Dr. Lisa Park", npi: "5678901234", stage: "paid", tri: 93, ar: 15, amt: 2750, surg: null, org: "PMP", checks: { swo: true, notes: true, ins: true, cmn: true } },
-]
-
-const EVENTS: CalendarEvent[] = [
-  { id: 1, t: "Revenue Command Brief", time: "08:00", dur: 30, type: "ops", date: "2026-03-21", who: "All Ops" },
-  { id: 2, t: "PMP Auth Sprint", time: "09:30", dur: 60, type: "ops", date: "2026-03-21", who: "Billing" },
-  { id: 3, t: "CPAP Fitting - Alvarez", time: "11:00", dur: 45, type: "case", date: "2026-03-21", who: "Dr. Chen" },
-  { id: 4, t: "LVCO CO-4 Analysis", time: "13:00", dur: 45, type: "intel", date: "2026-03-21", who: "Jessica T." },
-  { id: 5, t: "Momentum Onboard", time: "15:00", dur: 60, type: "ops", date: "2026-03-21", who: "Marcus W." },
-  { id: 6, t: "BiPAP - Okafor", time: "10:00", dur: 45, type: "case", date: "2026-03-24", who: "Dr. Chen" },
-  { id: 7, t: "Chair ATP - Gomez", time: "14:00", dur: 90, type: "case", date: "2026-03-25", who: "Dr. Ortiz" },
-  { id: 8, t: "Knee Fit - Whitfield", time: "09:00", dur: 60, type: "case", date: "2026-03-26", who: "Dr. Rivera" },
-  { id: 9, t: "BiPAP Del - Okafor", time: "14:00", dur: 30, type: "case", date: "2026-03-28", who: "Tech" },
-  { id: 10, t: "Infusion - Reeves", time: "10:00", dur: 60, type: "case", date: "2026-04-01", who: "Dr. Chen" },
-  { id: 11, t: "Speech Eval - R. Chen", time: "11:00", dur: 60, type: "case", date: "2026-04-02", who: "Dr. Ortiz" },
-  { id: 12, t: "Chair Del - Gomez", time: "13:00", dur: 45, type: "case", date: "2026-04-04", who: "Tech" },
-]
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10)
+}
 
 const STAGES: StageMeta[] = [
   { k: "intake", l: "01_INTAKE", c: "#2dd4bf", n: 0 },
@@ -95,7 +42,6 @@ const STAGES: StageMeta[] = [
 ]
 
 const STAGE_MAP = Object.fromEntries(STAGES.map((stage) => [stage.k, stage])) as Record<StageKey, StageMeta>
-const TODAY = "2026-03-21"
 
 function triColor(value: number) {
   if (value >= 85) return "#4ade80"
@@ -143,11 +89,12 @@ function downloadIcs(title: string, duration: number, description: string) {
 }
 
 function baseQuickEventDate() {
-  return TODAY
+  return todayIsoDate()
 }
 
 export default function RevenueCommandSurface() {
-  const [patients, setPatients] = useState(PATIENTS)
+  const { data: session } = useSession()
+  const [patients, setPatients] = useState<Patient[]>([])
   const [view, setView] = useState<ViewKey>("pipeline")
   const [search, setSearch] = useState("")
   const [searchFocused, setSearchFocused] = useState(false)
@@ -155,15 +102,55 @@ export default function RevenueCommandSurface() {
   const [docModal, setDocModal] = useState<{ title: string; patient: string } | null>(null)
   const [clock, setClock] = useState("00:00:00")
   const [userPct, setUserPct] = useState(0)
-  const [calendarMonth, setCalendarMonth] = useState(2)
-  const [calendarYear, setCalendarYear] = useState(2026)
-  const [selectedDate, setSelectedDate] = useState(TODAY)
+  const now = new Date()
+  const [calendarMonth, setCalendarMonth] = useState(now.getMonth())
+  const [calendarYear, setCalendarYear] = useState(now.getFullYear())
+  const [selectedDate, setSelectedDate] = useState(() => todayIsoDate())
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [quickTitle, setQuickTitle] = useState("")
-  const [quickDate, setQuickDate] = useState(baseQuickEventDate())
+  const [quickDate, setQuickDate] = useState(() => baseQuickEventDate())
   const [quickTime, setQuickTime] = useState("09:00")
-  const [events, setEvents] = useState(EVENTS)
+  const [events, setEvents] = useState<CalendarEvent[]>([])
   const [flippedCards, setFlippedCards] = useState<Record<string, boolean>>({})
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setLoading(true)
+      setLoadError(null)
+      try {
+        const res = await fetch("/api/dashboard/revenue-context", { cache: "no-store" })
+        const data = (await res.json()) as {
+          patients?: Patient[]
+          events?: CalendarEvent[]
+          meta?: { cleanClaimPct?: number }
+          error?: string
+        }
+        if (!res.ok) {
+          throw new Error(data.error || `Load failed (${res.status})`)
+        }
+        if (!cancelled) {
+          setPatients(data.patients || [])
+          setEvents(data.events || [])
+          setUserPct(typeof data.meta?.cleanClaimPct === "number" ? data.meta.cleanClaimPct : 0)
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setLoadError(e instanceof Error ? e.message : "Unable to load revenue data.")
+          setPatients([])
+          setEvents([])
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     const tick = () => {
@@ -179,7 +166,6 @@ export default function RevenueCommandSurface() {
 
     tick()
     const intervalId = window.setInterval(tick, 1000)
-    const timeoutId = window.setTimeout(() => setUserPct(92), 800)
 
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -197,7 +183,6 @@ export default function RevenueCommandSurface() {
 
     return () => {
       window.clearInterval(intervalId)
-      window.clearTimeout(timeoutId)
       window.removeEventListener("keydown", onKeyDown)
     }
   }, [])
@@ -225,7 +210,9 @@ export default function RevenueCommandSurface() {
   const surgicalCases = [...patients].filter((patient) => patient.surg).sort((a, b) => (a.surg || "").localeCompare(b.surg || ""))
 
   const totalAmount = patients.reduce((sum, patient) => sum + patient.amt, 0)
-  const avgTri = Math.round(patients.reduce((sum, patient) => sum + patient.tri, 0) / patients.length)
+  const avgTri = patients.length
+    ? Math.round(patients.reduce((sum, patient) => sum + patient.tri, 0) / patients.length)
+    : 0
   const deniedCount = patients.filter((patient) => patient.stage === "denied").length
   const paidCount = patients.filter((patient) => patient.stage === "paid").length
   const payerExposure = Object.values(
@@ -264,7 +251,7 @@ export default function RevenueCommandSurface() {
     const hasEvent = events.some((event) => event.date === dayString)
     const hasSurgery = patients.some((patient) => patient.surg === dayString)
     const isSelected = dayString === selectedDate
-    const isToday = dayString === TODAY
+    const isToday = dayString === todayIsoDate()
 
     calendarCells.push(
       <button
@@ -461,12 +448,27 @@ export default function RevenueCommandSurface() {
               </div>
             </div>
             <div>
-              <div className="text-xs font-semibold text-zinc-200">Adam Stryker</div>
-              <div className={`${styles.mono} text-[9px] text-zinc-600`}>ROLE: ADMIN // PORTFOLIO_CMD</div>
+              <div className="text-xs font-semibold text-zinc-200">
+                {session?.user?.name || session?.user?.email || "Signed in"}
+              </div>
+              <div className={`${styles.mono} text-[9px] text-zinc-600`}>
+                ROLE: {String(session?.user?.role || "user").toUpperCase()}
+              </div>
             </div>
           </div>
         </div>
       </header>
+
+      {loading ? (
+        <div className="relative z-10 border-b border-white/5 bg-zinc-900/40 px-4 py-2 text-center text-xs text-zinc-500">
+          Loading live pipeline from Core…
+        </div>
+      ) : null}
+      {loadError && !loading ? (
+        <div className="relative z-10 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-center text-xs text-amber-200">
+          {loadError}
+        </div>
+      ) : null}
 
       <nav className="relative z-10 flex flex-shrink-0 gap-1 overflow-x-auto px-4 pt-3 lg:px-8">
         {[
@@ -587,7 +589,7 @@ export default function RevenueCommandSurface() {
                                     ["swo", "SWO Received"],
                                     ["notes", "Clinical Notes"],
                                     ["ins", "Insurance Verified"],
-                                    ["cmn", "CMN/LMN Complete"],
+                                    ["cmn", "Doctor's Notes"],
                                   ].map(([key, label]) => (
                                     <label key={key} className="flex cursor-pointer items-center gap-3 text-[11px] text-zinc-400 transition hover:text-white">
                                       <input

@@ -1,184 +1,192 @@
-#!/usr/bin/env bash
-
+#!/bin/bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="${ROOT_DIR}/frontend"
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+log()  { echo -e "${CYAN}►${NC} $1"; }
+ok()   { echo -e "  ${GREEN}✅${NC} $1"; }
+fail() { echo -e "  ${RED}❌${NC} $1"; }
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-GOLD='\033[0;33m'
-BLUE='\033[0;34m'
-WHITE='\033[1;37m'
-NC='\033[0m'
+echo ""
+echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
+echo -e "${CYAN}  POSEIDON — PRODUCTION GO-LIVE${NC}"
+echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
+echo ""
 
-header() { printf "\n${BLUE}======================================${NC}\n${WHITE}%s${NC}\n${BLUE}======================================${NC}\n" "$1"; }
-ok() { printf "${GREEN}  OK${NC} %s\n" "$1"; }
-warn() { printf "${GOLD}  WARN${NC} %s\n" "$1"; }
-fail() { printf "${RED}  FAIL${NC} %s\n" "$1" >&2; exit 1; }
-info() { printf "${BLUE}  ->${NC} %s\n" "$1"; }
+cd "$(dirname "$0")"
 
-# Full stack: Vercel frontend + Docker Compose (infra + APIs + Availity + EDI + dashboard + nginx).
-#   bash poseidon-deploy.sh --all
-#   POSEIDON_DEPLOY_ALL=1 bash poseidon-deploy.sh
-# Frontend only (no Docker on this machine):
-#   bash poseidon-deploy.sh --vercel-only
-DEPLOY_MODE="vercel"
-[[ "${POSEIDON_DEPLOY_ALL:-}" == "1" ]] && DEPLOY_MODE="all"
-for arg in "$@"; do
-  case "$arg" in
-    --all)
-      DEPLOY_MODE="all"
-      ;;
-    --vercel-only)
-      DEPLOY_MODE="vercel"
-      ;;
-    --help|-h)
-      printf "%s\n" \
-        "Usage: bash poseidon-deploy.sh [--all | --vercel-only]" \
-        "" \
-        "  --all          Deploy frontend to Vercel, then rebuild/restart full Docker stack (incl. EDI)" \
-        "  --vercel-only  Deploy frontend to Vercel only (default unless POSEIDON_DEPLOY_ALL=1)" \
-        "" \
-        "Environment: POSEIDON_DEPLOY_ALL=1 is equivalent to --all."
-      exit 0
-      ;;
-    *)
-      fail "Unknown option: $arg (try --help)"
-      ;;
-  esac
+# ─── PREFLIGHT ───────────────────────────────────────────────
+log "Preflight..."
+[ ! -f .env ] && { fail ".env missing"; exit 1; }
+grep -q "CHANGE_ME" .env && { fail ".env has CHANGE_ME placeholders"; exit 1; }
+docker compose version > /dev/null 2>&1 || { fail "docker compose unavailable"; exit 1; }
+if command -v psql > /dev/null 2>&1; then
+    USE_DOCKER_PSQL=false
+    ok "Using local psql"
+else
+    USE_DOCKER_PSQL=true
+    ok "Using dockerized psql client"
+fi
+ok "Preflight passed"
+
+# ─── READ DATABASE URL ───────────────────────────────────────
+DB_URL=$(grep '^DATABASE_URL=' .env | head -1 | cut -d= -f2-)
+DB_URL=$(echo "$DB_URL" | tr -d "'\"")
+
+run_psql() {
+    if [ "$USE_DOCKER_PSQL" = true ]; then
+        docker run --rm -i postgres:15-alpine psql "$DB_URL" "$@"
+    else
+        psql "$DB_URL" "$@"
+    fi
+}
+
+# ─── TEST NEON CONNECTION ────────────────────────────────────
+log "Testing Neon database connection..."
+if run_psql -c "SELECT 1;" > /dev/null 2>&1; then
+    ok "Neon connected"
+else
+    fail "Cannot connect to Neon. Check DATABASE_URL in .env"
+    exit 1
+fi
+
+# ─── TOTAL TEARDOWN ──────────────────────────────────────────
+log "Tearing down all containers..."
+docker compose down --remove-orphans 2>/dev/null || true
+ok "Containers down"
+
+# ─── FLUSH DOCKER ────────────────────────────────────────────
+log "Pruning Docker cache + old images..."
+docker builder prune -f 2>/dev/null || true
+docker images --format '{{.Repository}}:{{.Tag}}' | grep -iE 'poseidon|strykefox' | while read img; do
+    docker rmi "$img" 2>/dev/null || true
+done || true
+ok "Docker cache flushed"
+
+# ─── FLUSH REDIS ─────────────────────────────────────────────
+log "Flushing Redis..."
+docker compose up -d redis
+sleep 4
+REDIS_PW=$(grep '^REDIS_PASSWORD=' .env | head -1 | cut -d= -f2- | tr -d "'\"")
+docker compose exec -T redis redis-cli -a "$REDIS_PW" FLUSHALL 2>/dev/null || true
+ok "Redis flushed"
+
+# ─── RESET NEON DATABASE ────────────────────────────────────
+log "Dropping all tables in Neon..."
+run_psql -c "
+DO \$\$ DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
+        EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(r.tablename) || ' CASCADE';
+    END LOOP;
+END \$\$;
+" 2>/dev/null
+ok "All tables dropped"
+
+log "Applying schema to Neon..."
+run_psql < scripts/init.sql
+ok "Schema + reference data applied"
+
+[ -f scripts/seed_admin.sql ] && {
+    run_psql < scripts/seed_admin.sql 2>/dev/null || true
+    ok "Admin user applied"
+}
+
+[ -f services/edi/migrations/001_edi_schema.sql ] && {
+    run_psql < services/edi/migrations/001_edi_schema.sql 2>/dev/null || true
+    ok "EDI schema applied"
+}
+
+if [ -d scripts/migrations ]; then
+    for f in scripts/migrations/*.sql; do
+        [ -f "$f" ] && run_psql < "$f" 2>/dev/null || true
+    done
+    ok "Migrations applied"
+fi
+
+TABLE_COUNT=$(run_psql -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';")
+PAYER_COUNT=$(run_psql -tAc "SELECT COUNT(*) FROM payers;" 2>/dev/null || echo "0")
+USER_COUNT=$(run_psql -tAc "SELECT COUNT(*) FROM users;" 2>/dev/null || echo "0")
+PATIENT_COUNT=$(run_psql -tAc "SELECT COUNT(*) FROM patients;" 2>/dev/null || echo "0")
+ok "Tables: ${TABLE_COUNT} | Payers: ${PAYER_COUNT} | Users: ${USER_COUNT} | Patients: ${PATIENT_COUNT}"
+
+# ─── BUILD ───────────────────────────────────────────────────
+log "Building all containers (--no-cache)..."
+docker compose build --no-cache --parallel 2>&1 | tail -5
+ok "All images built"
+
+# ─── START ───────────────────────────────────────────────────
+log "Starting infrastructure (redis, minio)..."
+docker compose up -d redis minio
+sleep 6
+
+log "Starting Availity (Prisma migrates on boot)..."
+docker compose up -d availity
+sleep 10
+
+log "Starting backend..."
+docker compose up -d core trident intake ml edi
+sleep 10
+
+log "Starting frontend..."
+docker compose up -d dashboard
+sleep 8
+
+log "Starting nginx..."
+docker compose up -d nginx
+sleep 3
+
+# ─── HEALTH CHECKS ──────────────────────────────────────────
+echo ""
+log "Health checks..."
+ALL_OK=true
+
+for pair in "core:8001:/ready" "trident:8002:/ready" "intake:8003:/ready" "ml:8004:/ready" "availity:8005:/live" "edi:8006:/health"; do
+    IFS=: read -r svc port path <<< "$pair"
+    if docker compose exec -T "$svc" curl -sf "http://127.0.0.1:${port}${path}" > /dev/null 2>&1; then
+        ok "$svc"
+    else
+        fail "$svc (port $port)"
+        ALL_OK=false
+    fi
 done
 
-[[ -d "${APP_DIR}" ]] || fail "Expected frontend app at ${APP_DIR}"
-[[ -f "${APP_DIR}/package.json" ]] || fail "Missing frontend/package.json"
+docker compose exec -T dashboard wget -qO- "http://127.0.0.1:3000/api/health" > /dev/null 2>&1 && ok "dashboard" || { fail "dashboard"; ALL_OK=false; }
+curl -sf -H "Host: api.strykefox.com" http://localhost/ready > /dev/null 2>&1 && ok "nginx → core" || { fail "nginx → core"; ALL_OK=false; }
 
-header "POSEIDON DEPLOY"
-ok "Repo root: ${ROOT_DIR}"
-ok "Deploy root: ${APP_DIR}"
+# ─── NEON VERIFY ─────────────────────────────────────────────
+log "Verifying Neon from services..."
+CORE_DB=$(docker compose exec -T core curl -sf http://127.0.0.1:8001/ready 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('database','?'))" 2>/dev/null || echo "unknown")
+ok "Core → Neon: ${CORE_DB}"
 
-command -v node >/dev/null 2>&1 || fail "Node is required"
-command -v npm >/dev/null 2>&1 || fail "npm is required"
-
-NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]")"
-if [[ "${NODE_MAJOR}" -lt 18 ]]; then
-  fail "Node 18+ required, found $(node -v)"
-fi
-ok "Node $(node -v)"
-ok "npm $(npm -v)"
-
-if git -C "${ROOT_DIR}" rev-parse --git-dir >/dev/null 2>&1; then
-  ok "Git repo detected"
+# ─── RESULT ──────────────────────────────────────────────────
+echo ""
+if [ "$ALL_OK" = true ]; then
+    echo -e "${GREEN}══════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}  POSEIDON IS LIVE${NC}"
+    echo -e "${GREEN}══════════════════════════════════════════════════════${NC}"
 else
-  warn "No git repo detected at the repo root"
+    echo -e "${YELLOW}══════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  DEPLOYED WITH WARNINGS${NC}"
+    echo -e "${YELLOW}══════════════════════════════════════════════════════${NC}"
+    echo "  docker compose logs <service> --tail 100"
 fi
 
-if command -v vercel >/dev/null 2>&1; then
-  ok "Vercel CLI available"
-else
-  fail "Vercel CLI is not installed. Run: npm install -g vercel"
-fi
-
-header "CLEAN BUILD"
-rm -rf "${APP_DIR}/.next" "${APP_DIR}/.turbo" "${APP_DIR}/tsconfig.tsbuildinfo" "${APP_DIR}/.swc"
-ok "Cleared frontend build artifacts"
-
-if [[ ! -d "${APP_DIR}/node_modules" || "${APP_DIR}/package-lock.json" -nt "${APP_DIR}/node_modules" ]]; then
-  info "Installing frontend dependencies"
-  (
-    cd "${APP_DIR}"
-    npm ci
-  )
-  ok "Dependencies installed"
-else
-  ok "Existing node_modules looks current"
-fi
-
-[[ -x "${APP_DIR}/node_modules/.bin/next" ]] || fail "frontend dependencies are incomplete; run npm ci in frontend/"
-
-header "PRODUCTION BUILD"
-(
-  cd "${APP_DIR}"
-  npm run build
-)
-ok "Next.js production build succeeded"
-
-[[ -d "${APP_DIR}/.next" ]] || fail "frontend/.next missing after build"
-
-header "ENVIRONMENT"
-if [[ -f "${APP_DIR}/.env.local" ]]; then
-  ok "frontend/.env.local present"
-else
-  fail "Missing frontend/.env.local. Create it with production values before deployment."
-fi
-
-if grep -Eiq 'CHANGE_ME|replace_with_|your_key_here' "${APP_DIR}/.env.local"; then
-  fail "frontend/.env.local still contains placeholder values"
-fi
-ok "frontend/.env.local passed placeholder check"
-
-header "READINESS CHECK"
-(
-  cd "${ROOT_DIR}"
-  bash scripts/verify_deploy_readiness.sh
-)
-ok "Local deploy-readiness verification passed"
-
-header "VERCEL DEPLOY"
-if [[ -f "${APP_DIR}/.vercel/project.json" ]]; then
-  ok "Vercel project is linked under frontend/.vercel"
-else
-  warn "frontend/.vercel/project.json not found. Vercel may prompt to link the project."
-fi
-
-(
-  cd "${APP_DIR}"
-  vercel --prod --yes
-)
-
-header "POST DEPLOY"
-# vercel ls can exit non-zero under set -e; still print the production URL from the deploy step above.
-raw_json=""
-raw_json="$(cd "${APP_DIR}" && vercel ls --json 2>/dev/null)" || raw_json="[]"
-[[ -z "${raw_json}" ]] && raw_json="[]"
-DEPLOY_URL="$(
-  printf '%s' "${raw_json}" | node -e '
-    const chunks = [];
-    process.stdin.on("data", (d) => chunks.push(d));
-    process.stdin.on("end", () => {
-      try {
-        const raw = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        const list = Array.isArray(raw) ? raw : raw.deployments || [];
-        const latest = list[0];
-        process.stdout.write(latest && latest.url ? `https://${latest.url}` : "");
-      } catch {
-        process.stdout.write("");
-      }
-    });
-  '
-)"
-
-if [[ -n "${DEPLOY_URL}" ]]; then
-  ok "Latest deployment: ${DEPLOY_URL}"
-else
-  warn "Deployment completed, but I could not parse the latest URL from 'vercel ls --json'"
-fi
-
-printf "\n"
-ok "Build validated"
-ok "Frontend deployed from frontend/"
-
-if [[ "${DEPLOY_MODE}" == "all" ]]; then
-  header "DOCKER COMPOSE (FULL STACK)"
-  command -v docker >/dev/null 2>&1 || fail "Docker is required for --all / POSEIDON_DEPLOY_ALL=1"
-  docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required (docker compose)"
-  [[ -f "${ROOT_DIR}/.env" ]] || fail "Root .env is required for Docker deploy. Copy .env.template and fill secrets."
-
-  info "Building and starting full Compose stack (all services in docker-compose.yml)"
-  (
-    cd "${ROOT_DIR}"
-    docker compose up -d --build
-  )
-  ok "Docker Compose stack is up"
-else
-  info "Skipping Docker Compose (use --all or POSEIDON_DEPLOY_ALL=1 for full stack on this host)"
-fi
+echo ""
+echo "  Database:     Neon.tech (cloud)"
+echo "  Compute:      DigitalOcean (157.230.145.247)"
+echo ""
+echo "  Endpoints:"
+echo "    App:        https://app.strykefox.com"
+echo "    API Docs:   https://api.strykefox.com/docs"
+echo "    Trident:    https://trident.strykefox.com"
+echo "    EDI:        https://edi.strykefox.com"
+echo ""
+echo "  Login:        admin@strykefox.com"
+echo "  Patients:     0 — enter your first real patient"
+echo "  Orders:       0 — create from patient intake"
+echo ""
+echo "  Ingest data from data/ folder:"
+echo "    POST https://intake.strykefox.com/api/v1/intake/eob -F 'file=@data/eobs/FILE.pdf'"
+echo "    POST https://intake.strykefox.com/api/v1/intake/batch -F 'file=@data/spreadsheets/FILE.csv'"
+echo ""

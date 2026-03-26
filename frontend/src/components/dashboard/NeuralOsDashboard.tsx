@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import type { ComponentProps } from "react"
+import React, { type ComponentProps } from "react"
 import { useEffect, useMemo, useState } from "react"
 import { signOut, useSession } from "next-auth/react"
 
@@ -245,8 +245,18 @@ export default function NeuralOsDashboard({
     { href: "/executive", label: "Executive", active: false },
     { href: "/ceo", label: "CEO", active: false },
     { href: "/intake", label: "Intake", active: false },
+    { href: "/revenue", label: "Revenue", active: false },
     { href: "/edi", label: "EDI", active: false },
-    ...(canManageUsers ? [{ href: "/settings", label: "Settings", active: false }] : []),
+    { href: "/fax", label: "Fax", active: false },
+    ...(canManageUsers
+      ? [
+          { href: "/settings", label: "Settings", active: false },
+          { href: "/admin/denials/queue", label: "Denials", active: false },
+          { href: "/admin/integrations/availity", label: "Integrations", active: false },
+          { href: "/admin/learning", label: "Learning", active: false },
+          { href: "/admin/playbooks", label: "Playbooks", active: false },
+        ]
+      : []),
   ]
 
   return (
@@ -390,20 +400,27 @@ export default function NeuralOsDashboard({
             </div>
 
             <nav className="space-y-1">
-              {navItems.map((item) => (
-                <Link
-                  key={item.href}
-                  className={cn(
-                    "block rounded-lg px-3 py-2.5 text-sm transition",
-                    item.active
-                      ? "bg-cyan-400/10 text-cyan-200 font-medium"
-                      : "text-slate-300 hover:bg-white/5 hover:text-white",
+              {navItems.map((item, idx) => (
+                <React.Fragment key={item.href}>
+                  {idx > 0 && item.href.startsWith("/admin") && !navItems[idx - 1].href.startsWith("/admin") && (
+                    <div className="my-2 border-t border-white/8" />
                   )}
-                  href={item.href}
-                  onClick={() => setMenuOpen(false)}
-                >
-                  {item.label}
-                </Link>
+                  {idx > 0 && item.href.startsWith("/admin") && !navItems[idx - 1].href.startsWith("/admin") && (
+                    <p className="px-3 pt-1 pb-1 font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500">Admin</p>
+                  )}
+                  <Link
+                    className={cn(
+                      "block rounded-lg px-3 py-2.5 text-sm transition",
+                      item.active
+                        ? "bg-cyan-400/10 text-cyan-200 font-medium"
+                        : "text-slate-300 hover:bg-white/5 hover:text-white",
+                    )}
+                    href={item.href}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    {item.label}
+                  </Link>
+                </React.Fragment>
               ))}
               <Link
                 className="block rounded-lg px-3 py-2.5 text-sm text-slate-300 transition hover:bg-white/5 hover:text-white"
@@ -638,7 +655,18 @@ function PatientCard({
           <p className="mt-1 text-xs text-slate-400 leading-tight">{card.payer}</p>
           <div className="mt-2 flex items-center justify-between">
             <span className="text-sm font-semibold text-white">{card.value}</span>
-            <span className="text-[10px] text-slate-500">{formatDateLabel(card.due)}</span>
+            <div className="flex items-center gap-2">
+              {(card.href || card.patientId) && (
+                <Link
+                  href={card.href || `/patients/${card.patientId}`}
+                  className="rounded-full border border-cyan-400/25 px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-cyan-300 hover:border-cyan-400 hover:text-white"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  Chart
+                </Link>
+              )}
+              <span className="text-[10px] text-slate-500">{formatDateLabel(card.due)}</span>
+            </div>
           </div>
           {card.locked && (
             <div className="mt-2 flex items-center gap-1.5 rounded bg-amber-400/10 px-2 py-1 text-[10px] text-amber-300">
@@ -691,28 +719,20 @@ function PatientCard({
               </div>
             )}
 
-            {/* Documents */}
-            <div className="mt-5">
-              <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.25em] text-slate-500">Documents & PDFs</p>
-              <div className="grid gap-2">
-                <DocRow label="Signed Work Order (SWO)" href={`/api/documents/swo/${orderId}`} />
-                <DocRow label="CMS-1500 Claim Form" href={`/api/documents/cms1500/${orderId}`} />
-                <DocRow label="Explanation of Benefits (EOB)" href={`/api/documents/eob/${orderId}`} />
-                {(columnId === "paid" || columnId === "submitted") && (
-                  <DocRow label="Proof of Delivery (POD)" href={`/api/documents/pod/${orderId}`} />
-                )}
-                <DocRow label="Clinical Notes" href={`/api/patients/${card.patientId}/chart`} />
-              </div>
-            </div>
-
             {/* Actions */}
             <div className="mt-5 flex gap-3">
-              <Link
-                className="flex-1 rounded-lg border border-cyan-400/30 bg-cyan-400/10 py-3 text-center text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
-                href={card.href || `/patients/${card.patientId}`}
-              >
-                Open Full Record
-              </Link>
+              {(card.href || card.patientId) ? (
+                <Link
+                  className="flex-1 rounded-lg border border-cyan-400/30 bg-cyan-400/10 py-3 text-center text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
+                  href={card.href || `/patients/${card.patientId}`}
+                >
+                  Open Full Record
+                </Link>
+              ) : (
+                <span className="flex-1 rounded-lg border border-white/10 bg-white/5 py-3 text-center text-sm text-slate-500 cursor-not-allowed">
+                  No patient linked
+                </span>
+              )}
               <button
                 className="rounded-lg border border-white/10 bg-white/5 px-5 py-3 text-sm text-slate-300 transition hover:text-white"
                 onClick={onToggle}

@@ -1,0 +1,199 @@
+# ============================================================================
+# Poseidon — Render Blueprint
+# Deploy all services to Render free tier
+# Docs: https://docs.render.com/blueprint-spec
+# ============================================================================
+
+services:
+  # ── Core API (Python/FastAPI) ──────────────────────────────────────────────
+  - type: web
+    name: poseidon-core
+    runtime: docker
+    dockerfilePath: services/core/Dockerfile
+    dockerContext: services
+    plan: free
+    healthCheckPath: /ready
+    envVars:
+      - key: PORT
+        value: "8001"
+      - key: DATABASE_URL
+        fromGroup: poseidon-shared
+      - key: REDIS_URL
+        fromGroup: poseidon-shared
+      - key: JWT_SECRET
+        fromGroup: poseidon-shared
+      - key: SECRET_KEY
+        fromGroup: poseidon-shared
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRY_HOURS
+        value: "8"
+      - key: MINIO_ENDPOINT
+        fromGroup: poseidon-shared
+      - key: MINIO_ACCESS_KEY
+        fromGroup: poseidon-shared
+      - key: MINIO_SECRET_KEY
+        fromGroup: poseidon-shared
+      - key: MINIO_BUCKET
+        value: poseidon-docs
+      - key: MINIO_SECURE
+        value: "false"
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PHI_IN_LOGS
+        value: "false"
+      - key: SERVICE_NAME
+        value: core
+
+  # ── Trident ML (Python/FastAPI) ────────────────────────────────────────────
+  - type: web
+    name: poseidon-trident
+    runtime: docker
+    dockerfilePath: services/trident/Dockerfile
+    dockerContext: services
+    plan: free
+    healthCheckPath: /ready
+    envVars:
+      - key: PORT
+        value: "8002"
+      - key: DATABASE_URL
+        fromGroup: poseidon-shared
+      - key: REDIS_URL
+        fromGroup: poseidon-shared
+      - key: JWT_SECRET
+        fromGroup: poseidon-shared
+      - key: SECRET_KEY
+        fromGroup: poseidon-shared
+      - key: SERVICE_NAME
+        value: trident
+
+  # ── Intake (Python/FastAPI) ────────────────────────────────────────────────
+  - type: web
+    name: poseidon-intake
+    runtime: docker
+    dockerfilePath: services/intake/Dockerfile
+    dockerContext: services
+    plan: free
+    healthCheckPath: /ready
+    envVars:
+      - key: PORT
+        value: "8003"
+      - key: DATABASE_URL
+        fromGroup: poseidon-shared
+      - key: REDIS_URL
+        fromGroup: poseidon-shared
+      - key: JWT_SECRET
+        fromGroup: poseidon-shared
+      - key: SECRET_KEY
+        fromGroup: poseidon-shared
+      - key: SERVICE_NAME
+        value: intake
+
+  # ── ML Service (Python/FastAPI) ────────────────────────────────────────────
+  - type: web
+    name: poseidon-ml
+    runtime: docker
+    dockerfilePath: services/ml/Dockerfile
+    dockerContext: services
+    plan: free
+    healthCheckPath: /ready
+    envVars:
+      - key: PORT
+        value: "8004"
+      - key: DATABASE_URL
+        fromGroup: poseidon-shared
+      - key: REDIS_URL
+        fromGroup: poseidon-shared
+      - key: JWT_SECRET
+        fromGroup: poseidon-shared
+      - key: SECRET_KEY
+        fromGroup: poseidon-shared
+      - key: SERVICE_NAME
+        value: ml
+
+  # ── EDI Service (Python/FastAPI) ───────────────────────────────────────────
+  - type: web
+    name: poseidon-edi
+    runtime: docker
+    dockerfilePath: services/edi/Dockerfile
+    dockerContext: services/edi
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8006"
+      - key: DATABASE_URL
+        fromGroup: poseidon-shared
+      - key: REDIS_URL
+        fromGroup: poseidon-shared
+      - key: STEDI_API_KEY
+        fromGroup: poseidon-shared
+      - key: EDI_DRY_RUN
+        value: "true"
+      - key: SUBMISSION_METHOD
+        value: stedi_api
+      - key: SERVICE_NAME
+        value: edi
+
+  # ── Dashboard (Next.js) ────────────────────────────────────────────────────
+  - type: web
+    name: poseidon-dashboard
+    runtime: docker
+    dockerfilePath: frontend/Dockerfile
+    dockerContext: frontend
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: "3000"
+      - key: NEXTAUTH_SECRET
+        fromGroup: poseidon-shared
+      - key: NEXTAUTH_URL
+        sync: false  # Set after first deploy to your Render URL
+      - key: CORE_API_URL
+        sync: false  # Set to https://poseidon-core.onrender.com
+      - key: TRIDENT_API_URL
+        sync: false  # Set to https://poseidon-trident.onrender.com
+      - key: INTAKE_API_URL
+        sync: false  # Set to https://poseidon-intake.onrender.com
+      - key: ML_API_URL
+        sync: false  # Set to https://poseidon-ml.onrender.com
+      - key: EDI_API_URL
+        sync: false  # Set to https://poseidon-edi.onrender.com
+      - key: SINCH_PROJECT_ID
+        fromGroup: poseidon-shared
+      - key: SINCH_KEY_ID
+        fromGroup: poseidon-shared
+      - key: SINCH_KEY_SECRET
+        fromGroup: poseidon-shared
+
+# ── Shared Environment Variables ─────────────────────────────────────────────
+envVarGroups:
+  - name: poseidon-shared
+    envVars:
+      - key: DATABASE_URL
+        sync: false  # Set to your Neon connection string
+      - key: REDIS_URL
+        value: ""  # Add Render Redis URL or leave empty (services degrade gracefully)
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SECRET_KEY
+        generateValue: true
+      - key: NEXTAUTH_SECRET
+        generateValue: true
+      - key: MINIO_ENDPOINT
+        value: ""  # Optional: add S3/MinIO endpoint
+      - key: MINIO_ACCESS_KEY
+        value: ""
+      - key: MINIO_SECRET_KEY
+        value: ""
+      - key: STEDI_API_KEY
+        value: ""
+      - key: SINCH_PROJECT_ID
+        sync: false  # Set in Render dashboard
+      - key: SINCH_KEY_ID
+        sync: false
+      - key: SINCH_KEY_SECRET
+        sync: false

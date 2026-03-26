@@ -177,7 +177,8 @@ def generate_837p(order: dict, diags: list, lines: list, icn: str) -> str:
             dos_end = _fmt_date(line.get('dos_end') or line.get('dos_start') or order.get('dos_start'))
             hcpcs = line['hcpcs_code']
             modifier = line.get('modifier', '')
-            charge = f"{float(line.get('charge_amount', 0)):.2f}"
+            # Some rows have NULL charge_amount; treat as 0 for dry-run determinism.
+            charge = f"{float(line.get('charge_amount') or 0):.2f}"
             units = str(line.get('units', 1))
 
             # Diagnosis pointers
@@ -278,9 +279,10 @@ def _filing_code(payer_type: Optional[str]) -> str:
 
 def _total_charge(order: dict, lines: list) -> str:
     if lines:
-        total = sum(float(l.get("charge_amount", 0)) for l in lines)
+        # Some line items may have NULL charge amounts; treat as 0 for determinism.
+        total = sum(float(l.get("charge_amount") or 0) for l in lines)
     else:
-        total = float(order.get("billed_amount", 0))
+        total = float(order.get("billed_amount") or order.get("total_billed") or 0)
     return f"{total:.2f}"
 
 

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -143,8 +144,25 @@ def _days_since(value: Any) -> int:
     return max(0, (datetime.now(timezone.utc) - value).days)
 
 
+def _normalize_protocol_status(status: str | None) -> str:
+    """Map DB order.status values onto the predictive protocol branches."""
+    s = (status or "").lower()
+    if s in {"paid", "closed"}:
+        return "paid"
+    if s in {"appeal_pending", "appeal_submitted"}:
+        return "appealed"
+    if s in {"auth_approved", "ready_to_submit", "physician_signature", "documents_pending"}:
+        return "authorized"
+    if s in {"pending_payment", "partial_payment"}:
+        return "submitted"
+    if s in {"intake", "eligibility_check", "eligibility_failed", "write_off", "cancelled"}:
+        return "draft"
+    return s or "draft"
+
+
 def _build_outstanding_protocol(row: dict[str, Any]) -> dict[str, Any]:
-    status = row["status"]
+    raw_status = str(row.get("status") or "")
+    status = _normalize_protocol_status(raw_status)
     payer_name = row.get("payer_name") or row.get("payer_id")
     hcpcs_codes = _coerce_json_list(row.get("hcpcs_codes"))
     baseline_denial_rate = float(row.get("baseline_denial_rate") or 0.35)
@@ -162,7 +180,14 @@ def _build_outstanding_protocol(row: dict[str, Any]) -> dict[str, Any]:
     predicted_payment_days = 30
     notes: list[str] = []
 
-    if status == "denied":
+    if status == "paid":
+        protocol_type = "reconciled"
+        priority = "normal"
+        next_action = "Claim paid or closed — reconcile cash and close tasks"
+        collection_probability = 1.0
+        predicted_payment_days = 0
+        notes.append("Terminal state for payment forecasting")
+    elif status == "denied":
         protocol_type = "appeal_kill"
         priority = "urgent"
         appeal_deadline = row.get("appeal_deadline")
@@ -217,6 +242,13 @@ def _build_outstanding_protocol(row: dict[str, Any]) -> dict[str, Any]:
             datetime.now(timezone.utc) + timedelta(days=predicted_payment_days)
         ).date().isoformat()
 
+    ad = row.get("appeal_deadline")
+    appeal_deadline_out = None
+    if ad is not None and getattr(ad, "isoformat", None):
+        appeal_deadline_out = ad.isoformat()
+    elif isinstance(ad, str):
+        appeal_deadline_out = ad
+
     return {
         "order_id": str(row["id"]),
         "patient_id": str(row["patient_id"]),
@@ -224,19 +256,303 @@ def _build_outstanding_protocol(row: dict[str, Any]) -> dict[str, Any]:
         "payer_id": row.get("payer_id"),
         "payer_name": payer_name,
         "status": status,
+        "status_code": raw_status,
         "priority": priority,
         "protocol_type": protocol_type,
         "next_action": next_action,
         "days_in_stage": days_in_stage,
         "hcpcs_codes": hcpcs_codes,
         "denial_category": row.get("denial_category"),
-        "appeal_deadline": row.get("appeal_deadline").isoformat() if getattr(row.get("appeal_deadline"), "isoformat", None) else row.get("appeal_deadline"),
+        "appeal_deadline": appeal_deadline_out,
         "predicted_payment_date": predicted_payment_date,
         "predicted_payment_window_days": predicted_payment_days,
         "estimated_collection_probability": collection_probability,
         "outstanding_amount": outstanding_amount,
         "notes": notes,
     }
+
+
+def _catalogue_payload(order: dict[str, Any]) -> dict[str, Any]:
+    vertical = str(order.get("vertical") or "").strip()
+    product_category = str(order.get("product_category") or "").strip()
+    source = str(order.get("source") or "").strip()
+    source_channel = str(order.get("source_channel") or "manual").strip()
+    source_reference = str(order.get("source_reference") or "").strip()
+    parts: list[str] = []
+    if vertical:
+        parts.append(f"Vertical: {vertical.upper()}")
+    if product_category:
+        parts.append(f"Category: {product_category}")
+    if source_channel:
+        parts.append(f"Channel: {source_channel}")
+    if source and source.lower() != source_channel.lower():
+        parts.append(f"Source: {source}")
+    if source_reference:
+        parts.append(f"Ref: {source_reference}")
+    label = " · ".join(parts) if parts else "Default catalogue (manual / unspecified)"
+    return {
+        "label": label,
+        "vertical": vertical or None,
+        "product_category": product_category or None,
+        "source_channel": source_channel or None,
+        "source": source or None,
+        "source_reference": source_reference or None,
+    }
+
+
+async def _fetch_learned_rates_map(
+    conn, org_id: str, payer_id: str | None, codes: list[str]
+) -> dict[str, dict[str, Any]]:
+    if not payer_id or not codes:
+        return {}
+    clean_codes = sorted({str(c).strip().upper() for c in codes if c})
+    if not clean_codes:
+        return {}
+    rows = await fetch_all(
+        conn,
+        """
+        SELECT DISTINCT ON (hcpcs_code)
+            hcpcs_code,
+            avg_paid,
+            median_paid,
+            min_paid,
+            max_paid,
+            denial_rate,
+            sample_count
+        FROM learned_rates
+        WHERE payer_id = $1
+          AND hcpcs_code = ANY($2::text[])
+          AND (org_id::text = $3 OR org_id IS NULL)
+        ORDER BY hcpcs_code,
+                 CASE WHEN org_id::text = $3 THEN 0 WHEN org_id IS NULL THEN 1 ELSE 2 END,
+                 sample_count DESC NULLS LAST
+        """,
+        payer_id,
+        clean_codes,
+        str(org_id),
+    )
+    return {str(r["hcpcs_code"]).upper(): dict(r) for r in rows}
+
+
+async def _enrich_chart_order_bundle(
+    conn,
+    org_id: str,
+    bundle: dict[str, Any],
+    denial_for_order: dict[str, Any] | None,
+) -> None:
+    payer_id = bundle.get("payer_id")
+    if isinstance(payer_id, str):
+        payer_id = payer_id.strip() or None
+    base_codes = _coerce_json_list(bundle.get("hcpcs_codes"))
+    line_items: list[dict[str, Any]] = [dict(x) for x in (bundle.get("line_items") or [])]
+    if not line_items:
+        for code in base_codes:
+            if not code:
+                continue
+            line_items.append(
+                {
+                    "id": None,
+                    "order_id": bundle.get("id"),
+                    "hcpcs_code": str(code).strip().upper(),
+                    "modifier": None,
+                    "description": None,
+                    "quantity": 1,
+                    "unit_price": None,
+                    "billed_amount": None,
+                    "allowed_amount": None,
+                    "paid_amount": None,
+                    "is_billable": True,
+                    "_synthetic": True,
+                }
+            )
+    codes_for_rates: list[str] = []
+    for li in line_items:
+        c = li.get("hcpcs_code")
+        if c:
+            codes_for_rates.append(str(c).strip().upper())
+    for c in base_codes:
+        if c:
+            cu = str(c).strip().upper()
+            if cu not in codes_for_rates:
+                codes_for_rates.append(cu)
+    rates = await _fetch_learned_rates_map(conn, org_id, str(payer_id) if payer_id else None, codes_for_rates)
+
+    try:
+        order_allowed = float(bundle.get("total_allowed") or 0)
+    except (TypeError, ValueError):
+        order_allowed = 0.0
+    try:
+        order_billed = float(bundle.get("total_billed") or 0)
+    except (TypeError, ValueError):
+        order_billed = 0.0
+    n_alloc = max(len(line_items), 1)
+
+    enriched_items: list[dict[str, Any]] = []
+    for li in line_items:
+        item = dict(li)
+        code = str(item.get("hcpcs_code") or "").strip().upper()
+        qty = max(int(item.get("quantity") or 1), 1)
+        lr = rates.get(code) if code else None
+        allowed = item.get("allowed_amount")
+        billed = item.get("billed_amount")
+        try:
+            f_allowed = float(allowed) if allowed is not None else None
+        except (TypeError, ValueError):
+            f_allowed = None
+        try:
+            f_billed = float(billed) if billed is not None else None
+        except (TypeError, ValueError):
+            f_billed = None
+        expected: float | None = None
+        if lr:
+            med = lr.get("median_paid") if lr.get("median_paid") is not None else lr.get("avg_paid")
+            if med is not None:
+                try:
+                    expected = float(med) * qty
+                except (TypeError, ValueError):
+                    expected = None
+        if expected is None and f_allowed is not None:
+            expected = f_allowed * qty
+        if expected is None and order_allowed > 0:
+            expected = round(order_allowed / n_alloc, 2) * qty
+        if expected is None and f_billed is not None:
+            expected = f_billed * qty
+        if expected is None and order_billed > 0:
+            expected = round(order_billed / n_alloc, 2) * qty
+        item["expected_reimbursement"] = round(expected, 2) if expected is not None else None
+        item["learned_rate"] = (
+            {
+                "median_paid": float(lr["median_paid"]) if lr.get("median_paid") is not None else None,
+                "avg_paid": float(lr["avg_paid"]) if lr.get("avg_paid") is not None else None,
+                "denial_rate": float(lr["denial_rate"]) if lr.get("denial_rate") is not None else None,
+                "sample_count": int(lr["sample_count"] or 0),
+            }
+            if lr
+            else None
+        )
+        enriched_items.append(item)
+
+    bundle["billing_line_items"] = _serialize(enriched_items)
+    bundle["catalogue"] = _catalogue_payload(bundle)
+
+    br = bundle.get("payer_baseline_denial_rate")
+    try:
+        baseline = float(br) if br is not None else 0.35
+    except (TypeError, ValueError):
+        baseline = 0.35
+
+    proto_row: dict[str, Any] = {
+        "id": bundle.get("id"),
+        "patient_id": bundle.get("patient_id"),
+        "first_name": bundle.get("patient_first_name"),
+        "last_name": bundle.get("patient_last_name"),
+        "status": bundle.get("status"),
+        "payer_id": bundle.get("payer_id"),
+        "payer_name": bundle.get("payer_name") or bundle.get("payer_id"),
+        "hcpcs_codes": bundle.get("hcpcs_codes"),
+        "baseline_denial_rate": baseline,
+        "updated_at": bundle.get("updated_at"),
+        "created_at": bundle.get("created_at"),
+        "denied_amount": bundle.get("denied_amount"),
+        "paid_amount": bundle.get("paid_amount"),
+        "denial_category": bundle.get("denial_category"),
+    }
+    if denial_for_order:
+        proto_row["appeal_deadline"] = denial_for_order.get("appeal_deadline")
+
+    pred = _build_outstanding_protocol(proto_row)
+    drs = bundle.get("denial_risk_score")
+    if drs is not None:
+        try:
+            pred["denial_risk_score"] = float(drs)
+        except (TypeError, ValueError):
+            pred["denial_risk_score"] = None
+    else:
+        pred["denial_risk_score"] = None
+    pred["risk_tier"] = bundle.get("risk_tier")
+    pred["trident_flags"] = bundle.get("trident_flags")
+    bundle["predictive_modeling"] = _serialize(pred)
+
+
+def _infer_catalog_metadata(hcpcs_codes: list[str]) -> tuple[str, str, str]:
+    """Return (vertical, product_category, source catalogue label) from HCPCS list."""
+    blob = " ".join(str(c) for c in hcpcs_codes).lower()
+    if any(
+        k in blob
+        for k in (
+            "k08",
+            "k0001",
+            "k0002",
+            "k0003",
+            "k0004",
+            "k0005",
+            "k0333",
+            "wheelchair",
+            "mobility",
+            "crt",
+            "power chair",
+        )
+    ):
+        return "mobility", "Complex mobility & CRT", "Matia mobility catalogue"
+    if any(k in blob for k in ("biolog", "graft", "amniotic", "tissue matrix", "q4")):
+        return "biologics", "Tissue & biologics", "Biologics formulary catalogue"
+    if any(k in blob for k in ("implant", "stimulator", "l8680", "fusion")):
+        return "dme", "Surgical implants & supplies", "Implant device catalogue"
+    return "dme", "DME & supplies", "StrykeFox DME catalogue"
+
+
+async def _seed_order_line_items_from_hcpcs(conn: Any, order_id: str, hcpcs_codes: list[str]) -> None:
+    if not hcpcs_codes:
+        return
+    existing = await fetch_one(
+        conn,
+        "SELECT 1 AS x FROM order_line_items WHERE order_id = $1 LIMIT 1",
+        order_id,
+    )
+    if existing:
+        return
+    for code in hcpcs_codes:
+        c = str(code or "").strip().upper()
+        if not c:
+            continue
+        await exec_write(
+            conn,
+            """
+            INSERT INTO order_line_items (id, order_id, hcpcs_code, quantity, is_billable)
+            VALUES ($1, $2, $3, 1, true)
+            """,
+            str(uuid.uuid4()),
+            order_id,
+            c,
+        )
+
+
+async def _seed_order_diagnoses_from_codes(conn: Any, order_id: str, diagnosis_codes: list[str]) -> None:
+    if not diagnosis_codes:
+        return
+    existing = await fetch_one(
+        conn,
+        "SELECT 1 AS x FROM order_diagnoses WHERE order_id = $1 LIMIT 1",
+        order_id,
+    )
+    if existing:
+        return
+    for i, code in enumerate(diagnosis_codes):
+        c = str(code or "").strip().upper()
+        if not c:
+            continue
+        await exec_write(
+            conn,
+            """
+            INSERT INTO order_diagnoses (id, order_id, icd10_code, description, is_primary, sequence)
+            VALUES ($1, $2, $3, NULL, $4, $5)
+            """,
+            str(uuid.uuid4()),
+            order_id,
+            c,
+            i == 0,
+            i + 1,
+        )
 
 
 def _normalize_text(value: Any) -> str:
@@ -889,8 +1205,6 @@ def _validate_status_transition(order: dict[str, Any], new_status: OrderStatus) 
     denial_category = _normalize_text(order.get("denial_category")).lower()
 
     if new_status in {OrderStatus.AUTHORIZED, OrderStatus.SUBMITTED}:
-        if eligibility_status != "eligible":
-            return "Eligibility must be verified through Availity before this order can move forward."
         if swo_status != "ingested":
             return "SWO must be created, sent, and returned before this order can move out of intake."
 
@@ -1191,6 +1505,15 @@ class UserPasswordUpdate(BaseModel):
     password: str
 
 
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
+
 class AdminUserUpdate(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
@@ -1233,6 +1556,9 @@ class OrderCreate(BaseModel):
     source_channel: str | None = "manual"
     source_reference: str | None = None
     intake_payload: dict[str, Any] | None = None
+    vertical: str | None = None
+    product_category: str | None = None
+    source: str | None = None
 
 
 class DenialCreate(BaseModel):
@@ -1395,6 +1721,14 @@ class OrdersImportRequest(BaseModel):
     orders: list[ImportOrderPayload]
 
 
+class PatientNoteCreate(BaseModel):
+    content: str
+
+
+class PatientAssignRepRequest(BaseModel):
+    rep_id: str
+
+
 def _import_stable_insurance_id(
     row: ImportOrderPayload,
     first_name: str,
@@ -1493,7 +1827,7 @@ async def _import_find_existing_draft_duplicate(
                 SELECT 1 FROM patients p
                 WHERE p.id = o.patient_id
                   AND p.diagnosis_codes IS NOT NULL
-                  AND p.diagnosis_codes = $5::jsonb
+                  AND p.diagnosis_codes = $6::jsonb
               )
             )
           )
@@ -1504,6 +1838,7 @@ async def _import_find_existing_draft_duplicate(
         patient_id,
         payer_id,
         hcpcs_norm,
+        diag_norm,
         diag_norm,
     )
 
@@ -1711,6 +2046,152 @@ async def login(payload: LoginRequest, request: Request):
         "user_id": str(row["id"]),
         "permissions": effective_permissions,
     }
+
+
+# ---------------------------------------------------------------------------
+# Password Reset
+# ---------------------------------------------------------------------------
+
+def _generate_reset_token() -> tuple[str, str]:
+    """Generate a random reset token and its SHA-256 hash for DB storage."""
+    raw = uuid.uuid4().hex + uuid.uuid4().hex  # 64 hex chars
+    token_hash = hashlib.sha256(raw.encode()).hexdigest()
+    return raw, token_hash
+
+
+@app.post("/auth/request-reset")
+async def request_password_reset(payload: PasswordResetRequest, request: Request):
+    """
+    Request a password reset link. Always returns 200 to prevent email enumeration.
+    If SMTP is configured, emails the link. Otherwise, the token is logged (admin retrieval).
+    """
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        row = await fetch_one(
+            conn,
+            "SELECT id, org_id, email FROM users WHERE email = $1 AND active = true",
+            payload.email,
+        )
+        if not row:
+            # Don't reveal whether email exists
+            return {"status": "ok", "message": "If that email is registered, a reset link has been sent."}
+
+        # Invalidate any existing unused tokens for this user
+        await exec_write(
+            conn,
+            "UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL",
+            row["id"],
+        )
+
+        raw_token, token_hash = _generate_reset_token()
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+
+        await exec_write(
+            conn,
+            """
+            INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+            VALUES ($1, $2, $3)
+            """,
+            row["id"], token_hash, expires_at,
+        )
+
+        await audit_log(
+            conn, str(row["org_id"]), str(row["id"]),
+            "password_reset_requested", "users", str(row["id"]),
+            _client_ip(request),
+        )
+
+    # Build reset URL
+    base_url = os.getenv("NEXTAUTH_URL", "http://localhost")
+    reset_url = f"{base_url}/login?reset_token={raw_token}"
+
+    # Try to send email if SMTP is configured
+    email_sent = False
+    if settings.smtp_host and settings.smtp_user and settings.smtp_password:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+
+            msg = MIMEText(
+                f"You requested a password reset for your Poseidon account.\n\n"
+                f"Click this link to reset your password (expires in 1 hour):\n"
+                f"{reset_url}\n\n"
+                f"If you did not request this, ignore this email.\n",
+                "plain",
+            )
+            msg["Subject"] = "Poseidon — Password Reset"
+            msg["From"] = settings.email_from_address or settings.smtp_user
+            msg["To"] = payload.email
+
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
+                server.starttls()
+                server.login(settings.smtp_user, settings.smtp_password)
+                server.sendmail(msg["From"], [payload.email], msg.as_string())
+            email_sent = True
+            logger.info("Password reset email sent to %s", payload.email)
+        except Exception as e:
+            logger.error("Failed to send reset email: %s", e)
+
+    if not email_sent:
+        logger.info("Password reset token for %s: %s (no SMTP configured)", payload.email, raw_token)
+
+    return {
+        "status": "ok",
+        "message": "If that email is registered, a reset link has been sent.",
+        # Only include token in response when SMTP is not configured (dev/local mode)
+        **({"reset_token": raw_token, "reset_url": reset_url} if not (settings.smtp_host and settings.smtp_user) else {}),
+    }
+
+
+@app.post("/auth/reset-password")
+async def reset_password(payload: PasswordResetConfirm, request: Request):
+    """Consume a reset token and set a new password."""
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
+
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        row = await fetch_one(
+            conn,
+            """
+            SELECT prt.id, prt.user_id, prt.expires_at, prt.used_at, u.org_id
+            FROM password_reset_tokens prt
+            JOIN users u ON u.id = prt.user_id
+            WHERE prt.token_hash = $1
+            """,
+            token_hash,
+        )
+
+        if not row:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+        if row["used_at"]:
+            raise HTTPException(status_code=400, detail="This reset token has already been used")
+        if row["expires_at"] < datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="This reset token has expired")
+
+        # Update password
+        await exec_write(
+            conn,
+            "UPDATE users SET password_hash = $1 WHERE id = $2",
+            hash_password(payload.new_password), row["user_id"],
+        )
+
+        # Mark token as used
+        await exec_write(
+            conn,
+            "UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1",
+            row["id"],
+        )
+
+        await audit_log(
+            conn, str(row["org_id"]), str(row["user_id"]),
+            "password_reset_completed", "users", str(row["user_id"]),
+            _client_ip(request),
+        )
+
+    return {"status": "ok", "message": "Password has been reset. You can now log in."}
 
 
 @app.get("/users")
@@ -2034,6 +2515,18 @@ async def get_patient_chart(
             order_ids or [None],
         )] if order_ids else []
 
+        denial_row_by_order: dict[str, dict[str, Any]] = {}
+        for d in denials:
+            oid = str(d.get("order_id") or "")
+            if oid and oid not in denial_row_by_order:
+                denial_row_by_order[oid] = dict(d)
+
+        for bundle in order_bundles:
+            oid = str(bundle.get("id") or "")
+            await _enrich_chart_order_bundle(
+                conn, str(user["org_id"]), bundle, denial_row_by_order.get(oid)
+            )
+
     summary = {
         "total_orders": len(order_bundles),
         "signed_swo_count": sum(1 for order in order_bundles if str(order.get("swo_status") or "").lower() == "ingested"),
@@ -2073,9 +2566,252 @@ async def get_patient_chart(
     }
 
 
+@app.get("/patients/{patient_id}/drivers-license/download")
+async def download_drivers_license(
+    patient_id: str,
+    request: Request,
+    user: dict = Depends(require_permissions("view_patients")),
+):
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        row = await fetch_one(conn, "SELECT drivers_license FROM patients WHERE id = $1 AND org_id = $2", patient_id, user["org_id"])
+    if not row:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    dl_raw = row.get("drivers_license")
+    if isinstance(dl_raw, str):
+        try:
+            dl_raw = json.loads(dl_raw)
+        except json.JSONDecodeError:
+            dl_raw = {}
+    if not isinstance(dl_raw, dict) or not dl_raw.get("storage_bucket") or not dl_raw.get("storage_key"):
+        raise HTTPException(status_code=404, detail="No driver's license on file")
+    return {"download_url": _presigned_download_url(str(dl_raw["storage_bucket"]), str(dl_raw["storage_key"]))}
+
+
+# ---------------------------------------------------------------------------
+# Patient Notes & Bulk Assignment
+# ---------------------------------------------------------------------------
+
+@app.get("/patients/{patient_id}/notes")
+async def list_patient_notes(
+    patient_id: str,
+    request: Request,
+    user: dict = Depends(require_permissions("view_patients")),
+):
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        patient = await fetch_one(
+            conn,
+            "SELECT id FROM patients WHERE id = $1 AND org_id = $2",
+            patient_id,
+            user["org_id"],
+        )
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        notes = await fetch_all(
+            conn,
+            """
+            SELECT id, patient_id, author_id, author_name, content, created_at
+            FROM patient_notes
+            WHERE patient_id = $1 AND org_id = $2
+            ORDER BY created_at DESC
+            """,
+            patient_id,
+            user["org_id"],
+        )
+    return {"notes": _serialize(notes)}
+
+
+@app.post("/patients/{patient_id}/notes", status_code=201)
+async def create_patient_note(
+    patient_id: str,
+    payload: PatientNoteCreate,
+    request: Request,
+    user: dict = Depends(require_permissions("view_patients")),
+):
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        patient = await fetch_one(
+            conn,
+            "SELECT id FROM patients WHERE id = $1 AND org_id = $2",
+            patient_id,
+            user["org_id"],
+        )
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        user_id = user.get("sub") or user.get("user_id", "")
+        author = await fetch_one(
+            conn,
+            "SELECT first_name, last_name FROM users WHERE id = $1",
+            user_id,
+        )
+        author_name = " ".join(
+            part for part in [
+                (author or {}).get("first_name") or "",
+                (author or {}).get("last_name") or "",
+            ] if part
+        ) or user.get("email", "")
+        note_id = str(uuid.uuid4())
+        await exec_write(
+            conn,
+            """
+            INSERT INTO patient_notes (id, org_id, patient_id, author_id, author_name, content)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            note_id,
+            user["org_id"],
+            patient_id,
+            user_id,
+            author_name,
+            payload.content,
+        )
+        note = await fetch_one(
+            conn,
+            "SELECT id, patient_id, author_id, author_name, content, created_at FROM patient_notes WHERE id = $1",
+            note_id,
+        )
+    return _serialize(note)
+
+
+@app.patch("/patients/{patient_id}/assign-rep")
+async def assign_patient_rep(
+    patient_id: str,
+    payload: PatientAssignRepRequest,
+    request: Request,
+    user: dict = Depends(require_permissions("assign_orders")),
+):
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        patient = await fetch_one(
+            conn,
+            "SELECT id FROM patients WHERE id = $1 AND org_id = $2",
+            patient_id,
+            user["org_id"],
+        )
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        orders_updated = await exec_write(
+            conn,
+            "UPDATE orders SET assigned_to = $1, updated_at = NOW() WHERE patient_id = $2 AND org_id = $3",
+            payload.rep_id,
+            patient_id,
+            user["org_id"],
+        )
+        assigned_user = await fetch_one(
+            conn,
+            "SELECT id, email, first_name, last_name FROM users WHERE id = $1",
+            payload.rep_id,
+        )
+        display = _display_assignee({
+            "assigned_first_name": (assigned_user or {}).get("first_name"),
+            "assigned_last_name": (assigned_user or {}).get("last_name"),
+            "assigned_email": (assigned_user or {}).get("email"),
+        })
+    return {
+        "patient_id": patient_id,
+        "rep_id": payload.rep_id,
+        "orders_updated": orders_updated,
+        "assignee_display": display,
+    }
+
+
+@app.get("/users/reps")
+async def list_reps(
+    request: Request,
+    user: dict = Depends(require_permissions("assign_orders")),
+):
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        rows = await fetch_all(
+            conn,
+            """
+            SELECT id, email, first_name, last_name, role
+            FROM users
+            WHERE org_id = $1
+              AND is_active = TRUE
+              AND role IN ('admin', 'rep', 'billing', 'intake')
+            ORDER BY last_name, first_name
+            """,
+            user["org_id"],
+        )
+    users_out = []
+    for row in rows:
+        display = _display_assignee({
+            "assigned_first_name": row.get("first_name"),
+            "assigned_last_name": row.get("last_name"),
+            "assigned_email": row.get("email"),
+        })
+        users_out.append({
+            "id": str(row["id"]),
+            "email": row.get("email"),
+            "first_name": row.get("first_name"),
+            "last_name": row.get("last_name"),
+            "role": row.get("role"),
+            "display": display,
+        })
+    return {"users": users_out}
+
+
 # ---------------------------------------------------------------------------
 # Order Routes
 # ---------------------------------------------------------------------------
+
+async def _score_order_with_trident(request: Request, org_id: str, order_id: str) -> None:
+    trident_base = (settings.trident_url or "").rstrip("/")
+    if not trident_base:
+        return
+    db = request.app.state.db_pool
+    try:
+        async with db.connection() as conn:
+            order = await fetch_one(
+                conn,
+                """
+                SELECT o.id, o.payer_id, o.hcpcs_codes, p.dob
+                FROM orders o
+                JOIN patients p ON p.id = o.patient_id
+                WHERE o.id = $1 AND o.org_id = $2
+                """,
+                order_id,
+                org_id,
+            )
+            if not order:
+                return
+            diags = await fetch_all(
+                conn,
+                "SELECT icd10_code FROM order_diagnoses WHERE order_id = $1 ORDER BY sequence",
+                order_id,
+            )
+        score_body = {
+            "icd10_codes": [str(d["icd10_code"]) for d in diags if d.get("icd10_code")] or ["Z00.00"],
+            "hcpcs_codes": [str(x) for x in _coerce_json_list(order.get("hcpcs_codes"))] or ["E0601"],
+            "payer_id": str(order.get("payer_id") or "UNKNOWN"),
+            "patient_age": _patient_age_years(order.get("dob")),
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            tr = await client.post(f"{trident_base}/api/v1/trident/score", json=score_body)
+            if not tr.is_success:
+                return
+            payload = tr.json()
+            score = payload.get("score")
+            score_val = float(score) if isinstance(score, (int, float)) else None
+            if score_val is None:
+                return
+            tier = "high" if score_val >= settings.denial_threshold else "med" if score_val >= 0.35 else "low"
+        async with db.connection() as conn:
+            await exec_write(
+                conn,
+                """
+                UPDATE orders
+                SET denial_risk_score = $1, risk_tier = $2, updated_at = NOW()
+                WHERE id = $3 AND org_id = $4
+                """,
+                score_val,
+                tier,
+                order_id,
+                org_id,
+            )
+    except Exception:
+        logger.exception("Non-blocking Trident scoring failed for order %s", order_id)
 
 @app.post("/orders", status_code=201)
 async def create_order(
@@ -2093,13 +2829,17 @@ async def create_order(
             role_hint="intake",
             seed=f"{payload.patient_id}:{payload.payer_id}:{','.join(payload.hcpcs_codes)}",
         )
+        iv, ipc, isrc = _infer_catalog_metadata(payload.hcpcs_codes)
+        vertical = _normalize_text(payload.vertical) or iv
+        product_category = _normalize_text(payload.product_category) or ipc
+        source_cat = _normalize_text(payload.source) or isrc
         await exec_write(
             conn,
             """
             INSERT INTO orders (id, org_id, patient_id, assigned_to, hcpcs_codes, referring_physician_npi,
                 payer_id, insurance_auth_number, notes, priority, status, source_channel, source_reference,
-                intake_payload, created_by)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12,$13,$14)
+                intake_payload, created_by, vertical, product_category, source)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12,$13,$14,$15,$16,$17)
             """,
             order_id, user["org_id"], payload.patient_id, assigned_to,
             json.dumps(payload.hcpcs_codes), payload.referring_physician_npi,
@@ -2109,7 +2849,11 @@ async def create_order(
             payload.source_reference,
             json.dumps(payload.intake_payload or {}),
             user["sub"],
+            vertical,
+            product_category,
+            source_cat,
         )
+        await _seed_order_line_items_from_hcpcs(conn, order_id, payload.hcpcs_codes)
         # Emit event for Trident to score
         await audit_log(
             conn, user["org_id"], user["sub"], "create", "orders",
@@ -2123,6 +2867,7 @@ async def create_order(
             "payer_id": payload.payer_id,
             "assigned_to": assigned_to,
         }))
+    asyncio.create_task(_score_order_with_trident(request, str(user["org_id"]), order_id))
     return {"order_id": order_id, "status": "draft", "assigned_to": assigned_to}
 
 
@@ -2299,6 +3044,7 @@ async def import_orders(
                 )
                 source_channel = _normalize_text(row.source_channel) or "import"
                 source_reference = _normalize_text(row.source_reference) or None
+                iv, ipc, isrc = _infer_catalog_metadata(hcpcs_codes)
 
                 order_id = str(uuid.uuid4())
                 await exec_write(
@@ -2306,8 +3052,8 @@ async def import_orders(
                     """
                     INSERT INTO orders (id, org_id, patient_id, assigned_to, hcpcs_codes, referring_physician_npi,
                         payer_id, insurance_auth_number, notes, priority, status, source_channel, source_reference,
-                        intake_payload, created_by)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12,$13,$14)
+                        intake_payload, created_by, vertical, product_category, source)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12,$13,$14,$15,$16,$17)
                     """,
                     order_id,
                     user["org_id"],
@@ -2323,7 +3069,12 @@ async def import_orders(
                     source_reference,
                     json.dumps(intake_payload_out),
                     user["sub"],
+                    iv,
+                    ipc,
+                    isrc,
                 )
+                await _seed_order_line_items_from_hcpcs(conn, order_id, hcpcs_codes)
+                await _seed_order_diagnoses_from_codes(conn, order_id, diagnosis_codes)
                 await audit_log(
                     conn, user["org_id"], user["sub"], "create", "orders",
                     resource_id=order_id, ip_address=_client_ip(request),
@@ -2398,6 +3149,7 @@ async def list_orders(
                au.last_name AS assigned_last_name,
                o.source_channel, o.source_reference,
                o.created_at, o.updated_at,
+               o.payment_date, o.paid_at,
                o.denial_category, o.denied_amount,
                o.total_billed, o.total_paid, o.paid_amount, o.billing_status,
                o.eligibility_status, o.swo_status,
@@ -2456,6 +3208,39 @@ async def update_order_status(
             "UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3",
             new_status.value, order_id, user["org_id"],
         )
+        if rowcount > 0:
+            await exec_write(
+                conn,
+                """
+                INSERT INTO workflow_events (org_id, order_id, user_id, event_type, payload)
+                VALUES ($1, $2, $3, 'status_changed', $4::jsonb)
+                """,
+                user["org_id"],
+                order_id,
+                user.get("sub"),
+                json.dumps(
+                    {
+                        "from_status": order["status"],
+                        "to_status": new_status.value,
+                    }
+                ),
+            )
+            has_days_in_status = await fetch_one(
+                conn,
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'days_in_status'
+                LIMIT 1
+                """,
+            )
+            if has_days_in_status:
+                await exec_write(
+                    conn,
+                    "UPDATE orders SET days_in_status = 0 WHERE id = $1 AND org_id = $2",
+                    order_id,
+                    user["org_id"],
+                )
     if rowcount == 0:
         raise HTTPException(status_code=404, detail="Order not found")
     return {"order_id": order_id, "status": new_status.value}
@@ -3300,6 +4085,33 @@ async def list_denials(
     async with db.connection() as conn:
         rows = await fetch_all(conn, q, *params)
     return {"denials": [dict(r) for r in rows]}
+
+
+@app.get("/appeals")
+async def list_appeals(
+    request: Request,
+    user: dict = Depends(current_user),
+    limit: int = 100,
+    offset: int = 0,
+):
+    """Org-wide appeals for dashboards (win-rate, worklists)."""
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        rows = await fetch_all(
+            conn,
+            """
+            SELECT a.*, o.patient_id, o.status AS order_status
+            FROM appeals a
+            LEFT JOIN orders o ON o.id = a.order_id AND o.org_id = a.org_id
+            WHERE a.org_id = $1
+            ORDER BY a.created_at DESC
+            LIMIT $2 OFFSET $3
+            """,
+            user["org_id"],
+            limit,
+            offset,
+        )
+    return {"appeals": [dict(r) for r in rows]}
 
 
 # ---------------------------------------------------------------------------
@@ -4147,6 +4959,8 @@ async def _fetch_order_bundle(conn, org_id: str, order_id: str) -> dict[str, Any
         conn,
         """
         SELECT o.*,
+               py.name AS payer_name,
+               py.baseline_denial_rate AS payer_baseline_denial_rate,
                p.first_name AS patient_first_name,
                p.last_name AS patient_last_name,
                COALESCE(p.date_of_birth, p.dob) AS patient_dob,
@@ -4165,6 +4979,7 @@ async def _fetch_order_bundle(conn, org_id: str, order_id: str) -> dict[str, Any
                ph.specialty AS physician_specialty
         FROM orders o
         JOIN patients p ON p.id = o.patient_id
+        LEFT JOIN payers py ON py.id = o.payer_id
         LEFT JOIN physicians ph ON ph.id = o.physician_id OR ph.npi = o.referring_physician_npi
         WHERE o.id = $1 AND o.org_id = $2
         """,
@@ -4685,6 +5500,16 @@ async def v1_auth_me(request: Request, user: dict = Depends(current_user)):
     return _serialize(profile)
 
 
+@app.post("/api/v1/auth/request-reset")
+async def v1_request_reset(payload: PasswordResetRequest, request: Request):
+    return await request_password_reset(payload, request)
+
+
+@app.post("/api/v1/auth/reset-password")
+async def v1_reset_password(payload: PasswordResetConfirm, request: Request):
+    return await reset_password(payload, request)
+
+
 @app.get("/api/v1/admin/users")
 async def v1_admin_list_users(request: Request, user: dict = Depends(require_permissions("manage_users"))):
     db = request.app.state.db_pool
@@ -5124,7 +5949,12 @@ async def v1_create_order(
 ):
     db = request.app.state.db_pool
     async with db.connection() as conn:
-        patient = await fetch_one(conn, "SELECT id FROM patients WHERE id = $1 AND org_id = $2", payload.patient_id, user["org_id"])
+        patient = await fetch_one(
+            conn,
+            "SELECT id, payer_id FROM patients WHERE id = $1 AND org_id = $2",
+            payload.patient_id,
+            user["org_id"],
+        )
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
         order_id = str(uuid.uuid4())
@@ -5133,6 +5963,12 @@ async def v1_create_order(
         total_allowed = payload.total_allowed or sum((item.allowed_amount or 0) for item in payload.line_items)
         total_paid = payload.total_paid or sum((item.paid_amount or 0) for item in payload.line_items)
         hcpcs_codes = [item.hcpcs_code for item in payload.line_items] if payload.line_items else []
+        payer_id = payload.clinical_data.get("payer_id") if isinstance(payload.clinical_data, dict) else None
+        if not payer_id:
+            payer_id = patient.get("payer_id")
+        if not payer_id:
+            payer = await fetch_one(conn, "SELECT id FROM payers ORDER BY id ASC LIMIT 1")
+            payer_id = str(payer["id"]) if payer else None
         await exec_write(
             conn,
             """
@@ -5140,9 +5976,9 @@ async def v1_create_order(
                 id, org_id, order_number, patient_id, physician_id, referring_physician_npi, assigned_rep_id, assigned_to,
                 status, product_category, vertical, source, source_channel, priority, territory_id,
                 place_of_service, clinical_notes, notes, clinical_data, total_billed, total_allowed, total_paid,
-                paid_amount, date_of_service, hcpcs_codes, created_by
+                paid_amount, date_of_service, hcpcs_codes, payer_id, created_by
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11,$11,$12,$13,$14,$15,$15,$16,$17,$18,$19,$19,$20,$21,$22)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
             """,
             order_id,
             user["org_id"],
@@ -5151,20 +5987,25 @@ async def v1_create_order(
             payload.physician_id,
             payload.physician_npi,
             payload.assigned_rep_id,
+            payload.assigned_rep_id,
             payload.status,
             payload.product_category,
             payload.vertical,
+            payload.source or "manual",
             payload.source or "manual",
             payload.priority,
             payload.territory_id,
             payload.place_of_service,
             payload.clinical_notes,
+            payload.clinical_notes,
             json.dumps(payload.clinical_data),
             total_billed,
             total_allowed,
             total_paid,
+            total_paid,
             payload.date_of_service,
             json.dumps(hcpcs_codes),
+            payer_id,
             user["sub"],
         )
         for diagnosis in payload.diagnoses:
@@ -5203,6 +6044,7 @@ async def v1_create_order(
                 item.paid_amount,
             )
         await _record_workflow_event(conn, user["org_id"], "order.created", {"order_id": order_id, "status": payload.status}, order_id=order_id)
+    asyncio.create_task(_score_order_with_trident(request, str(user["org_id"]), order_id))
     return {"id": order_id, "order_number": order_number, "status": payload.status}
 
 

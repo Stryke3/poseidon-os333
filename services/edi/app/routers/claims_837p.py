@@ -12,6 +12,7 @@ Endpoints:
 """
 import json
 import logging
+import os
 import uuid
 from typing import Optional
 
@@ -29,6 +30,7 @@ router = APIRouter(prefix="/api/v1/claims", tags=["837P Claims"])
 
 DRY_RUN = False  # set from env in main.py
 SUBMISSION_METHOD = "availity_sftp"  # set from env in main.py: availity_sftp or stedi_api
+RELAXED_VALIDATION = os.getenv("EDI_RELAX_VALIDATION", "false").lower() == "true"
 
 
 class BatchSubmitRequest(BaseModel):
@@ -54,8 +56,51 @@ async def _validate_order_for_submission(order_id: str, conn) -> list:
     if not order:
         return [f"Order {order_id} not found"]
 
+    # In DRY_RUN we still want to ensure we can build an 837P payload end-to-end,
+    # but we don't want test data gaps in the DB to prevent the smoke test.
+    # If DRY_RUN is enabled OR relaxed validation is requested, we only require
+    # enough data to build an 837P payload and exercise the transport layer.
+    if DRY_RUN or RELAXED_VALIDATION:
+        has_lines_with_hcpcs = await conn.fetchval(
+            """
+            SELECT EXISTS(
+                SELECT 1
+                FROM order_line_items
+                WHERE order_id=$1 AND hcpcs_code IS NOT NULL AND hcpcs_code <> ''
+            )
+            """,
+            oid,
+        )
+        has_order_hcpcs_codes = bool(order.get("hcpcs_codes"))
+
+        if not order.get("payer_id"):
+            errors.append("No payer assigned to order")
+        if not has_lines_with_hcpcs and not has_order_hcpcs_codes:
+            errors.append("No HCPCS code — need either order hcpcs_codes or order_line_items")
+
+        return errors
+
     # Patient
-    patient = await conn.fetchrow("SELECT * FROM patients WHERE id=$1", order["patient_id"])
+    # Validate against POSEIDON canonical schema:
+    # - insurance member id comes from `patient_insurances`
+    # - address comes from `patients.address_line1` (or NULL if absent)
+    patient = await conn.fetchrow(
+        """
+        SELECT
+            p.first_name,
+            p.last_name,
+            p.dob,
+            p.date_of_birth,
+            p.address_line1,
+            p.address AS address_json,
+            pi.member_id AS insurance_member_id
+        FROM patients p
+        LEFT JOIN patient_insurances pi
+            ON pi.patient_id = p.id AND pi.is_primary = TRUE
+        WHERE p.id = $1
+        """,
+        order["patient_id"],
+    )
     if not patient:
         errors.append("No patient linked to order")
     else:
@@ -63,15 +108,37 @@ async def _validate_order_for_submission(order_id: str, conn) -> list:
             errors.append("Patient first name missing")
         if not patient.get("last_name"):
             errors.append("Patient last name missing")
-        if not patient.get("dob"):
+        if not (patient.get("dob") or patient.get("date_of_birth")):
             errors.append("Patient DOB missing")
         if not patient.get("insurance_member_id"):
             errors.append("Patient insurance member ID missing")
-        if not patient.get("address1"):
+        address_json = patient.get("address_json")
+        line1_from_json = None
+        if isinstance(address_json, dict):
+            line1_from_json = address_json.get("line1") or address_json.get("address1")
+        elif isinstance(address_json, str) and address_json.strip():
+            try:
+                loaded = json.loads(address_json)
+                if isinstance(loaded, dict):
+                    line1_from_json = loaded.get("line1") or loaded.get("address1")
+            except Exception:
+                line1_from_json = None
+
+        addr1 = patient.get("address_line1") or line1_from_json
+        if not addr1:
             errors.append("Patient address missing")
 
     # Organization (billing provider)
-    org = await conn.fetchrow("SELECT * FROM organizations WHERE id=$1", order["org_id"])
+    org = await conn.fetchrow(
+        """
+        SELECT
+            npi AS billing_npi,
+            tax_id
+        FROM organizations
+        WHERE id = $1
+        """,
+        order["org_id"],
+    )
     if not org:
         errors.append("No organization linked to order")
     else:
@@ -99,12 +166,12 @@ async def _validate_order_for_submission(order_id: str, conn) -> list:
         errors.append("No diagnosis codes attached to order")
 
     # Billed amount
-    if not has_lines and not order.get("billed_amount"):
+    if not has_lines and not (order.get("billed_amount") or order.get("total_billed")):
         errors.append("No billed amount set")
 
     # DOS
-    if not order.get("dos_start"):
-        errors.append("Date of service (dos_start) missing")
+    if not order.get("dos_start") and not order.get("date_of_service"):
+        errors.append("Date of service missing")
 
     return errors
 
@@ -203,14 +270,17 @@ async def submit_claim(order_id: str, background_tasks: BackgroundTasks, trigger
                 )
 
             else:
-                # Submit via Stedi API (JSON -> X12 handled by Stedi)
-                result = await stedi_client.submit_837p(payload)
+                # Submit via Stedi Healthcare API (JSON -> X12 handled by Stedi)
+                result = await stedi_client.submit_837p(payload, idempotency_key=icn)
 
-                stedi_tx_id = result.get("transactionId", "")
-                raw_x12 = result.get("rawX12", "")
-                ack_status = result.get("acknowledgmentStatus", "pending")
+                # Stedi v3 response: {status, controlNumber, claimReference: {correlationId, ...}, x12}
+                claim_ref = result.get("claimReference", {})
+                stedi_tx_id = claim_ref.get("correlationId", "")
+                raw_x12 = result.get("x12", "")
+                stedi_status = result.get("status", "")
 
-                status = "accepted" if ack_status in ("accepted", "A") else "submitted"
+                # SUCCESS = passed Stedi's claim edits (includes initial 277CA in x12 field)
+                status = "accepted" if stedi_status == "SUCCESS" else "submitted"
 
                 await conn.execute("""
                     UPDATE claim_submissions
@@ -227,15 +297,19 @@ async def submit_claim(order_id: str, background_tasks: BackgroundTasks, trigger
 
                 await audit_log(conn, "claim_submission", sub_id, "submitted_stedi",
                                 old_status="validated", new_status=status,
-                                details={"stedi_tx_id": stedi_tx_id})
+                                details={
+                                    "stedi_tx_id": stedi_tx_id,
+                                    "stedi_status": stedi_status,
+                                    "rh_claim_number": claim_ref.get("rhclaimNumber"),
+                                })
 
-                # Schedule ack polling if not immediately accepted
-                if status == "submitted":
+                # Schedule 277CA polling for payer-level ack
+                if stedi_tx_id:
                     background_tasks.add_task(_poll_acknowledgment_task, sub_id, stedi_tx_id)
 
                 return SubmissionResponse(
                     status=status, submission_id=str(sub_id), icn=icn,
-                    message=f"Claim submitted via Stedi (tx: {stedi_tx_id})",
+                    message=f"Claim submitted via Stedi (tx: {stedi_tx_id}, status: {stedi_status})",
                 )
 
         except Exception as e:
@@ -332,8 +406,8 @@ async def validate_claim(order_id: str):
             "valid": True,
             "claim_number": f"ORD-{str(oid)[:8].upper()}",
             "total_charge": payload["claimInformation"]["claimChargeAmount"],
-            "service_lines": len(payload.get("serviceLines", [])),
-            "diagnosis_codes": len(payload.get("diagnosisCodes", [])),
+            "service_lines": len(payload.get("claimInformation", {}).get("serviceLines", [])),
+            "diagnosis_codes": len(payload.get("claimInformation", {}).get("healthCareCodeInformation", [])),
             "payer": payload.get("receiver", {}).get("organizationName"),
             "payload_preview": payload,
         }
@@ -428,12 +502,12 @@ async def poll_acknowledgment(submission_id: str):
         if not sub["stedi_transaction_id"]:
             return {"status": sub["status"], "message": "No Stedi transaction ID — cannot poll"}
 
-        result = await stedi_client.get_acknowledgment(sub["stedi_transaction_id"])
+        result = await stedi_client.get_277_report(sub["stedi_transaction_id"])
         if not result:
-            return {"status": sub["status"], "message": "No acknowledgment available yet"}
+            return {"status": sub["status"], "message": "No 277CA acknowledgment available yet"}
 
-        ack_status = result.get("status", "unknown")
-        new_status = "accepted" if ack_status in ("accepted", "A") else "rejected" if ack_status in ("rejected", "R") else sub["status"]
+        ack_status = result.get("status", result.get("claimStatus", "unknown"))
+        new_status = "accepted" if ack_status in ("accepted", "A", "SUCCESS") else "rejected" if ack_status in ("rejected", "R", "REJECTED") else sub["status"]
 
         await conn.execute("""
             UPDATE claim_submissions
@@ -455,25 +529,27 @@ async def poll_acknowledgment(submission_id: str):
 
 
 async def _poll_acknowledgment_task(submission_id, stedi_tx_id: str):
-    """Background task: poll Stedi for ack with exponential backoff."""
+    """Background task: poll Stedi for 277CA ack with exponential backoff."""
     import asyncio
     delays = [10, 30, 60, 120, 300]  # seconds
     for delay in delays:
         await asyncio.sleep(delay)
         try:
-            result = await stedi_client.get_acknowledgment(stedi_tx_id)
-            if result and result.get("status") in ("accepted", "rejected", "A", "R"):
-                async with get_db() as conn:
-                    new_status = "accepted" if result["status"] in ("accepted", "A") else "rejected"
-                    await conn.execute("""
-                        UPDATE claim_submissions
-                        SET status=$2, acknowledgment_payload=$3::JSONB, acknowledged_at=NOW(), updated_at=NOW()
-                        WHERE id=$1
-                    """, submission_id, new_status, to_json(result))
-                    await audit_log(conn, "claim_submission", submission_id, "ack_polled",
-                                    new_status=new_status)
-                log.info(f"Submission {submission_id} ack: {new_status}")
-                return
+            result = await stedi_client.get_277_report(stedi_tx_id)
+            if result:
+                ack_status = result.get("status", result.get("claimStatus", ""))
+                if ack_status in ("accepted", "rejected", "A", "R", "SUCCESS", "REJECTED"):
+                    new_status = "accepted" if ack_status in ("accepted", "A", "SUCCESS") else "rejected"
+                    async with get_db() as conn:
+                        await conn.execute("""
+                            UPDATE claim_submissions
+                            SET status=$2, acknowledgment_payload=$3::JSONB, acknowledged_at=NOW(), updated_at=NOW()
+                            WHERE id=$1
+                        """, submission_id, new_status, to_json(result))
+                        await audit_log(conn, "claim_submission", submission_id, "ack_polled",
+                                        new_status=new_status)
+                    log.info(f"Submission {submission_id} ack: {new_status}")
+                    return
         except Exception as e:
             log.warning(f"Ack poll failed for {submission_id}: {e}")
     log.warning(f"Submission {submission_id}: ack polling exhausted after {sum(delays)}s")

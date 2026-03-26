@@ -203,6 +203,7 @@ function VariantShell({
     { href: "/ceo", label: "CEO", active: variant === "ceo" },
     { href: "/intake", label: "Intake", active: variant === "intake" },
     { href: "/edi", label: "EDI", active: false },
+    { href: "/fax", label: "Fax", active: false },
     ...(canManageUsers ? [{ href: "/settings", label: "Settings", active: false }] : []),
   ]
 
@@ -402,6 +403,7 @@ function VariantShell({
           kanban={filteredKanban}
           communications={initialCommunications}
           integrations={initialIntegrations}
+          userRole={userRole}
           onIngest={handleIngest}
           blockedCount={blockedCount}
           accent={accent}
@@ -626,6 +628,7 @@ function IntakeContent({
   kanban,
   communications,
   integrations,
+  userRole,
   onIngest,
   blockedCount,
   accent,
@@ -636,6 +639,7 @@ function IntakeContent({
   kanban: Record<string, KanbanColumn>
   communications: Array<Record<string, unknown>>
   integrations: Record<string, unknown>
+  userRole?: string
   onIngest: (payload: { patients: AccountRecord[]; cards: KanbanCard[] }) => void
   blockedCount: number
   accent: typeof VARIANT_ACCENT.intake
@@ -657,8 +661,18 @@ function IntakeContent({
       </div>
 
       <div className="mx-auto max-w-[2200px] px-4 py-4 space-y-6">
-        {/* CSV Ingest */}
-        <LiveIngestDropzone onIngested={onIngest} />
+        {/* Intake Actions */}
+        <div className="flex items-center gap-3">
+          <div className="flex-1">
+            <LiveIngestDropzone onIngested={onIngest} />
+          </div>
+          <Link
+            href="/intake/new"
+            className="shrink-0 rounded-xl border border-accent-blue/30 bg-accent-blue/10 px-5 py-3 text-sm font-semibold text-accent-blue transition hover:bg-accent-blue/20"
+          >
+            + New Patient
+          </Link>
+        </div>
 
         {/* Pipeline summary */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -677,7 +691,7 @@ function IntakeContent({
         {/* Kanban worklist */}
         <section>
           <h2 className="mb-3 text-sm font-semibold text-white">Intake Worklist</h2>
-          <KanbanBoard initialColumns={kanban} />
+          <KanbanBoard initialColumns={kanban} userRole={userRole} />
         </section>
 
         {/* Patient list + Communications side by side */}

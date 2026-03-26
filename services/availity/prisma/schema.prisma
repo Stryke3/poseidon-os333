@@ -1,0 +1,531 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Case {
+  id                String   @id @default(cuid())
+  patientFirstName  String   @map("patient_first_name")
+  patientLastName   String   @map("patient_last_name")
+  dob               DateTime @map("dob")
+  memberId          String   @map("member_id")
+  payerId           String   @map("payer_id")
+  status            String   @map("status")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  eligibilityChecks     EligibilityCheck[]
+  priorAuthRequests       PriorAuthRequest[]
+  auditLogs               AvailityAuditLog[]
+  priorAuthPackets        PriorAuthPacket[]
+  priorAuthDocuments      PriorAuthDocument[]
+  denialEvents           DenialEvent[]
+  appealPackets         AppealPacket[]
+  validationResults      ValidationResult[]
+  authorizationOutcomes   AuthorizationOutcome[]
+  payerScoreSnapshots       PayerScoreSnapshot[]
+  playbookExecutions   PlaybookExecution[]
+
+  @@map("availity_cases")
+}
+
+/// Payer / plan / line-level documentation requirements (explainable flags; no ML).
+model PayerRule {
+  id                String   @id @default(cuid())
+  payerId           String   @map("payer_id")
+  planName          String?  @map("plan_name")
+  deviceCategory    String?  @map("device_category")
+  hcpcsCode         String?  @map("hcpcs_code")
+  diagnosisCode     String?  @map("diagnosis_code")
+  requiresLmn       Boolean  @default(false) @map("requires_lmn")
+  requiresSwo       Boolean  @default(false) @map("requires_swo")
+  requiresClinicals Boolean  @default(false) @map("requires_clinicals")
+  requiresAuth      Boolean  @default(true) @map("requires_auth")
+  notes             String?  @map("notes") @db.Text
+  active            Boolean  @default(true) @map("active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([payerId])
+  @@index([deviceCategory])
+  @@index([hcpcsCode])
+  @@map("payer_behavior_rules")
+}
+
+/// Historical prior auth outcomes for reimbursement intelligence.
+model AuthorizationOutcome {
+  id                    String    @id @default(cuid())
+  caseId                String?   @map("case_id")
+  payerId               String    @map("payer_id")
+  planName              String?   @map("plan_name")
+  deviceCategory        String?   @map("device_category")
+  hcpcsCode             String?   @map("hcpcs_code")
+  diagnosisCode         String?   @map("diagnosis_code")
+  physicianName         String?   @map("physician_name")
+  facilityName          String?   @map("facility_name")
+  outcome               String    @map("outcome")
+  denialReason          String?   @map("denial_reason") @db.Text
+  turnaroundDays        Int?      @map("turnaround_days")
+  submittedAt           DateTime? @map("submitted_at")
+  resolvedAt            DateTime? @map("resolved_at")
+  playbookExecutionId   String?   @map("playbook_execution_id")
+  playbookId            String?   @map("playbook_id")
+  playbookVersion       Int?      @map("playbook_version")
+  payerRuleSnapshot     Json?     @map("payer_rule_snapshot")
+  createdAt             DateTime  @default(now()) @map("created_at")
+
+  case               Case?              @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  playbookExecution PlaybookExecution? @relation(fields: [playbookExecutionId], references: [id], onDelete: SetNull)
+
+  @@index([payerId])
+  @@index([outcome])
+  @@index([deviceCategory])
+  @@index([hcpcsCode])
+  @@index([diagnosisCode])
+  @@index([playbookExecutionId])
+  @@index([playbookId])
+  @@map("authorization_outcomes")
+}
+
+/// Ingested payer policy manual (authoritative baseline for governance extractors).
+model PayerManual {
+  id            String    @id @default(cuid())
+  payerId       String    @map("payer_id")
+  planName      String?   @map("plan_name")
+  title         String    @map("title")
+  sourcePath    String?   @map("source_path")
+  sourceType    String?   @map("source_type")
+  versionLabel  String?   @map("version_label")
+  effectiveDate DateTime? @map("effective_date")
+  rawText             String    @map("raw_text") @db.Text
+  /// SHA-256 hex of rawText; used with sourcePath for idempotent scan ingestion.
+  contentFingerprint  String?   @map("content_fingerprint")
+  parsedStatus        String    @default("PENDING") @map("parsed_status")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  requirements ManualRequirement[]
+
+  @@index([payerId])
+  @@index([planName])
+  @@index([sourcePath])
+  @@index([contentFingerprint])
+  @@map("payer_manuals")
+}
+
+/// Structured row extracted from a manual (baseline; separate from learned rules).
+model ManualRequirement {
+  id               String   @id @default(cuid())
+  manualId         String   @map("manual_id")
+  payerId          String   @map("payer_id")
+  planName         String?  @map("plan_name")
+  deviceCategory   String?  @map("device_category")
+  hcpcsCode        String?  @map("hcpcs_code")
+  diagnosisCode    String?  @map("diagnosis_code")
+  requirementType  String   @map("requirement_type")
+  requirementKey   String   @map("requirement_key")
+  requirementValue String   @map("requirement_value") @db.Text
+  sourceExcerpt    String?  @map("source_excerpt") @db.Text
+  confidence       Float?   @map("confidence")
+  active           Boolean  @default(true) @map("active")
+  /// AUTO_ACCEPT | PENDING_REVIEW | APPROVED | REJECTED — APPROVED rows are never auto-deleted/overwritten on re-extract.
+  reviewState      String   @default("AUTO_PENDING") @map("review_state")
+  /// DETERMINISTIC | LLM
+  extractionSource String?  @map("extraction_source")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  manual PayerManual @relation(fields: [manualId], references: [id], onDelete: Cascade)
+
+  @@index([manualId])
+  @@index([manualId, reviewState])
+  @@index([payerId])
+  @@index([hcpcsCode])
+  @@index([diagnosisCode])
+  @@map("manual_requirements")
+}
+
+/// Outcome-derived rule proposal (never auto-promoted to production).
+model LearnedRuleSuggestion {
+  id               String   @id @default(cuid())
+  payerId          String   @map("payer_id")
+  planName         String?  @map("plan_name")
+  deviceCategory   String?  @map("device_category")
+  hcpcsCode        String?  @map("hcpcs_code")
+  diagnosisCode    String?  @map("diagnosis_code")
+  suggestionType   String   @map("suggestion_type")
+  suggestionKey    String   @map("suggestion_key")
+  suggestionValue  Json     @map("suggestion_value")
+  evidence         Json
+  status           String   @default("DRAFT") @map("status")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@index([payerId])
+  @@index([status])
+  @@map("learned_rule_suggestions")
+}
+
+/// Rolled-up playbook metrics (deterministic aggregates).
+model PlaybookPerformance {
+  id                String   @id @default(cuid())
+  playbookId        String   @map("playbook_id")
+  version           Int      @map("version")
+  payerId           String   @map("payer_id")
+  planName          String?  @map("plan_name")
+  deviceCategory    String?  @map("device_category")
+  hcpcsCode         String?  @map("hcpcs_code")
+  diagnosisCode     String?  @map("diagnosis_code")
+  totalCases        Int      @default(0) @map("total_cases")
+  approvals         Int      @default(0) @map("approvals")
+  denials           Int      @default(0) @map("denials")
+  pended            Int      @default(0) @map("pended")
+  avgTurnaroundDays Float?   @map("avg_turnaround_days")
+  reworkCount       Int      @default(0) @map("rework_count")
+  denialReasons     Json     @map("denial_reasons")
+  calculatedAt      DateTime @default(now()) @map("calculated_at")
+
+  @@index([playbookId])
+  @@index([payerId])
+  @@map("playbook_performance")
+}
+
+/// Governed recommendation (queue item; no automatic production mutation).
+model GovernanceRecommendation {
+  id                 String   @id @default(cuid())
+  payerId            String   @map("payer_id")
+  recommendationType String   @map("recommendation_type")
+  targetId           String?  @map("target_id")
+  targetType         String?  @map("target_type")
+  draftPayload       Json     @map("draft_payload")
+  evidence           Json
+  rationale          String   @map("rationale") @db.Text
+  status             String   @default("PENDING") @map("status")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  decisions GovernanceDecision[]
+  drafts    GovernanceDraft[]
+
+  @@index([payerId])
+  @@index([status])
+  @@map("governance_recommendations")
+}
+
+/// Non-production draft derived from learning/governance (never auto-applied).
+model GovernanceDraft {
+  id               String   @id @default(cuid())
+  kind             String   @map("kind")
+  payerId          String   @map("payer_id")
+  recommendationId String?  @map("governance_recommendation_id")
+  title            String?  @map("title")
+  payload          Json     @map("payload")
+  status           String   @map("status")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  recommendation GovernanceRecommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+
+  @@index([payerId])
+  @@index([kind])
+  @@index([status])
+  @@index([recommendationId])
+  @@map("governance_drafts")
+}
+
+/// Human decision on a recommendation (audit trail).
+model GovernanceDecision {
+  id               String   @id @default(cuid())
+  recommendationId String   @map("governance_recommendation_id")
+  decision         String   @map("decision")
+  decidedBy        String   @map("decided_by")
+  notes            String?  @map("notes") @db.Text
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  recommendation GovernanceRecommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+
+  @@index([recommendationId])
+  @@map("governance_decisions")
+}
+
+model PayerPlaybook {
+  id               String   @id @default(cuid())
+  payerId          String   @map("payer_id")
+  planName         String?  @map("plan_name")
+  deviceCategory   String?  @map("device_category")
+  hcpcsCode        String?  @map("hcpcs_code")
+  diagnosisCode    String?  @map("diagnosis_code")
+  strategy         Json     @map("strategy")
+  documentRules    Json     @map("document_rules")
+  escalationRules  Json     @map("escalation_rules")
+  version          Int      @default(1)
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  executions PlaybookExecution[]
+
+  @@index([payerId])
+  @@index([hcpcsCode])
+  @@index([diagnosisCode])
+  @@map("payer_playbooks")
+}
+
+model PlaybookExecution {
+  id             String   @id @default(cuid())
+  caseId         String?  @map("case_id")
+  playbookId     String?  @map("playbook_id")
+  version        Int      @map("version")
+  inputSnapshot  Json     @map("input_snapshot")
+  outputSnapshot Json     @map("output_snapshot")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  playbook PayerPlaybook? @relation(fields: [playbookId], references: [id], onDelete: Restrict)
+  case     Case?          @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  linkedOutcomes AuthorizationOutcome[]
+
+  @@index([caseId])
+  @@index([playbookId])
+  @@map("playbook_executions")
+}
+
+/// Persisted score run — `explanation` stores the explainability array (rules + history refs).
+model PayerScoreSnapshot {
+  id                     String   @id @default(cuid())
+  caseId                 String?  @map("case_id")
+  payerId                String   @map("payer_id")
+  approvalProbability    Int      @map("approval_probability")
+  riskLevel              String   @map("risk_level")
+  predictedDenialReasons Json     @map("predicted_denial_reasons")
+  missingRequirements    Json     @map("missing_requirements")
+  recommendedAction      String   @map("recommended_action") @db.Text
+  explanation            Json     @map("explanation")
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  case Case? @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  linkedPackets  PriorAuthPacket[]
+  linkedRequests PriorAuthRequest[]
+
+  @@index([payerId])
+  @@index([caseId])
+  @@index([createdAt])
+  @@map("payer_score_snapshots")
+}
+
+model PayerIntelligenceAuditLog {
+  id         String   @id @default(cuid())
+  action     String   @map("action")
+  payerId    String?  @map("payer_id")
+  caseId     String?  @map("case_id")
+  snapshotId String?  @map("snapshot_id")
+  outcomeId  String?  @map("outcome_id")
+  detailJson Json?    @map("detail_json")
+  actor      String?  @map("actor")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([payerId])
+  @@index([action])
+  @@map("payer_intelligence_audit_logs")
+}
+
+model EligibilityCheck {
+  id              String   @id @default(cuid())
+  caseId          String   @map("case_id")
+  requestPayload  Json     @map("request_payload")
+  responsePayload Json     @map("response_payload")
+  status          String   @map("status")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@map("availity_eligibility_checks")
+}
+
+model PriorAuthRequest {
+  id                     String   @id @default(cuid())
+  caseId                 String   @map("case_id")
+  requestPayload         Json     @map("request_payload")
+  responsePayload        Json     @map("response_payload")
+  status                 String   @map("status")
+  payerScoreSnapshotId   String?  @map("payer_score_snapshot_id")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  case                 Case                 @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  payerScoreSnapshot   PayerScoreSnapshot?  @relation(fields: [payerScoreSnapshotId], references: [id], onDelete: SetNull)
+
+  @@index([caseId])
+  @@index([payerScoreSnapshotId])
+  @@map("availity_prior_auth_requests")
+}
+
+model AvailityAuditLog {
+  id              String   @id @default(cuid())
+  caseId          String?  @map("case_id")
+  action          String   @map("action")
+  endpoint        String   @map("endpoint")
+  requestPayload  Json?    @map("request_payload")
+  responsePayload Json?    @map("response_payload")
+  httpStatus      Int?     @map("http_status")
+  actor           String?  @map("actor")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  case Case? @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  @@index([caseId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("availity_audit_logs")
+}
+
+/// Rendered prior-auth document (LMN, SWO, CLINICAL_SUMMARY, ATTACHMENTS_METADATA, etc.).
+model PriorAuthDocument {
+  id             String   @id @default(cuid())
+  caseId         String   @map("case_id")
+  type           String   @map("type")
+  content        String   @map("content") @db.Text
+  inputSnapshot  Json     @map("input_snapshot")
+  version        Int      @map("version")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@index([caseId, type])
+  @@map("availity_prior_auth_documents")
+}
+
+/// Packet aggregates document refs + submission-ready payload (status: DRAFT | READY | SUBMITTED | NEEDS_REVIEW).
+model PriorAuthPacket {
+  id                     String   @id @default(cuid())
+  caseId                 String   @map("case_id")
+  documents              Json     @map("documents")
+  payload                Json     @map("payload")
+  status                 String   @map("status")
+  payerScoreSnapshotId   String?  @map("payer_score_snapshot_id")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  case                 Case                 @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  payerScoreSnapshot   PayerScoreSnapshot?  @relation(fields: [payerScoreSnapshotId], references: [id], onDelete: SetNull)
+
+  @@index([caseId])
+  @@index([status])
+  @@index([payerScoreSnapshotId])
+  @@map("availity_prior_auth_packets")
+}
+
+/// Deterministic packet validation record created during pre-submit checks.
+/// Stored for audit + traceability (manual requirements, payer rules, playbook execution output).
+model ValidationResult {
+  id                  String   @id @default(cuid())
+  caseId              String?  @map("case_id")
+  payerId             String   @map("payer_id")
+  status              String   @map("status")
+  missingRequirements Json     @map("missing_requirements")
+  violations          Json     @map("violations")
+  warnings            Json     @map("warnings")
+  recommendedActions  Json     @map("recommended_actions")
+  explanation         Json     @map("explanation")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  case Case? @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  @@index([caseId])
+  @@index([payerId])
+  @@index([status])
+  @@map("pre_submit_validation_results")
+}
+
+/// Deterministic capture of payer denials (code + free-text) tied to packet/playbook/score snapshot.
+model DenialEvent {
+  id               String   @id @default(cuid())
+  caseId           String?  @map("case_id")
+  payerId          String   @map("payer_id")
+  planName         String?  @map("plan_name")
+  authId           String?  @map("auth_id")
+  denialCode      String?  @map("denial_code")
+  denialReasonText String  @map("denial_reason_text") @db.Text
+  denialCategory  String?  @map("denial_category")
+  packetId         String?  @map("packet_id")
+  playbookId       String?  @map("playbook_id")
+  playbookVersion  Int?     @map("playbook_version")
+  scoreSnapshotId  String?  @map("score_snapshot_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  case Case? @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  classificationSnapshots DenialClassificationSnapshot[]
+  appealPackets            AppealPacket[]
+
+  @@index([caseId])
+  @@index([payerId])
+  @@index([denialCategory])
+  @@map("denial_events")
+}
+
+/// Stored classifier output for a specific denial event.
+model DenialClassificationSnapshot {
+  id                  String   @id @default(cuid())
+  denialEventId       String   @map("denial_event_id")
+  category            String
+  confidence          Float?
+  recoveryType        String   @map("recovery_type")
+  requiredFixes       Json     @map("required_fixes")
+  requiredAttachments Json     @map("required_attachments")
+  escalationSteps     Json     @map("escalation_steps")
+  explanation         Json     @map("explanation")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  denialEvent DenialEvent @relation(fields: [denialEventId], references: [id], onDelete: Cascade)
+
+  @@index([denialEventId])
+  @@index([category])
+  @@map("denial_classification_snapshots")
+}
+
+/// Generated appeal packet draft (no hidden clinical facts; everything traces back to denial + packet docs).
+model AppealPacket {
+  id                  String   @id @default(cuid())
+  denialEventId       String   @map("denial_event_id")
+  caseId              String?  @map("case_id")
+  recoveryType        String   @map("recovery_type")
+  letterText          String?  @map("letter_text") @db.Text
+  rebuttalPoints      Json     @map("rebuttal_points")
+  attachmentChecklist Json     @map("attachment_checklist")
+  payload             Json     @map("payload")
+  status              String   @default("DRAFT") @map("status") // DRAFT, READY, SUBMITTED
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  denialEvent DenialEvent @relation(fields: [denialEventId], references: [id], onDelete: Cascade)
+  case        Case?       @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  outcomes AppealOutcome[]
+
+  @@index([denialEventId])
+  @@index([caseId])
+  @@map("appeal_packets")
+}
+
+/// Outcome of an appeal packet submission.
+model AppealOutcome {
+  id             String   @id @default(cuid())
+  appealPacketId String  @map("appeal_packet_id")
+  outcome        String  // OVERTURNED, UPHELD, PENDING
+  resolvedAt     DateTime? @map("resolved_at")
+  notes          String?   @map("notes") @db.Text
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  appealPacket AppealPacket @relation(fields: [appealPacketId], references: [id], onDelete: Cascade)
+
+  @@index([appealPacketId])
+  @@index([outcome])
+  @@map("appeal_outcomes")
+}

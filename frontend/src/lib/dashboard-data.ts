@@ -7,11 +7,229 @@ import type { AccountRecord, KanbanCard, KanbanColumn } from "@/lib/data"
 
 const CORE_API_URL =
   process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
-const MATIA_API_URL =
-  process.env.MATIA_API_URL ||
-  (process.env.NODE_ENV === "production"
-    ? "https://matia.strykefox.com"
-    : "http://127.0.0.1:8010")
+
+/** When unset, Matia pipeline is not fetched (avoids hammering localhost in dev). */
+function matiaPipelineBaseUrl(): string | null {
+  const explicit = process.env.MATIA_API_URL?.trim()
+  if (explicit) return explicit.replace(/\/$/, "")
+  if (process.env.MATIA_INTEGRATION_ENABLED === "true") {
+    return process.env.NODE_ENV === "production"
+      ? "https://matia.strykefox.com"
+      : "http://127.0.0.1:8010"
+  }
+  return null
+}
+
+const MATIA_PIPELINE_PATH = process.env.MATIA_PIPELINE_PATH || "/pipeline"
+
+/**
+ * Wheelchair / mobility HCPCS reimbursement rate card.
+ * Rates reflect Medicare fee schedule averages; payer-specific overrides
+ * can be layered in via the Matia pipeline's `expected_amount` field.
+ */
+const WHEELCHAIR_PRICING: Record<string, { rate: number; label: string }> = {
+  // Power wheelchairs
+  K0823: { rate: 35999, label: "Power Wheelchair Group 2 Standard" },
+  K0824: { rate: 38500, label: "Power Wheelchair Group 2 Heavy Duty" },
+  K0856: { rate: 42750, label: "Power Wheelchair Group 3 Standard" },
+  K0857: { rate: 46200, label: "Power Wheelchair Group 3 Heavy Duty" },
+  K0858: { rate: 51300, label: "Power Wheelchair Group 3 Very Heavy Duty" },
+  K0861: { rate: 55000, label: "Power Wheelchair Group 2 Single Power" },
+  K0862: { rate: 58500, label: "Power Wheelchair Group 2 Multiple Power" },
+  K0868: { rate: 48900, label: "Power Wheelchair Group 4 Standard" },
+  K0869: { rate: 52300, label: "Power Wheelchair Group 4 Heavy Duty" },
+  K0333: { rate: 36800, label: "Power Wheelchair Group 2 Pediatric" },
+  // Tek RMD / Standing / Specialty
+  K0890: { rate: 67500, label: "Tek RMD Power Standing Wheelchair" },
+  K0891: { rate: 72000, label: "Tek RMD Power Standing Heavy Duty" },
+  E2300: { rate: 62000, label: "Power Standing System" },
+  // Manual wheelchairs
+  K0001: { rate: 1250, label: "Standard Manual Wheelchair" },
+  K0002: { rate: 1650, label: "Standard Hemi Wheelchair" },
+  K0003: { rate: 2100, label: "Lightweight Wheelchair" },
+  K0004: { rate: 3200, label: "High-Strength Lightweight Wheelchair" },
+  K0005: { rate: 4800, label: "Ultralight Wheelchair" },
+  K0006: { rate: 5200, label: "Heavy Duty Wheelchair" },
+  K0007: { rate: 6100, label: "Extra Heavy Duty Wheelchair" },
+  // Accessories & components
+  E0950: { rate: 450, label: "Wheelchair Tray" },
+  E0955: { rate: 650, label: "Wheelchair Headrest" },
+  E0956: { rate: 380, label: "Wheelchair Lateral Trunk Support" },
+  E0957: { rate: 420, label: "Wheelchair Medial Knee Support" },
+  E0960: { rate: 290, label: "Wheelchair Positioning Belt" },
+  E0973: { rate: 1200, label: "Wheelchair Cushion Width >= 22 in" },
+  E0981: { rate: 550, label: "Wheelchair Seat Upholstery Replacement" },
+  E1002: { rate: 750, label: "Wheelchair Cushion Power" },
+  E1014: { rate: 2800, label: "Wheelchair Recline Back" },
+  E1015: { rate: 3200, label: "Wheelchair Shock Absorber" },
+  E1020: { rate: 1100, label: "Wheelchair Residual Limb Support" },
+  E2310: { rate: 1800, label: "Power Wheelchair Electronic Controller" },
+  E2311: { rate: 2400, label: "Power Wheelchair Controller Proportional" },
+  E2325: { rate: 950, label: "Power Wheelchair Sip and Puff Interface" },
+  E2340: { rate: 3600, label: "Power Wheelchair Seat Elevator" },
+  E2351: { rate: 4200, label: "Power Wheelchair Seat Tilt" },
+  E2366: { rate: 1650, label: "Power Wheelchair Battery" },
+  E2368: { rate: 850, label: "Power Wheelchair Battery Charger" },
+  // Matia-specific custom chair (Permobil Corpus / Tek RMD line)
+  L8000: { rate: 35999, label: "Tek RMD Matia Power Wheelchair" },
+}
+
+/** Default reimbursement when HCPCS code is missing or unrecognized. */
+const MATIA_DEFAULT_REIMBURSEMENT_USD = 35999
+
+function getWheelchairReimbursement(hcpcs: string | null | undefined): number {
+  if (!hcpcs) return MATIA_DEFAULT_REIMBURSEMENT_USD
+  const code = hcpcs.trim().toUpperCase()
+  return WHEELCHAIR_PRICING[code]?.rate ?? MATIA_DEFAULT_REIMBURSEMENT_USD
+}
+
+/** Pull list payload from common REST / GraphQL-style envelopes. */
+function extractMatiaPipelineRecords(payload: unknown): unknown[] {
+  if (payload == null) return []
+  if (Array.isArray(payload)) return payload
+  if (typeof payload !== "object") return []
+  const o = payload as Record<string, unknown>
+
+  if (Array.isArray(o.data)) return o.data
+
+  const keys = [
+    "pipeline",
+    "items",
+    "records",
+    "results",
+    "rows",
+    "cases",
+    "orders",
+    "entries",
+  ] as const
+  for (const key of keys) {
+    const v = o[key]
+    if (Array.isArray(v)) return v
+  }
+
+  const nested = o.data
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const inner = nested as Record<string, unknown>
+    if (Array.isArray(inner.data)) return inner.data
+    for (const key of keys) {
+      const v = inner[key]
+      if (Array.isArray(v)) return v
+    }
+  }
+
+  return []
+}
+
+function readStr(v: unknown): string | null {
+  if (v === null || v === undefined) return null
+  if (typeof v === "string") return v
+  if (typeof v === "number" && Number.isFinite(v)) return String(v)
+  return null
+}
+
+/** Map one Matia row (snake_case or camelCase) into a Core-shaped order. */
+function matiaRowToOrderRecord(raw: unknown): OrderRecord | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  const id = r.id ?? r.case_id ?? r.caseId ?? r.order_id ?? r.orderId
+  if (id === null || id === undefined) return null
+  const idStr = String(id)
+
+  const patientName =
+    readStr(r.patient_name) ||
+    readStr(r.patientName) ||
+    readStr(r.name) ||
+    [readStr(r.first_name) || readStr(r.firstName), readStr(r.last_name) || readStr(r.lastName)]
+      .filter(Boolean)
+      .join(" ")
+      .trim() ||
+    null
+
+  const hcpcs =
+    readStr(r.hcpcs) || readStr(r.hcpcs_code) || readStr(r.hcpcsCode) || readStr(r.code)
+  const wheelchair =
+    readStr(r.wheelchair_type) || readStr(r.wheelchairType) || readStr(r.chair_type)
+  const model =
+    readStr(r.model) || readStr(r.wheelchair_model) || readStr(r.chair_model) || readStr(r.product)
+  const manufacturer =
+    readStr(r.manufacturer) || readStr(r.brand) || readStr(r.mfr)
+  const payer = readStr(r.payer) || readStr(r.payer_name) || readStr(r.payerName)
+  const stage = readStr(r.stage) || readStr(r.status) || readStr(r.state)
+  const priority = readStr(r.priority)
+  const created =
+    readStr(r.created_at) || readStr(r.createdAt) || readStr(r.updated_at) || readStr(r.updatedAt)
+
+  // Use pipeline-supplied amount if available, otherwise look up HCPCS rate card
+  const pipelineAmount = typeof r.expected_amount === "number" ? r.expected_amount
+    : typeof r.amount === "number" ? r.amount
+    : typeof r.price === "number" ? r.price
+    : null
+
+  const patientId = `matia-${idStr}`
+
+  // Build descriptive order type from available metadata
+  const isTekRmd = model?.toLowerCase().includes("tek") || model?.toLowerCase().includes("rmd")
+    || manufacturer?.toLowerCase().includes("permobil")
+    || hcpcs === "K0890" || hcpcs === "K0891"
+  let orderType: string
+  if (isTekRmd) {
+    orderType = `Tek RMD ${wheelchair === "manual" ? "manual" : "power"} wheelchair`
+  } else if (wheelchair === "power" || wheelchair === "manual") {
+    orderType = `Matia ${wheelchair} wheelchair`
+  } else if (model) {
+    orderType = `Matia ${model}`
+  } else {
+    orderType = "Matia chair"
+  }
+
+  // Look up HCPCS-based pricing from rate card
+  const reimbursement = pipelineAmount ?? getWheelchairReimbursement(hcpcs)
+
+  return {
+    id: `matia-${idStr}`,
+    patient_id: patientId,
+    patient_name: patientName || `Matia Patient ${idStr}`,
+    payer_name: payer || "Unknown",
+    hcpcs_code: hcpcs || undefined,
+    order_type: orderType,
+    status: stage || "intake",
+    expected_amount: reimbursement,
+    priority: priority || undefined,
+    assigned_to: "MT",
+    updated_at: created || undefined,
+    created_at: created || undefined,
+  }
+}
+
+async function fetchMatiaPipelineAsOrders(accessToken: string): Promise<OrderRecord[]> {
+  const base = matiaPipelineBaseUrl()
+  if (!base) return []
+
+  const path = MATIA_PIPELINE_PATH.startsWith("/") ? MATIA_PIPELINE_PATH : `/${MATIA_PIPELINE_PATH}`
+  const bearer = process.env.MATIA_API_BEARER?.trim()
+  const authorization = bearer
+    ? bearer.toLowerCase().startsWith("bearer ")
+      ? bearer
+      : `Bearer ${bearer}`
+    : `Bearer ${accessToken}`
+
+  const res = await fetch(`${base}${path}`, {
+    headers: {
+      Authorization: authorization,
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  }).catch(() => null)
+
+  if (!res?.ok) {
+    console.warn(`Matia pipeline unavailable${res ? ` (HTTP ${res.status})` : ""}`)
+    return []
+  }
+
+  const data = await res.json().catch(() => null)
+  const rows = extractMatiaPipelineRecords(data)
+  return rows.map(matiaRowToOrderRecord).filter((o): o is OrderRecord => o !== null)
+}
 
 type OrderRecord = {
   id: string
@@ -32,6 +250,7 @@ type OrderRecord = {
   expected_amount?: number | string
   priority?: string
   assigned_to?: string
+  assigned_to_user_id?: string
   eligibility_status?: string
   swo_status?: string
   billing_status?: string
@@ -39,6 +258,7 @@ type OrderRecord = {
   total_paid?: number | string
   total_billed?: number | string
   payment_date?: string
+  paid_at?: string
   updated_at?: string
   created_at?: string
   source_channel?: string
@@ -52,23 +272,169 @@ type DenialRecord = {
   amount?: number | string
 }
 
-type MatiaPipelineRecord = {
-  id: number | string
-  patient_name?: string
-  hcpcs?: string | null
-  wheelchair_type?: string | null
-  payer?: string | null
-  stage?: string | null
-  priority?: string | null
-  amount?: number | string | null
-  next_action?: string | null
-  created_at?: string
+type AppealRecord = {
+  outcome?: string | null
+  outcome_amount?: number | string | null
+  response_received_at?: string | null
+  status?: string | null
+}
+
+export type DashboardBuildOptions = {
+  appeals?: AppealRecord[]
+  integrations?: Record<string, unknown>
+}
+
+function normOrderStatus(s?: string) {
+  return (s || "").toLowerCase().trim()
+}
+
+function parseTimestampMs(s?: string | null): number | null {
+  if (!s) return null
+  const t = Date.parse(s)
+  return Number.isFinite(t) ? t : null
+}
+
+function daysBetweenMs(from: number, to: number) {
+  return Math.max(0, Math.round((to - from) / 86_400_000))
+}
+
+function computeCleanClaimProxy(orders: OrderRecord[]) {
+  const paid = orders.filter((o) => ["paid", "closed"].includes(normOrderStatus(o.status))).length
+  const denied = orders.filter((o) => normOrderStatus(o.status) === "denied").length
+  const denom = paid + denied
+  if (denom === 0) {
+    return { value: 0, delta: "No paid/denied outcomes yet", trend: "neutral" }
+  }
+  const pct = Math.round((1000 * paid) / denom) / 10
+  return {
+    value: pct,
+    delta: `${paid} paid · ${denied} denied`,
+    trend: paid >= denied ? ("up" as const) : ("down" as const),
+  }
+}
+
+function computeDaysInAR(orders: OrderRecord[]) {
+  const terminal = new Set(["paid", "closed"])
+  const open = orders.filter((o) => !terminal.has(normOrderStatus(o.status)))
+  let avgOpen = 0
+  if (open.length) {
+    const ages = open.map((o) => {
+      const start = parseTimestampMs(o.updated_at || o.created_at)
+      if (!start) return 0
+      return daysBetweenMs(start, Date.now())
+    })
+    avgOpen = Math.round(ages.reduce((a, b) => a + b, 0) / ages.length)
+  }
+
+  const paidOrders = orders.filter((o) => ["paid", "closed"].includes(normOrderStatus(o.status)))
+  const payCycles = paidOrders
+    .map((o) => {
+      const start = parseTimestampMs(o.created_at)
+      const end = parseTimestampMs(o.payment_date) ?? parseTimestampMs(o.paid_at)
+      if (!start || !end) return null
+      return daysBetweenMs(start, end)
+    })
+    .filter((d): d is number => d != null)
+  const avgToPay =
+    payCycles.length > 0 ? Math.round(payCycles.reduce((a, b) => a + b, 0) / payCycles.length) : null
+
+  const deltaParts = [
+    open.length ? `${open.length} open` : "No open orders",
+    avgToPay != null ? `avg ${avgToPay}d to pay` : null,
+  ].filter(Boolean)
+
+  return {
+    value: open.length ? avgOpen : avgToPay ?? 0,
+    delta: deltaParts.join(" · "),
+    trend: (open.length ? avgOpen : avgToPay ?? 0) > 45 ? "up" : (open.length ? avgOpen : avgToPay ?? 0) > 20 ? "neutral" : "down",
+  }
+}
+
+function appealResolved(a: AppealRecord) {
+  return Boolean(a.response_received_at) || normOrderStatus(a.status) === "closed"
+}
+
+function appealIsWin(a: AppealRecord) {
+  const o = normOrderStatus(a.outcome)
+  const raw = a.outcome_amount
+  const amt = typeof raw === "number" && Number.isFinite(raw) ? raw : Number.parseFloat(String(raw ?? ""))
+  const finiteAmt = Number.isFinite(amt) ? amt : 0
+  if (finiteAmt > 0 && !o.includes("denied") && !o.includes("upheld")) return true
+  return o.includes("won") || o.includes("overturn") || o.includes("favor") || o === "approved"
+}
+
+function appealIsLoss(a: AppealRecord) {
+  const o = normOrderStatus(a.outcome)
+  return o.includes("denied") || o.includes("upheld") || o.includes("reject")
+}
+
+function computeAppealWinRate(appeals: AppealRecord[]) {
+  const resolved = appeals.filter(appealResolved)
+  const judged = resolved.filter((a) => appealIsWin(a) || appealIsLoss(a))
+  const wins = judged.filter((a) => appealIsWin(a)).length
+  const losses = judged.filter((a) => appealIsLoss(a) && !appealIsWin(a)).length
+  if (wins + losses === 0) {
+    return {
+      value: 0,
+      delta: appeals.length ? `${appeals.length} appeals · no outcomes` : "No appeals",
+      trend: "neutral",
+    }
+  }
+  const pct = Math.round((1000 * wins) / (wins + losses)) / 10
+  return {
+    value: pct,
+    delta: `${wins}W / ${losses}L`,
+    trend: wins >= losses ? "up" : "down",
+  }
+}
+
+function buildSystemState(orders: OrderRecord[], integrations?: Record<string, unknown>) {
+  const email = integrations?.email as
+    | { configured?: boolean; provider?: string | null; from_address?: string | null }
+    | undefined
+  const cal = integrations?.calendar as { configured?: boolean; provider?: string | null } | undefined
+  const push = integrations?.in_app_push as { configured?: boolean; sources?: string[] } | undefined
+
+  const services = ["Core API"]
+  if (email?.configured) services.push(`Email (${email.provider || "SMTP"})`)
+  if (cal?.configured) services.push(`Calendar (${cal.provider || "connected"})`)
+  if (push?.configured && push.sources?.length) services.push(`Push (${push.sources.length} sources)`)
+  services.push("Dashboard")
+
+  const maxTouch = orders.reduce((max, o) => {
+    const t = parseTimestampMs(o.updated_at || o.created_at)
+    return t && t > max ? t : max
+  }, 0)
+
+  let hostLabel = "Core"
+  try {
+    hostLabel = new URL(CORE_API_URL).host || "Core"
+  } catch {
+    /* ignore */
+  }
+
+  return {
+    status: orders.length ? "operational" : "connected",
+    services,
+    ports: hostLabel,
+    operators: email?.from_address ? [String(email.from_address)] : [],
+    lastSync: maxTouch > 0 ? new Date(maxTouch).toISOString() : new Date().toISOString(),
+  }
+}
+
+const UNKNOWN_INTEGRATIONS: Record<string, unknown> = {
+  email: { configured: false, provider: null },
+  calendar: { configured: false, provider: null },
+  in_app_push: { configured: false, sources: [] },
 }
 
 const COLUMN_META: Record<string, { label: string; color: string }> = {
-  pendingAuth: { label: "Pending Auth", color: "#c9921a" },
-  authorized: { label: "Authorized", color: "#1a6ef5" },
-  submitted: { label: "Submitted", color: "#0d9eaa" },
+  intake: { label: "Intake", color: "#c9921a" },
+  eligibility_verification: { label: "Eligibility", color: "#1a6ef5" },
+  prior_auth: { label: "Auth / CMN", color: "#0d9eaa" },
+  documentation: { label: "Documentation", color: "#7c5af0" },
+  claim_submitted: { label: "Submitted", color: "#4a6a90" },
+  pending_payment: { label: "Pmt Pending", color: "#0fa86a" },
   denied: { label: "Denied", color: "#e03a3a" },
   appealed: { label: "Appealed", color: "#7c5af0" },
   paid: { label: "Paid", color: "#0fa86a" },
@@ -84,15 +450,16 @@ const EMPTY_COLUMNS = Object.fromEntries(
 const PATIENT_STAGE_PRIORITY: Record<string, number> = {
   denied: 6,
   appealed: 5,
-  pendingAuth: 4,
-  submitted: 3,
-  authorized: 2,
+  prior_auth: 4,
+  claim_submitted: 3,
+  pending_payment: 2,
   paid: 1,
 }
 
 type PatientStageAggregate = {
   id: string
   patientId: string
+  realPatientId: string | null
   businessLine: "dme" | "implants" | "biologics" | "matia"
   name: string
   payer: string
@@ -111,6 +478,7 @@ type PatientStageAggregate = {
 type PatientAccountAggregate = {
   id: string
   patientId: string
+  realPatientId: string | null
   businessLine: "dme" | "implants" | "biologics" | "matia"
   name: string
   payer: string
@@ -142,6 +510,10 @@ function parseAmount(value?: number | string) {
 }
 
 function getOrderAmount(order: OrderRecord, denialsByOrderId: Map<string, DenialRecord[]>) {
+  if (isMatiaChairProductLine(order)) {
+    return parseAmount(order.expected_amount) || getWheelchairReimbursement(order.hcpcs_code)
+  }
+
   const status = (order.status || "").toLowerCase()
   const reimbursed =
     parseAmount(order.paid_amount) || parseAmount(order.total_paid)
@@ -174,23 +546,30 @@ function getColumnId(status?: string) {
     case "draft":
     case "new":
     case "intake":
-    case "evaluation":
-    case "documentation":
-    case "pending":
+      return "intake"
+    case "eligibility_check":
+    case "eligibility_verification":
+    case "eligibility":
+      return "eligibility_verification"
     case "pending_auth":
-    case "pending auth":
-      return "pendingAuth"
     case "prior_auth":
     case "prior auth":
+      return "prior_auth"
+    case "documentation":
+    case "documents_pending":
+      return "documentation"
     case "authorized":
     case "approved":
-      return "authorized"
     case "submitted":
+    case "ready_to_submit":
+    case "claim_submitted":
+      return "claim_submitted"
     case "pending_pay":
     case "pending pay":
+    case "pending_payment":
     case "processing":
     case "pending_review":
-      return "submitted"
+      return "pending_payment"
     case "denied":
     case "write_off":
       return "denied"
@@ -200,7 +579,7 @@ function getColumnId(status?: string) {
     case "closed":
       return "paid"
     default:
-      return "pendingAuth"
+      return "intake"
   }
 }
 
@@ -233,6 +612,15 @@ function getPatientKey(order: OrderRecord) {
 }
 
 function inferBusinessLine(order: OrderRecord) {
+  const codeStr = [order.hcpcs_code, order.hcpcs, ...(order.hcpcs_codes || [])]
+    .filter(Boolean)
+    .join(" ")
+    .toUpperCase()
+  // Wheelchair HCPCS → Matia-only chair catalog for this org
+  if (/\b(K0001|K0005|K0333|K0823|K0856)\b/.test(codeStr)) {
+    return "matia" as const
+  }
+
   const signal = [
     order.order_type,
     order.hcpcs_code,
@@ -283,27 +671,10 @@ function inferBusinessLine(order: OrderRecord) {
   return "dme" as const
 }
 
-function mapMatiaPipelineToOrders(records: MatiaPipelineRecord[]): OrderRecord[] {
-  return records.map((record) => {
-    const patientId = `matia-${record.id}`
-    return {
-      id: `matia-${record.id}`,
-      patient_id: patientId,
-      patient_name: record.patient_name || `Matia Patient ${record.id}`,
-      payer_name: record.payer || "Unknown",
-      hcpcs_code: record.hcpcs || undefined,
-      order_type:
-        record.wheelchair_type === "power" || record.wheelchair_type === "manual"
-          ? `Matia ${record.wheelchair_type} wheelchair`
-          : "Matia mobility",
-      status: record.stage || "intake",
-      expected_amount: record.amount ?? undefined,
-      priority: record.priority || undefined,
-      assigned_to: "MT",
-      updated_at: record.created_at,
-      created_at: record.created_at,
-    }
-  })
+/** Matia pipeline rows + anything on the Matia / chair line (single SKU family). */
+function isMatiaChairProductLine(order: OrderRecord): boolean {
+  if (order.id.startsWith("matia-")) return true
+  return inferBusinessLine(order) === "matia"
 }
 
 function buildPatientAggregates(
@@ -315,6 +686,7 @@ function buildPatientAggregates(
 
   for (const order of orders) {
     const patientId = order.patient_id || order.id
+    const realPatientId = order.patient_id || null
     const patientKey = getPatientKey(order)
     const stage = getColumnId(order.status)
     const stageKey = `${patientKey}::${stage}`
@@ -338,6 +710,7 @@ function buildPatientAggregates(
       kanbanPatients.set(stageKey, {
         id: `${patientId}:${stage}`,
         patientId,
+        realPatientId,
         businessLine,
         name,
         payer,
@@ -363,6 +736,9 @@ function buildPatientAggregates(
         existingStage.due = due
         existingStage.assignee = getAssignee(order)
       }
+      if (!existingStage.realPatientId && realPatientId) {
+        existingStage.realPatientId = realPatientId
+      }
       existingStage.codeCounts.set(code, (existingStage.codeCounts.get(code) || 0) + 1)
       existingStage.orderIds.push(order.id)
       const nextTopCode = Array.from(existingStage.codeCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0]
@@ -374,6 +750,7 @@ function buildPatientAggregates(
       accountPatients.set(patientKey, {
         id: patientId.slice(0, 8).toUpperCase(),
         patientId,
+        realPatientId,
         businessLine,
         name,
         payer,
@@ -388,6 +765,9 @@ function buildPatientAggregates(
     existingAccount.orderCount += 1
     existingAccount.amount =
       existingAccount.amount || amount ? (existingAccount.amount || 0) + (amount || 0) : null
+    if (!existingAccount.realPatientId && realPatientId) {
+      existingAccount.realPatientId = realPatientId
+    }
     if (PATIENT_STAGE_PRIORITY[stage] > PATIENT_STAGE_PRIORITY[existingAccount.stage]) {
       existingAccount.stage = stage
     }
@@ -400,16 +780,8 @@ function buildPatientAggregates(
 }
 
 function getStageLock(orders: OrderRecord[], stage: string) {
-  if (stage !== "pendingAuth" && stage !== "authorized") {
+  if (stage !== "intake" && stage !== "prior_auth") {
     return { locked: false as const, reason: undefined }
-  }
-
-  const missingEligibility = orders.some((order) => (order.eligibility_status || "").toLowerCase() !== "eligible")
-  if (missingEligibility) {
-    return {
-      locked: true as const,
-      reason: "Eligibility must be verified through Availity before this patient can move forward.",
-    }
   }
 
   const missingSwo = orders.some((order) => (order.swo_status || "").toLowerCase() !== "ingested")
@@ -423,7 +795,7 @@ function getStageLock(orders: OrderRecord[], stage: string) {
   return { locked: false as const, reason: undefined }
 }
 
-export function buildDashboardData(orders: OrderRecord[], denials: DenialRecord[]) {
+export function buildDashboardData(orders: OrderRecord[], denials: DenialRecord[], opts?: DashboardBuildOptions) {
   const denialsByOrderId = new Map<string, DenialRecord[]>()
   for (const denial of denials) {
     if (!denial.order_id) continue
@@ -443,7 +815,7 @@ export function buildDashboardData(orders: OrderRecord[], denials: DenialRecord[
     const stageGate = getStageLock(groupedOrders, patient.stage)
     const card: KanbanCard = {
       id: patient.id,
-      patientId: patient.patientId,
+      patientId: patient.realPatientId || undefined,
       businessLine: patient.businessLine,
       title: patient.name,
       value: formatAmountDisplay(patient.amount),
@@ -455,7 +827,7 @@ export function buildDashboardData(orders: OrderRecord[], denials: DenialRecord[
         .join(" · "),
       due: patient.due,
       orderCount: patient.orderCount,
-      href: `/patients/${patient.patientId}`,
+      href: patient.realPatientId ? `/patients/${patient.realPatientId}` : undefined,
       orderIds: patient.orderIds,
       locked: stageGate.locked,
       lockReason: stageGate.reason,
@@ -487,7 +859,7 @@ export function buildDashboardData(orders: OrderRecord[], denials: DenialRecord[
         value: formatAmountDisplay(patient.amount),
         type: `${patient.orderCount} ${patient.orderCount === 1 ? "order" : "orders"} · ${patient.topCode}`,
         orderCount: patient.orderCount,
-        href: `/patients/${patient.patientId}`,
+        href: patient.realPatientId ? `/patients/${patient.realPatientId}` : undefined,
       }
     })
     .sort((a, b) => (b.orderCount || 0) - (a.orderCount || 0))
@@ -512,23 +884,17 @@ export function buildDashboardData(orders: OrderRecord[], denials: DenialRecord[
 
   const urgentOrders = orders.filter((order) => getPriority(order, getOrderAmount(order, denialsByOrderId) || 0) === "high").length
 
+  const appeals = opts?.appeals ?? []
+  const integrations = opts?.integrations
+  const cleanClaimRate = computeCleanClaimProxy(orders)
+  const daysInAR = computeDaysInAR(orders)
+  const appealWinRate = computeAppealWinRate(appeals)
+
   return {
     initialKPIs: {
-      cleanClaimRate: {
-        value: orders.length ? Math.max(0, Math.round(((orders.length - deniedCount) / orders.length) * 1000) / 10) : 100,
-        delta: `${deniedCount} denied`,
-        trend: deniedCount ? "down" : "up",
-      },
-      daysInAR: {
-        value: 0,
-        delta: "Live queue",
-        trend: "neutral",
-      },
-      appealWinRate: {
-        value: 0,
-        delta: `${denials.length} denials tracked`,
-        trend: "neutral",
-      },
+      cleanClaimRate,
+      daysInAR,
+      appealWinRate,
       outstandingOrders: {
         value: orders.length,
         urgent: urgentOrders,
@@ -537,13 +903,7 @@ export function buildDashboardData(orders: OrderRecord[], denials: DenialRecord[
     },
     initialPipeline: pipeline,
     initialAccounts: accounts,
-    initialSystemState: {
-      status: orders.length ? "operational" : "connected",
-      services: ["Core API", "Dashboard"],
-      ports: "443",
-      operators: ["Admin", "Billing", "Rep"],
-      lastSync: new Date().toISOString(),
-    },
+    initialSystemState: buildSystemState(orders, integrations),
     initialKanban: kanban,
   }
 }
@@ -560,12 +920,16 @@ export async function getLiveDashboardData() {
     "Content-Type": "application/json",
   }
 
-  const [ordersRes, denialsRes, communicationsRes, integrationsRes] = await Promise.all([
+  const [ordersRes, denialsRes, appealsRes, communicationsRes, integrationsRes] = await Promise.all([
     fetch(`${CORE_API_URL}/orders?limit=200`, {
       headers,
       cache: "no-store",
     }).catch(() => null),
     fetch(`${CORE_API_URL}/denials?limit=200`, {
+      headers,
+      cache: "no-store",
+    }).catch(() => null),
+    fetch(`${CORE_API_URL}/appeals?limit=200`, {
       headers,
       cache: "no-store",
     }).catch(() => null),
@@ -595,11 +959,7 @@ export async function getLiveDashboardData() {
     return {
       ...fallback,
       initialCommunications: [],
-      initialIntegrations: {
-        email: { configured: false, provider: null },
-        calendar: { configured: false, provider: null },
-        in_app_push: { configured: true, sources: [] },
-      },
+      initialIntegrations: UNKNOWN_INTEGRATIONS,
     }
   }
 
@@ -610,6 +970,8 @@ export async function getLiveDashboardData() {
     denialsRes && denialsRes.ok
       ? ((await denialsRes.json()) as { denials?: DenialRecord[] })
       : null
+  const appealsPayload =
+    appealsRes && appealsRes.ok ? ((await appealsRes.json()) as { appeals?: AppealRecord[] }) : null
   const communicationsPayload =
     communicationsRes && communicationsRes.ok
       ? ((await communicationsRes.json()) as { items?: Array<Record<string, unknown>> })
@@ -618,14 +980,29 @@ export async function getLiveDashboardData() {
     integrationsRes && integrationsRes.ok
       ? ((await integrationsRes.json()) as Record<string, unknown>)
       : null
-  const base = buildDashboardData(ordersPayload.orders || [], denialsPayload?.denials || [])
+
+  const matiaOrders = await fetchMatiaPipelineAsOrders(session.user.accessToken)
+  let mergedOrders = [...(ordersPayload.orders || []), ...matiaOrders]
+
+  // Reps only see patients assigned to them
+  if (session.user.role === "rep" && session.user.id) {
+    const repId = session.user.id
+    const assignedPatientIds = new Set(
+      mergedOrders
+        .filter((o) => o.assigned_to_user_id === repId)
+        .map((o) => o.patient_id)
+        .filter(Boolean),
+    )
+    mergedOrders = mergedOrders.filter((o) => assignedPatientIds.has(o.patient_id))
+  }
+
+  const base = buildDashboardData(mergedOrders, denialsPayload?.denials || [], {
+    appeals: appealsPayload?.appeals || [],
+    integrations: integrationsPayload ?? undefined,
+  })
   return {
     ...base,
     initialCommunications: communicationsPayload?.items || [],
-    initialIntegrations: integrationsPayload || {
-      email: { configured: false, provider: null },
-      calendar: { configured: false, provider: null },
-      in_app_push: { configured: true, sources: [] },
-    },
+    initialIntegrations: integrationsPayload || UNKNOWN_INTEGRATIONS,
   }
 }

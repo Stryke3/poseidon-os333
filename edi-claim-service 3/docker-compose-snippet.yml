@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# POSEIDON EDI Service — Docker Compose Service Block
+# Copy this into your main docker-compose.yml under 'services:'
+# ─────────────────────────────────────────────────────────────────────────────
+
+  edi:
+    build:
+      context: ./services/edi
+      dockerfile: Dockerfile
+    container_name: poseidon_edi
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      SERVICE_NAME: edi
+      SERVICE_PORT: "8005"
+      POSEIDON_URL: http://poseidon-core:8001
+
+      # Stedi API — get from https://www.stedi.com/app/settings/api-keys
+      STEDI_API_KEY: ${STEDI_API_KEY:-}
+
+      # ISA envelope — assigned by clearinghouse during enrollment
+      ISA_SENDER_ID: ${ISA_SENDER_ID:-STRYKEFOX      }
+      ISA_RECEIVER_ID: ${ISA_RECEIVER_ID:-030240928      }
+      ISA_SENDER_QUAL: ${ISA_SENDER_QUAL:-ZZ}
+      ISA_RECEIVER_QUAL: ${ISA_RECEIVER_QUAL:-ZZ}
+
+      # Dry run mode — set to 'true' to build payloads without submitting
+      EDI_DRY_RUN: ${EDI_DRY_RUN:-true}
+
+      # SFTP fallback for payers without API submission
+      SFTP_HOST: ${SFTP_HOST:-}
+      SFTP_USER: ${SFTP_USER:-}
+      SFTP_KEY_PATH: /app/keys/sftp_key
+    ports:
+      - "127.0.0.1:8005:8005"
+    volumes:
+      - ./services/edi:/app
+      - ./keys:/app/keys:ro
+    networks:
+      - poseidon-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NGINX — Add to your poseidon.conf
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# upstream edi { server poseidon_edi:8005; }
+#
+# server {
+#     listen 80;
+#     server_name edi.strykefox.com;
+#     location / {
+#         proxy_pass http://edi;
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_read_timeout 60s;
+#         client_max_body_size 50M;   # for 835 file uploads
+#     }
+# }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# .env additions — append to your .env file
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# # ── EDI Service ────────────────────────────────────────────────────────────
+# STEDI_API_KEY=<from stedi.com dashboard>
+# ISA_SENDER_ID=STRYKEFOX       # 15 chars, assigned by clearinghouse
+# ISA_RECEIVER_ID=030240928      # 15 chars, assigned by clearinghouse
+# ISA_SENDER_QUAL=ZZ
+# ISA_RECEIVER_QUAL=ZZ
+# EDI_DRY_RUN=true               # Set to 'false' when ready to go live

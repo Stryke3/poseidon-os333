@@ -14,7 +14,7 @@ interface PageShellProps {
 interface HeroPanelProps {
   eyebrow: string
   title: string
-  description?: string
+  description?: ReactNode
   actions?: ReactNode
   aside?: ReactNode
   className?: string

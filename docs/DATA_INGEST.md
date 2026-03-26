@@ -62,3 +62,38 @@ python3 scripts/lvco_live_pipeline.py
 ```
 
 This runs **`scripts/ingest_lvco.sh`**, then **`POST /api/v1/admin/materialize-order-packages`** (Trident score JSON + SWO/CMS/POD PDFs when slots are empty). By default it also sets **`unlock_lvco_intake_gates=true`**, which marks **draft** rows from `lvco` / `import` as eligibility **eligible** and SWO **ingested** so Kanban moves are not blocked in replay environments. Use **`--no-unlock-gates`** for stricter gating.
+
+## WHT workspace -> data room automated pulls
+
+For recurring WHT data-room imports with duplicate review + chart doc consolidation:
+
+```bash
+python3 scripts/wht_data_room_pull.py --mode morning
+python3 scripts/wht_data_room_pull.py --mode nightly
+```
+
+What it does:
+- Parses `*.csv/*.xlsx` from `WHT_DATA_ROOM_DIR` (default `data/wht-workspace/data-room`) and posts to `POST /orders/import`
+- Uses Core import dedup (`skipped_duplicate`) and writes review flags
+- Scans document files (`pdf/doc/docx/txt/png/jpg/...`) and attempts to attach them to matched orders as `chart_notes`
+- Writes a review queue report JSON under `data/processed/wht_review_queue_*.json`
+
+Install cron (morning + nightly defaults):
+
+```bash
+bash scripts/setup_wht_pull_cron.sh
+```
+
+Override times if needed:
+
+```bash
+WHT_MORNING_CRON_SPEC="0 6 * * *" \
+WHT_NIGHTLY_CRON_SPEC="0 21 * * *" \
+bash scripts/setup_wht_pull_cron.sh
+```
+
+On macOS, launchd is preferred:
+
+```bash
+bash scripts/setup_wht_pull_launchd.sh
+```

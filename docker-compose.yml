@@ -8,7 +8,6 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
   redis_data:
   minio_data:
   training_data:
@@ -18,25 +17,6 @@ services:
   # ---------------------------------------------------------------------------
   # INFRASTRUCTURE
   # ---------------------------------------------------------------------------
-
-  postgres:
-    image: postgres:15.14-alpine
-    container_name: poseidon_db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-poseidon_db}
-      POSTGRES_USER: ${POSTGRES_USER:-poseidon}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    networks:
-      - poseidon_net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-poseidon}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   redis:
     image: redis:7.4.8-alpine
@@ -88,8 +68,6 @@ services:
     volumes:
       - ./data:/app/data
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       minio:
@@ -120,8 +98,6 @@ services:
     networks:
       - poseidon_net
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -146,8 +122,6 @@ services:
     networks:
       - poseidon_net
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -173,8 +147,6 @@ services:
     networks:
       - poseidon_net
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -194,18 +166,24 @@ services:
     environment:
       SERVICE_NAME: edi
       PORT: 8006
+      # EDI service expects a single DATABASE_URL env var.
+      DATABASE_URL: ${DATABASE_URL}
       STEDI_API_KEY: ${STEDI_API_KEY:-}
       ISA_SENDER_ID: ${ISA_SENDER_ID:-STRYKEFOX      }
       ISA_RECEIVER_ID: ${ISA_RECEIVER_ID:-030240928      }
       ISA_SENDER_QUAL: ${ISA_SENDER_QUAL:-ZZ}
       ISA_RECEIVER_QUAL: ${ISA_RECEIVER_QUAL:-ZZ}
-      EDI_DRY_RUN: ${EDI_DRY_RUN:-true}
-      SUBMISSION_METHOD: ${SUBMISSION_METHOD:-availity_sftp}
+      EDI_DRY_RUN: ${EDI_DRY_RUN:-false}
+      SUBMISSION_METHOD: ${SUBMISSION_METHOD:-stedi_api}
+      ISA_TEST_INDICATOR: ${ISA_TEST_INDICATOR:-P}
+      BILLING_NPI: ${BILLING_NPI:-1821959420}
+      BILLING_TAX_ID: ${BILLING_TAX_ID:-393429726}
+      BILLING_ORG_NAME: ${BILLING_ORG_NAME:-STRYKEFOX MEDICAL}
+      BILLING_TAXONOMY: ${BILLING_TAXONOMY:-332B00000X}
+      BILLING_PHONE: ${BILLING_PHONE:-6124996561}
       AVAILITY_SFTP_USER: ${AVAILITY_SFTP_USER:-}
       AVAILITY_SFTP_PASS: ${AVAILITY_SFTP_PASS:-}
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     networks:
@@ -227,12 +205,9 @@ services:
     environment:
       SERVICE_NAME: availity
       PORT: 8005
-      DATABASE_URL: ${AVAILITY_DATABASE_URL:-postgresql://poseidon:${POSTGRES_PASSWORD}@postgres:5432/poseidon}
+      DATABASE_URL: ${DATABASE_URL}
     networks:
       - poseidon_net
-    depends_on:
-      postgres:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8005/live"]
       interval: 30s

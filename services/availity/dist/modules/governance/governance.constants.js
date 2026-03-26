@@ -1,0 +1,110 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LEARNED_SUGGESTION_TYPE = exports.LEARNED_SUGGESTION_STATUS = exports.GOVERNANCE_DECISION_VALUE = exports.GOVERNANCE_TARGET_TYPE = exports.GOVERNANCE_RECOMMENDATION_TYPE = exports.GOVERNANCE_STATUS = exports.EXTRACTION_CONFIDENCE = exports.MANUAL_REQUIREMENT_CATEGORY = exports.MANUAL_EXTRACTION_AUTO_ACCEPT_CONFIDENCE = exports.MANUAL_EXTRACTION_SOURCE = exports.MANUAL_REQUIREMENT_REVIEW_STATE = exports.REQUIREMENT_TYPE = exports.MANUAL_PARSED_STATUS = void 0;
+exports.confidenceToFloat = confidenceToFloat;
+exports.mapCategoryToRequirementType = mapCategoryToRequirementType;
+/** Values for `PayerManual.parsedStatus`. */
+exports.MANUAL_PARSED_STATUS = {
+    PENDING: "PENDING",
+    PARSED: "PARSED",
+    REVIEWED: "REVIEWED",
+    FAILED: "FAILED",
+};
+/** Persisted `ManualRequirement.requirementType` (manual-authoritative baseline). */
+exports.REQUIREMENT_TYPE = {
+    REQUIRED_DOCUMENT: "REQUIRED_DOCUMENT",
+    AUTH_REQUIRED: "AUTH_REQUIRED",
+    TIMING_RULE: "TIMING_RULE",
+    RESTRICTION: "RESTRICTION",
+    ESCALATION: "ESCALATION",
+};
+/** Persisted `ManualRequirement.reviewState`. APPROVED is protected from automatic re-extract. */
+exports.MANUAL_REQUIREMENT_REVIEW_STATE = {
+    AUTO_PENDING: "AUTO_PENDING",
+    AUTO_ACCEPT: "AUTO_ACCEPT",
+    PENDING_REVIEW: "PENDING_REVIEW",
+    APPROVED: "APPROVED",
+    REJECTED: "REJECTED",
+};
+exports.MANUAL_EXTRACTION_SOURCE = {
+    DETERMINISTIC: "DETERMINISTIC",
+    LLM: "LLM",
+};
+/** Confidence at or above this threshold (deterministic only) gets AUTO_ACCEPT + active. */
+exports.MANUAL_EXTRACTION_AUTO_ACCEPT_CONFIDENCE = 0.8;
+/** Internal extractor labels before mapping to {@link REQUIREMENT_TYPE}. */
+exports.MANUAL_REQUIREMENT_CATEGORY = {
+    REQUIRED_DOCUMENT: "REQUIRED_DOCUMENT",
+    AUTHORIZATION_REQUIREMENT: "AUTHORIZATION_REQUIREMENT",
+    DIAGNOSIS_DEVICE_RESTRICTION: "DIAGNOSIS_DEVICE_RESTRICTION",
+    TIMING_RULE: "TIMING_RULE",
+    ESCALATION: "ESCALATION",
+    DOCUMENTATION_LANGUAGE: "DOCUMENTATION_LANGUAGE",
+    SUBMISSION_LIMITATION: "SUBMISSION_LIMITATION",
+};
+exports.EXTRACTION_CONFIDENCE = {
+    HIGH: "HIGH",
+    MEDIUM: "MEDIUM",
+    LOW: "LOW",
+};
+function confidenceToFloat(tier) {
+    if (tier === exports.EXTRACTION_CONFIDENCE.HIGH)
+        return 0.9;
+    if (tier === exports.EXTRACTION_CONFIDENCE.MEDIUM)
+        return 0.72;
+    return 0.55;
+}
+function mapCategoryToRequirementType(category) {
+    switch (category) {
+        case exports.MANUAL_REQUIREMENT_CATEGORY.AUTHORIZATION_REQUIREMENT:
+            return exports.REQUIREMENT_TYPE.AUTH_REQUIRED;
+        case exports.MANUAL_REQUIREMENT_CATEGORY.TIMING_RULE:
+            return exports.REQUIREMENT_TYPE.TIMING_RULE;
+        case exports.MANUAL_REQUIREMENT_CATEGORY.ESCALATION:
+            return exports.REQUIREMENT_TYPE.ESCALATION;
+        case exports.MANUAL_REQUIREMENT_CATEGORY.DIAGNOSIS_DEVICE_RESTRICTION:
+        case exports.MANUAL_REQUIREMENT_CATEGORY.DOCUMENTATION_LANGUAGE:
+        case exports.MANUAL_REQUIREMENT_CATEGORY.SUBMISSION_LIMITATION:
+            return exports.REQUIREMENT_TYPE.RESTRICTION;
+        default:
+            return exports.REQUIREMENT_TYPE.REQUIRED_DOCUMENT;
+    }
+}
+/** Governance queue + decisions */
+exports.GOVERNANCE_STATUS = {
+    PENDING: "PENDING",
+    APPROVED: "APPROVED",
+    REJECTED: "REJECTED",
+    IMPLEMENTED: "IMPLEMENTED",
+    SUPERSEDED: "SUPERSEDED",
+};
+exports.GOVERNANCE_RECOMMENDATION_TYPE = {
+    PROMOTE_PLAYBOOK: "PROMOTE_PLAYBOOK",
+    REVISE_PLAYBOOK: "REVISE_PLAYBOOK",
+    RETIRE_PLAYBOOK: "RETIRE_PLAYBOOK",
+    CREATE_RULE: "CREATE_RULE",
+    ADJUST_SCORE_WEIGHT: "ADJUST_SCORE_WEIGHT",
+};
+exports.GOVERNANCE_TARGET_TYPE = {
+    PLAYBOOK: "PLAYBOOK",
+    RULE: "RULE",
+    SCORE_PROFILE: "SCORE_PROFILE",
+};
+exports.GOVERNANCE_DECISION_VALUE = {
+    APPROVED: "APPROVED",
+    REJECTED: "REJECTED",
+};
+/** Learned suggestion lifecycle */
+exports.LEARNED_SUGGESTION_STATUS = {
+    DRAFT: "DRAFT",
+    APPROVED: "APPROVED",
+    REJECTED: "REJECTED",
+    APPLIED: "APPLIED",
+};
+exports.LEARNED_SUGGESTION_TYPE = {
+    SCORE_WEIGHT: "SCORE_WEIGHT",
+    DOC_REQUIREMENT_HINT: "DOC_REQUIREMENT_HINT",
+    PLAYBOOK_REVISION: "PLAYBOOK_REVISION",
+    ROUTING_HINT: "ROUTING_HINT",
+};
+//# sourceMappingURL=governance.constants.js.map

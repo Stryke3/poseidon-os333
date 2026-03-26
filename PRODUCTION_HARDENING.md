@@ -75,6 +75,10 @@ vercel env add NEXT_PUBLIC_CORE_API_URL production
 
 vercel env add NEXT_PUBLIC_TRIDENT_API_URL production
 # value: https://trident.strykefox.com
+
+# If the dashboard is on Vercel but Availity runs behind your nginx path proxy, point the browser at that path:
+vercel env add NEXT_PUBLIC_AVAILITY_SERVICE_URL production
+# value: https://dashboard.strykefox.com/availity-api
 ```
 
 Redeploy after changing env vars:
@@ -233,7 +237,15 @@ bash scripts/restore_stateful_storage.sh backups/stateful/<timestamp>
 Use the root deploy script:
 
 ```bash
-bash poseidon-deploy.sh
+bash poseidon-deploy.sh --all
+```
+
+`--all` deploys the Vercel frontend **and** rebuilds/restarts the full Docker Compose stack (Core, Trident, Intake, ML, **Availity**, dashboard, nginx, data stores).
+
+Frontend-only (no Docker on this machine):
+
+```bash
+bash poseidon-deploy.sh --vercel-only
 ```
 
 That script now:
@@ -245,6 +257,7 @@ That script now:
 - requires an explicit `frontend/.env.local`
 - deploys from the already linked Vercel project when available
 - uses the webpack production build path on Next.js 16 for deterministic CI and local verification
+- with `--all` (or `POSEIDON_DEPLOY_ALL=1`), runs `docker compose up -d --build` from the repo root (requires Docker and a filled root `.env`)
 
 ## Troubleshooting
 
