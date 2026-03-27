@@ -17,6 +17,10 @@ type FormState = {
   referring_npi: string
   insurance_auth_number: string
   priority: "standard" | "urgent" | "stat"
+  doctor_name: string
+  doctor_phone: string
+  doctor_fax: string
+  doctor_email: string
   notes: string
 }
 
@@ -34,6 +38,10 @@ const EMPTY_FORM: FormState = {
   referring_npi: "",
   insurance_auth_number: "",
   priority: "standard",
+  doctor_name: "",
+  doctor_phone: "",
+  doctor_fax: "",
+  doctor_email: "",
   notes: "",
 }
 
@@ -146,6 +154,15 @@ export default function PatientIntakeForm() {
           payer_id: form.payer_id.trim(),
           insurance_id: form.insurance_id.trim(),
           diagnosis_codes: icd10Codes,
+          address: {
+            provider_contact: {
+              name: form.doctor_name.trim() || null,
+              phone: form.doctor_phone.trim() || null,
+              fax: form.doctor_fax.trim() || null,
+              email: form.doctor_email.trim() || null,
+              npi: form.referring_npi.trim() || null,
+            },
+          },
         }
 
         const patientRes = await fetch("/api/patients", {
@@ -189,6 +206,13 @@ export default function PatientIntakeForm() {
               icd10_codes: icd10Codes,
               hcpcs_codes: hcpcsCodes,
               device_description: form.device_description.trim() || null,
+            },
+            provider_contact: {
+              name: form.doctor_name.trim() || null,
+              phone: form.doctor_phone.trim() || null,
+              fax: form.doctor_fax.trim() || null,
+              email: form.doctor_email.trim() || null,
+              npi: form.referring_npi.trim() || null,
             },
             workflow: {
               swo_expected: true,
@@ -356,6 +380,47 @@ export default function PatientIntakeForm() {
             rows={3}
             className="mt-1 w-full resize-none rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-accent-blue/40"
           />
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-black/10 p-5">
+        <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.2em] text-accent-blue">
+          Referring Doctor Contact
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <FieldLabel label="Doctor Name" />
+            <FieldInput
+              value={form.doctor_name}
+              onChange={(v) => updateField("doctor_name", v)}
+              placeholder="Dr. Jane Doe"
+            />
+          </div>
+          <div>
+            <FieldLabel label="Doctor Phone" />
+            <FieldInput
+              value={form.doctor_phone}
+              onChange={(v) => updateField("doctor_phone", v)}
+              placeholder="(555) 555-1212"
+            />
+          </div>
+          <div>
+            <FieldLabel label="Doctor Fax" />
+            <FieldInput
+              value={form.doctor_fax}
+              onChange={(v) => updateField("doctor_fax", v)}
+              placeholder="(555) 555-2121"
+            />
+          </div>
+          <div>
+            <FieldLabel label="Doctor Email" />
+            <FieldInput
+              value={form.doctor_email}
+              onChange={(v) => updateField("doctor_email", v)}
+              placeholder="clinic@practice.com"
+              type="email"
+            />
+          </div>
         </div>
       </div>
 
