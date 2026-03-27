@@ -351,10 +351,15 @@ def get_token(base: str) -> str:
         sys.exit(1)
 
     url = f"{base.rstrip('/')}/auth/login"
+    login_headers = {"Content-Type": "application/json"}
+    host_header = os.environ.get("CORE_HOST_HEADER", "").strip()
+    if host_header:
+        login_headers["Host"] = host_header
+
     _, payload = http_json(
         "POST",
         url,
-        {"Content-Type": "application/json"},
+        login_headers,
         {"email": email, "password": password},
     )
     token = payload.get("access_token")
@@ -448,15 +453,20 @@ def main() -> None:
 
     token = get_token(base)
     import_url = f"{base}/orders/import"
+    host_header = os.environ.get("CORE_HOST_HEADER", "").strip()
+    request_headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+        "X-Internal-API-Key": internal_key,
+    }
+    if host_header:
+        request_headers["Host"] = host_header
+
     try:
         status, result = http_json(
             "POST",
             import_url,
-            {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}",
-                "X-Internal-API-Key": internal_key,
-            },
+            request_headers,
             {"orders": all_orders},
             timeout=300,
         )

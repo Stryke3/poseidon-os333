@@ -117,6 +117,17 @@ function cardMatchesBusinessLine(card: KanbanCard, bl: BusinessLineId) {
   return card.businessLine === bl
 }
 
+function isChartPatientId(value?: string) {
+  if (!value) return false
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+function getChartHref(card: KanbanCard): string | undefined {
+  if (isChartPatientId(card.patientId)) return `/patients/${card.patientId}`
+  if (card.href?.startsWith("/patients/")) return card.href
+  return undefined
+}
+
 /* ── component ──────────────────────────────────────── */
 
 export default function NeuralOsDashboard({
@@ -337,6 +348,13 @@ export default function NeuralOsDashboard({
             )}
           </div>
 
+          <Link
+            className="rounded-lg border border-cyan-400/30 bg-cyan-400/12 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/50 hover:bg-cyan-400/20 hover:text-white"
+            href="/fax"
+          >
+            Fax
+          </Link>
+
           {/* Trident toggle */}
           <button
             className={cn(
@@ -398,6 +416,14 @@ export default function NeuralOsDashboard({
                 ✕
               </button>
             </div>
+
+            <Link
+              className="mb-4 block rounded-lg border border-cyan-400/35 bg-cyan-400/15 px-3 py-2.5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/25 hover:text-white"
+              href="/fax"
+              onClick={() => setMenuOpen(false)}
+            >
+              Open Fax
+            </Link>
 
             <nav className="space-y-1">
               {navItems.map((item, idx) => (
@@ -546,6 +572,16 @@ export default function NeuralOsDashboard({
         </div>
       </div>
 
+      <Link
+        className={cn(
+          "fixed bottom-5 right-4 z-30 rounded-full border border-cyan-400/30 bg-cyan-400/12 px-4 py-3 text-sm font-semibold text-cyan-100 shadow-[0_16px_40px_rgba(5,8,15,0.4)] transition hover:scale-[1.02] hover:border-cyan-300/50 hover:bg-cyan-400/20 hover:text-white",
+          tridentOpen ? "bottom-24 md:bottom-28" : "",
+        )}
+        href="/fax"
+      >
+        Fax
+      </Link>
+
       {/* ── Trident AI Bar ───────────────────────── */}
       {tridentOpen && (
         <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-[rgba(8,16,28,0.96)] backdrop-blur-xl">
@@ -631,6 +667,7 @@ function PatientCard({
   onDragEnd: () => void
 }) {
   const orderId = card.orderIds?.[0] || card.id
+  const chartHref = getChartHref(card)
 
   return (
     <>
@@ -656,9 +693,9 @@ function PatientCard({
           <div className="mt-2 flex items-center justify-between">
             <span className="text-sm font-semibold text-white">{card.value}</span>
             <div className="flex items-center gap-2">
-              {(card.href || card.patientId) && (
+              {chartHref && (
                 <Link
-                  href={card.href || `/patients/${card.patientId}`}
+                  href={chartHref}
                   className="rounded-full border border-cyan-400/25 px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-cyan-300 hover:border-cyan-400 hover:text-white"
                   onClick={(e) => e.stopPropagation()}
                 >
@@ -721,10 +758,10 @@ function PatientCard({
 
             {/* Actions */}
             <div className="mt-5 flex gap-3">
-              {(card.href || card.patientId) ? (
+              {chartHref ? (
                 <Link
                   className="flex-1 rounded-lg border border-cyan-400/30 bg-cyan-400/10 py-3 text-center text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
-                  href={card.href || `/patients/${card.patientId}`}
+                  href={chartHref}
                 >
                   Open Full Record
                 </Link>

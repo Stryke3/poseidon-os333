@@ -10,11 +10,11 @@ const ADMIN = "00000000-0000-0000-0000-000000000099";
 
 const patients = [
   // DME
-  [DME,"DME-10001","James","Richardson","1958-03-14","M","(469) 555-0112","4521 Elm Creek Dr","Dallas","TX","75201","MEDICARE_DMERC","MBI1234567A",'["G47.33","J44.1"]',"TX-DFW"],
+  [DME,"DME-10001","James","Richardson","1958-03-14","M","(469) 555-0112","4521 Elm Creek Dr","Dallas","TX","75201","MEDICARE_DMERC","MBI1234567A",'["M17.11","J44.1"]',"TX-DFW"],
   [DME,"DME-10002","Patricia","Womack","1945-07-22","F","(214) 555-0198","892 Oak Lawn Ave","Dallas","TX","75219","UHC","UHC998877201",'["M79.3","G89.29"]',"TX-DFW"],
-  [DME,"DME-10003","Robert","Chen","1962-11-05","M","(972) 555-0145","1100 Commerce St Apt 4B","Plano","TX","75074","BCBS","XYK887766123",'["E11.65","G47.33"]',"TX-DFW"],
+  [DME,"DME-10003","Robert","Chen","1962-11-05","M","(972) 555-0145","1100 Commerce St Apt 4B","Plano","TX","75074","BCBS","XYK887766123",'["E11.65","M25.551"]',"TX-DFW"],
   [DME,"DME-10004","Maria","Gonzalez","1970-04-18","F","(817) 555-0167","3300 W 7th St","Fort Worth","TX","76107","AETNA","AET443322110",'["J44.1","J96.10"]',"TX-FW"],
-  [DME,"DME-10005","William","Parker","1953-09-30","M","(469) 555-0133","7800 Greenville Ave","Dallas","TX","75231","HUMANA","HUM556677889",'["G47.33"]',"TX-DFW"],
+  [DME,"DME-10005","William","Parker","1953-09-30","M","(469) 555-0133","7800 Greenville Ave","Dallas","TX","75231","HUMANA","HUM556677889",'["M16.11"]',"TX-DFW"],
   [DME,"DME-10006","Dorothy","Williams","1940-12-08","F","(214) 555-0177","1500 Marilla St","Dallas","TX","75201","MEDICARE_DMERC","MBI9988776B",'["M54.5","M79.3"]',"TX-DFW"],
   [DME,"DME-10007","Thomas","Bryant","1967-06-25","M","(972) 555-0122","2200 Ross Ave","Dallas","TX","75201","CIGNA","CGN112233445",'["E11.65","E11.621"]',"TX-DFW"],
   // Biologics
@@ -34,13 +34,13 @@ const patients = [
 
 const orders = [
   // DME orders
-  ["DME-10001","intake","E0601","CPAP",850,"dme","high"],
+  ["DME-10001","intake","L1833","Knee Brace",980,"dme","high"],
   ["DME-10001","pending_auth","E0470","BiPAP",2400,"dme","normal"],
   ["DME-10002","auth_approved","E0745","Neuromuscular Stimulator",1200,"dme","normal"],
   ["DME-10003","submitted","A4253","Diabetic Test Strips",320,"dme","low"],
-  ["DME-10003","pending_auth","E0601","CPAP",850,"dme","high"],
+  ["DME-10003","pending_auth","L1686","Hip Brace",1450,"dme","high"],
   ["DME-10004","pending_payment","E0260","Hospital Bed",1800,"dme","normal"],
-  ["DME-10005","denied","E0601","CPAP",850,"dme","high"],
+  ["DME-10005","denied","L1833","Knee Brace",980,"dme","high"],
   ["DME-10006","paid","E0676","Compression Device",950,"dme","normal"],
   ["DME-10006","intake","L1832","Knee Brace",680,"dme","low"],
   ["DME-10007","submitted","E0470","BiPAP",2400,"dme","normal"],

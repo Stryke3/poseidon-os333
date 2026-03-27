@@ -433,6 +433,7 @@ const COLUMN_META: Record<string, { label: string; color: string }> = {
   eligibility_verification: { label: "Eligibility", color: "#1a6ef5" },
   prior_auth: { label: "Auth / CMN", color: "#0d9eaa" },
   documentation: { label: "Documentation", color: "#7c5af0" },
+  delivered: { label: "Delivered", color: "#2b8a78" },
   claim_submitted: { label: "Submitted", color: "#4a6a90" },
   pending_payment: { label: "Pmt Pending", color: "#0fa86a" },
   denied: { label: "Denied", color: "#e03a3a" },
@@ -451,9 +452,10 @@ const PATIENT_STAGE_PRIORITY: Record<string, number> = {
   denied: 6,
   appealed: 5,
   prior_auth: 4,
-  claim_submitted: 3,
-  pending_payment: 2,
-  paid: 1,
+  delivered: 3,
+  claim_submitted: 2,
+  pending_payment: 1,
+  paid: 0,
 }
 
 type PatientStageAggregate = {
@@ -486,6 +488,11 @@ type PatientAccountAggregate = {
   amount: number | null
   orderCount: number
   topCode: string
+}
+
+function isUuid(value: string | null | undefined): value is string {
+  if (!value) return false
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 }
 
 function toCurrency(value: number) {
@@ -558,6 +565,12 @@ function getColumnId(status?: string) {
     case "documentation":
     case "documents_pending":
       return "documentation"
+    case "delivered":
+    case "delivery_complete":
+    case "delivery_completed":
+    case "pod_received":
+    case "proof_of_delivery":
+      return "delivered"
     case "authorized":
     case "approved":
     case "submitted":
@@ -686,7 +699,7 @@ function buildPatientAggregates(
 
   for (const order of orders) {
     const patientId = order.patient_id || order.id
-    const realPatientId = order.patient_id || null
+    const realPatientId = isUuid(order.patient_id) ? order.patient_id : null
     const patientKey = getPatientKey(order)
     const stage = getColumnId(order.status)
     const stageKey = `${patientKey}::${stage}`

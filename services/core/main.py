@@ -1755,8 +1755,32 @@ def _import_resolve_hcpcs_and_diagnosis(row: ImportOrderPayload) -> tuple[list[s
     if not hcpcs_codes and _normalize_text(row.hcpcs):
         hcpcs_codes = [_normalize_text(row.hcpcs).upper()]
     if not hcpcs_codes:
-        hcpcs_codes = ["E0601"]
+        hcpcs_codes, inferred_from = _infer_hcpcs_from_diagnosis(diagnosis_codes)
+        row.notes = f"{_normalize_text(row.notes)} [hcpcs_inferred_from_icd10:{inferred_from}]".strip()
+        logger.warning(
+            "Import row missing HCPCS; inferred %s from ICD-10 context %s",
+            ",".join(hcpcs_codes),
+            inferred_from,
+        )
     return sorted(hcpcs_codes), sorted(diagnosis_codes)
+
+
+ICD10_TO_HCPCS_CONTEXT: tuple[tuple[tuple[str, ...], list[str], str], ...] = (
+    (("M17", "M23", "M25.56", "M25.57"), ["L1833"], "knee-bracing"),
+    (("M16", "M24.45", "M25.55"), ["L1686"], "hip-bracing"),
+    (("G82", "G80", "G35", "R26"), ["K0823"], "mobility"),
+    (("M54", "M51", "M48"), ["L0650"], "lumbar-bracing"),
+)
+
+
+def _infer_hcpcs_from_diagnosis(diagnosis_codes: list[str]) -> tuple[list[str], str]:
+    normalized = [str(code or "").upper() for code in diagnosis_codes if str(code or "").strip()]
+    for prefixes, hcpcs_codes, source in ICD10_TO_HCPCS_CONTEXT:
+        for code in normalized:
+            if any(code.startswith(prefix) for prefix in prefixes):
+                return list(hcpcs_codes), source
+    # Use brace-first fallback for production DME defaults.
+    return ["L1833"], "fallback-default-knee-bracing"
 
 
 async def _import_row_dedup_context(
@@ -2781,9 +2805,19 @@ async def _score_order_with_trident(request: Request, org_id: str, order_id: str
                 "SELECT icd10_code FROM order_diagnoses WHERE order_id = $1 ORDER BY sequence",
                 order_id,
             )
+        icd10_codes = [str(d["icd10_code"]) for d in diags if d.get("icd10_code")] or ["Z00.00"]
+        hcpcs_codes = [str(x) for x in _coerce_json_list(order.get("hcpcs_codes"))]
+        if not hcpcs_codes:
+            hcpcs_codes, inferred_from = _infer_hcpcs_from_diagnosis(icd10_codes)
+            logger.warning(
+                "Order %s missing HCPCS for Trident scoring; inferred %s from %s",
+                order_id,
+                ",".join(hcpcs_codes),
+                inferred_from,
+            )
         score_body = {
-            "icd10_codes": [str(d["icd10_code"]) for d in diags if d.get("icd10_code")] or ["Z00.00"],
-            "hcpcs_codes": [str(x) for x in _coerce_json_list(order.get("hcpcs_codes"))] or ["E0601"],
+            "icd10_codes": icd10_codes,
+            "hcpcs_codes": hcpcs_codes,
             "payer_id": str(order.get("payer_id") or "UNKNOWN"),
             "patient_age": _patient_age_years(order.get("dob")),
         }
@@ -6329,7 +6363,13 @@ async def v1_materialize_order_packages(
                         dx_list = ["Z00.00"]
                     hcpcs_list = [str(x) for x in _coerce_json_list(bundle.get("hcpcs_codes"))]
                     if not hcpcs_list:
-                        hcpcs_list = ["E0601"]
+                        hcpcs_list, inferred_from = _infer_hcpcs_from_diagnosis(dx_list)
+                        logger.warning(
+                            "Order %s bundle missing HCPCS; inferred %s from %s",
+                            oid,
+                            ",".join(hcpcs_list),
+                            inferred_from,
+                        )
                     score_body = {
                         "icd10_codes": dx_list,
                         "hcpcs_codes": hcpcs_list,

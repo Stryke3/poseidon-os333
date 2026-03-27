@@ -67,6 +67,17 @@ type PatientChart = {
   eobs: ChartItem[]
 }
 
+function isChartPatientId(value?: string) {
+  if (!value) return false
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+function getChartHref(card: KanbanCard): string | undefined {
+  if (isChartPatientId(card.patientId)) return `/patients/${card.patientId}`
+  if (card.href?.startsWith("/patients/")) return card.href
+  return undefined
+}
+
 interface KanbanBoardProps {
   initialColumns?: Record<string, KanbanColumn>
   userRole?: string
@@ -77,6 +88,7 @@ const EMPTY_KANBAN_COLUMNS: Record<string, KanbanColumn> = {
   eligibility_verification: { id: "eligibility_verification", label: "Eligibility", color: "#1a6ef5", cards: [] },
   prior_auth: { id: "prior_auth", label: "Auth / CMN", color: "#0d9eaa", cards: [] },
   documentation: { id: "documentation", label: "Documentation", color: "#7c5af0", cards: [] },
+  delivered: { id: "delivered", label: "Delivered", color: "#2b8a78", cards: [] },
   claim_submitted: { id: "claim_submitted", label: "Submitted", color: "#4a6a90", cards: [] },
   pending_payment: { id: "pending_payment", label: "Pmt Pending", color: "#0fa86a", cards: [] },
   denied: { id: "denied", label: "Denied", color: "#e03a3a", cards: [] },
@@ -424,6 +436,7 @@ export default function KanbanBoard({
                 const chart = card.patientId ? patientCharts[card.patientId] : undefined
                 const isLoading = loadingPatientId === card.patientId
                 const chartError = card.patientId ? chartErrors[card.patientId] : ""
+                const chartHref = getChartHref(card)
 
                 return (
                   <div
@@ -514,9 +527,9 @@ export default function KanbanBoard({
                             </div>
                           )}
                           <div className="flex items-center gap-2">
-                            {(card.href || card.patientId) && (
+                            {chartHref && (
                               <Link
-                                href={card.href || `/patients/${card.patientId}`}
+                                href={chartHref}
                                 className="rounded-full border border-[rgba(26,110,245,0.28)] px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-accent-blue hover:border-accent-blue"
                                 onClick={(e) => e.stopPropagation()}
                                 target="_blank"
@@ -717,10 +730,10 @@ export default function KanbanBoard({
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <span className="text-[10px] text-slate-500">Patient lifecycle</span>
-                                  {(card.href || card.patientId) && (
+                                  {chartHref && (
                                     <Link
                                       className="rounded-full border border-accent-blue/30 px-2 py-1 text-[9px] uppercase tracking-[0.14em] text-accent-blue transition hover:border-accent-blue hover:text-white"
-                                      href={card.href || `/patients/${card.patientId}`}
+                                      href={chartHref}
                                       target="_blank"
                                     >
                                       Open chart

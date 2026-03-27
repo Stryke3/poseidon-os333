@@ -283,6 +283,16 @@ function VariantShell({
             {urgentCount > 0 && <span className="rounded-md bg-red-400/15 px-2 py-1 font-mono text-[11px] text-red-300">{urgentCount} urgent</span>}
           </div>
 
+          <Link
+            className={cn(
+              "rounded-lg border px-3 py-2 text-xs font-medium transition",
+              `${accent.border} ${accent.bg} ${accent.text}`,
+            )}
+            href="/fax"
+          >
+            Fax
+          </Link>
+
           <button
             className={cn(
               "rounded-lg border px-3 py-2 text-xs font-medium transition",
@@ -321,6 +331,16 @@ function VariantShell({
                 ✕
               </button>
             </div>
+            <Link
+              className={cn(
+                "mb-4 block rounded-lg border px-3 py-2.5 text-sm font-semibold transition",
+                `${accent.border} ${accent.bg} ${accent.text}`,
+              )}
+              href="/fax"
+              onClick={() => setMenuOpen(false)}
+            >
+              Open Fax
+            </Link>
             <nav className="space-y-1">
               {navItems.map((item) => (
                 <Link
@@ -409,6 +429,17 @@ function VariantShell({
           accent={accent}
         />
       )}
+
+      <Link
+        className={cn(
+          "fixed bottom-5 right-4 z-30 rounded-full border px-4 py-3 text-sm font-semibold shadow-[0_16px_40px_rgba(5,8,15,0.4)] transition hover:scale-[1.02]",
+          `${accent.border} ${accent.bg} ${accent.text}`,
+          tridentOpen ? "bottom-24 md:bottom-28" : "",
+        )}
+        href="/fax"
+      >
+        Fax
+      </Link>
 
       {/* ── Trident Bar ──────────────────────────── */}
       {tridentOpen && (

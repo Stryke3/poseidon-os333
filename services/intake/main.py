@@ -357,6 +357,23 @@ def _split_codes(value: str) -> list[str]:
     return [item.strip().upper().replace(".", "") for item in re.split(r"[,;\s]+", value) if item.strip()]
 
 
+ICD10_TO_HCPCS_CONTEXT: tuple[tuple[tuple[str, ...], list[str], str], ...] = (
+    (("M17", "M23", "M2556", "M2557"), ["L1833"], "knee-bracing"),
+    (("M16", "M2445", "M2555"), ["L1686"], "hip-bracing"),
+    (("G82", "G80", "G35", "R26"), ["K0823"], "mobility"),
+    (("M54", "M51", "M48"), ["L0650"], "lumbar-bracing"),
+)
+
+
+def _infer_hcpcs_from_diagnosis(diagnosis_codes: list[str]) -> tuple[list[str], str]:
+    normalized = [str(code or "").upper().replace(".", "") for code in diagnosis_codes if str(code or "").strip()]
+    for prefixes, hcpcs_codes, source in ICD10_TO_HCPCS_CONTEXT:
+        for code in normalized:
+            if any(code.startswith(prefix) for prefix in prefixes):
+                return list(hcpcs_codes), source
+    return ["L1833"], "fallback-default-knee-bracing"
+
+
 def _split_name(full_name: str) -> tuple[str, str]:
     cleaned = full_name.strip()
     if not cleaned:
@@ -418,6 +435,12 @@ def _parse_pdf_attachment(filename: str, content: bytes, message_meta: dict[str,
     diagnosis_codes = _split_codes(" ".join(re.findall(r"\b[A-Z]\d{2}(?:\.\d{1,4})?\b", text)))
     priority = "urgent" if re.search(r"\b(?:urgent|stat|expedite)\b", text, re.I) else "standard"
 
+    inferred_note = None
+    if not hcpcs_codes:
+        hcpcs_codes, inferred_from = _infer_hcpcs_from_diagnosis(diagnosis_codes)
+        inferred_note = f"hcpcs_inferred_from_icd10:{inferred_from}"
+        logger.warning("Email PDF intake missing HCPCS; inferred %s from %s", ",".join(hcpcs_codes), inferred_from)
+
     payload = {
         "patient_name": patient_name or f"{first_name} {last_name}".strip(),
         "first_name": first_name,
@@ -426,7 +449,7 @@ def _parse_pdf_attachment(filename: str, content: bytes, message_meta: dict[str,
         "email": email.lower() if email else None,
         "insurance_id": insurance_id,
         "payer": payer,
-        "hcpcs_codes": hcpcs_codes or ["E0601"],
+        "hcpcs_codes": hcpcs_codes,
         "diagnosis_codes": diagnosis_codes or ["Z0000"],
         "priority": priority,
         "notes": f"Email intake PDF: {filename}",
@@ -437,6 +460,7 @@ def _parse_pdf_attachment(filename: str, content: bytes, message_meta: dict[str,
             "email_from": message_meta.get("from"),
             "attachment_name": filename,
             "text_preview": text[:1200],
+            "warnings": [inferred_note] if inferred_note else [],
         },
     }
 
@@ -459,6 +483,14 @@ def _parse_csv_attachment(filename: str, content: bytes, message_meta: dict[str,
         first_name, last_name = _split_name(patient_name)
         hcpcs_raw = row.get("hcpcs") or row.get("hcpcs_code") or row.get("hcpcs_codes") or ""
         dx_raw = row.get("icd") or row.get("diagnosis_code") or row.get("diagnosis_codes") or ""
+        diagnosis_codes = _split_codes(dx_raw) or ["Z0000"]
+        hcpcs_codes = _split_codes(hcpcs_raw)
+        inferred_note = None
+        if not hcpcs_codes:
+            hcpcs_codes, inferred_from = _infer_hcpcs_from_diagnosis(diagnosis_codes)
+            inferred_note = f"hcpcs_inferred_from_icd10:{inferred_from}"
+            logger.warning("Email CSV intake missing HCPCS; inferred %s from %s", ",".join(hcpcs_codes), inferred_from)
+
         orders.append({
             "patient_name": patient_name,
             "first_name": row.get("first_name") or first_name,
@@ -469,9 +501,9 @@ def _parse_csv_attachment(filename: str, content: bytes, message_meta: dict[str,
             "payer": row.get("payer") or row.get("payer_name") or row.get("insurance"),
             "payer_id": row.get("payer_id"),
             "hcpcs": hcpcs_raw,
-            "hcpcs_codes": _split_codes(hcpcs_raw) or ["E0601"],
+            "hcpcs_codes": hcpcs_codes,
             "icd": dx_raw,
-            "diagnosis_codes": _split_codes(dx_raw) or ["Z0000"],
+            "diagnosis_codes": diagnosis_codes,
             "npi": row.get("npi") or row.get("provider_npi"),
             "referring_physician_npi": row.get("referring_physician_npi"),
             "priority": row.get("priority") or "standard",
@@ -484,6 +516,7 @@ def _parse_csv_attachment(filename: str, content: bytes, message_meta: dict[str,
                 "email_from": message_meta.get("from"),
                 "attachment_name": filename,
                 "raw_row": raw_row,
+                "warnings": [inferred_note] if inferred_note else [],
             },
         })
     return orders

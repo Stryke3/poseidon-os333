@@ -6,7 +6,6 @@ const HCPCS_SHORT_DESCRIPTIONS: Record<string, string> = {
   // DME General
   E0260: "Hospital Bed",
   E0470: "BiPAP",
-  E0601: "CPAP",
   E0676: "Compression Device",
   E0745: "Neuromuscular Stimulator",
   E0784: "Infusion Pump",

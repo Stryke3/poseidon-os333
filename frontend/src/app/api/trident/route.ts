@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth"
 
 const CORE_API_URL =
   process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
+const TRIDENT_API_URL = process.env.TRIDENT_API_URL || "http://poseidon_trident:8002"
 
 const TRIDENT_RL_WINDOW_MS = 60_000
 const TRIDENT_RL_MAX = 30
@@ -31,6 +32,80 @@ async function fetchCore(path: string, token: string) {
   }).catch(() => null)
   if (!res?.ok) return null
   return res.json().catch(() => null)
+}
+
+type HistoricalHcpcsSummary = {
+  sourceAsset: string
+  rowCount: number
+  topCodes: Array<{
+    hcpcs: string
+    count: number
+    avgPaid: number
+    avgAllowable: number
+    avgBilled: number
+  }>
+}
+
+async function fetchHistoricalHcpcsSummary(): Promise<HistoricalHcpcsSummary | null> {
+  const catalogRes = await fetch(`${TRIDENT_API_URL}/data-modeling/catalog`, { cache: "no-store" }).catch(() => null)
+  if (!catalogRes?.ok) return null
+  const catalog = (await catalogRes.json().catch(() => null)) as
+    | { files?: Array<{ asset_name?: string; dataset_kind?: string }> }
+    | null
+  const chargeAsset =
+    catalog?.files?.find((f) => f.dataset_kind === "charge_detail_report")?.asset_name ||
+    "Charges Billed or Sent to Bill (by DOS), L-code detail Report - 2021.01.01 - 2024.04.13.xlsx"
+
+  const encoded = encodeURIComponent(chargeAsset)
+  const normalizedRes = await fetch(
+    `${TRIDENT_API_URL}/data-modeling/normalized-assets/${encoded}?limit=200000`,
+    { cache: "no-store" },
+  ).catch(() => null)
+  if (!normalizedRes?.ok) return null
+
+  const payload = (await normalizedRes.json().catch(() => null)) as
+    | {
+        records?: Array<{
+          hcpcs_code?: string
+          paid_amount?: number | string
+          allowable_amount?: number | string
+          billed_amount?: number | string
+        }>
+      }
+    | null
+  const records = payload?.records || []
+  if (!records.length) return null
+
+  const sums = new Map<string, { count: number; paid: number; allowable: number; billed: number }>()
+  for (const row of records) {
+    const code = (row.hcpcs_code || "").trim().toUpperCase() || "UNKNOWN"
+    const paid = Number.parseFloat(String(row.paid_amount ?? 0)) || 0
+    const allowable = Number.parseFloat(String(row.allowable_amount ?? 0)) || 0
+    const billed = Number.parseFloat(String(row.billed_amount ?? 0)) || 0
+    const prev = sums.get(code) || { count: 0, paid: 0, allowable: 0, billed: 0 }
+    prev.count += 1
+    prev.paid += paid
+    prev.allowable += allowable
+    prev.billed += billed
+    sums.set(code, prev)
+  }
+
+  const topCodes = Array.from(sums.entries())
+    .map(([hcpcs, v]) => ({
+      hcpcs,
+      count: v.count,
+      avgPaid: v.count ? v.paid / v.count : 0,
+      avgAllowable: v.count ? v.allowable / v.count : 0,
+      avgBilled: v.count ? v.billed / v.count : 0,
+    }))
+    .sort((a, b) => b.avgPaid - a.avgPaid)
+    .slice(0, 20)
+
+  return {
+    sourceAsset: chargeAsset,
+    rowCount: records.length,
+    topCodes,
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -81,6 +156,13 @@ export async function POST(req: NextRequest) {
 
   const orders = ordersData?.orders || []
   const patients = patientsData?.patients || []
+  const livePaidTotal = orders.reduce(
+    (sum: number, o: Record<string, unknown>) =>
+      sum + (Number.parseFloat(String(o.paid_amount ?? o.total_paid ?? 0)) || 0),
+    0,
+  )
+  const hasLiveReimbursement = livePaidTotal > 0
+  const historicalSummary = hasLiveReimbursement ? null : await fetchHistoricalHcpcsSummary()
 
   if (ordersData === null && kpisData === null && patientsData === null) {
     liveContext =
@@ -162,6 +244,21 @@ export async function POST(req: NextRequest) {
 - Top CARC codes: ${JSON.stringify(kpisData.top_carc_codes || [])}`
       : "KPIs: unavailable"
 
+    const historicalBlock = historicalSummary
+      ? `
+HISTORICAL REIMBURSEMENT BASELINE (Trident Historical_Model_Data):
+- Source asset: ${historicalSummary.sourceAsset}
+- Historical rows: ${historicalSummary.rowCount}
+- Top HCPCS by avg paid:
+${historicalSummary.topCodes
+  .map(
+    (r) =>
+      `  ${r.hcpcs}: n=${r.count}, avg paid:$${r.avgPaid.toFixed(0)}, avg allowable:$${r.avgAllowable.toFixed(0)}, avg billed:$${r.avgBilled.toFixed(0)}`,
+  )
+  .join("\n")}
+`
+      : ""
+
     liveContext = `POSEIDON CORE SNAPSHOT (${new Date().toISOString()}) — point-in-time API data, may be incomplete:
 
 ${kpiBlock}
@@ -178,7 +275,8 @@ ${hcpcsSummary}
 PATIENTS (${patients.length} total, showing first 30):
 ${patientSummary}
 
-Total orders in snapshot: ${orders.length}`
+Total orders in snapshot: ${orders.length}
+${historicalBlock}`
   }
 
   if (context && typeof context === "object") {

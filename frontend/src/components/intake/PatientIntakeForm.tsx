@@ -390,7 +390,7 @@ export default function PatientIntakeForm() {
             <FieldInput
               value={form.hcpcs_codes}
               onChange={(v) => updateField("hcpcs_codes", v)}
-              placeholder="E0601, K0823"
+              placeholder="L1833, L1686, K0823"
             />
             <p className="mt-1 text-[10px] text-slate-600">Comma-separated</p>
           </div>

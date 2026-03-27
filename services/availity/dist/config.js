@@ -12,15 +12,24 @@ const zod_1 = require("zod");
 function defaultTridentManualsRoot() {
     return node_path_1.default.resolve(process.cwd(), "..", "trident", "manuals");
 }
+const emptyStringToUndefined = (v) => {
+    if (v === undefined || v === null)
+        return v;
+    if (typeof v === "string" && v.trim() === "")
+        return undefined;
+    return v;
+};
 const strEnv = zod_1.z.preprocess((v) => (v === undefined || v === null ? "" : String(v)), zod_1.z.string());
 const availityEnvSchema = zod_1.z.object({
-    AVAILITY_BASE_URL: zod_1.z.string().url(),
-    AVAILITY_TOKEN_URL: zod_1.z.string().url(),
+    // Defaults allow the service to boot even when Availity OAuth integration env vars are blank
+    // (useful for non-Availity features like denials-to-appeals automation).
+    AVAILITY_BASE_URL: zod_1.z.preprocess(emptyStringToUndefined, zod_1.z.string().url().default("https://api.availity.com")),
+    AVAILITY_TOKEN_URL: zod_1.z.preprocess(emptyStringToUndefined, zod_1.z.string().url().default("https://api.availity.com/v1/token")),
     AVAILITY_CLIENT_ID: strEnv,
     AVAILITY_CLIENT_SECRET: strEnv,
-    AVAILITY_SCOPE: zod_1.z.string().min(1),
-    AVAILITY_ELIGIBILITY_PATH: zod_1.z.string().min(1),
-    AVAILITY_PRIOR_AUTH_PATH: zod_1.z.string().min(1),
+    AVAILITY_SCOPE: zod_1.z.string().optional().default(""),
+    AVAILITY_ELIGIBILITY_PATH: zod_1.z.preprocess(emptyStringToUndefined, zod_1.z.string().min(1).optional().default("/v1/coverages/eligibility")),
+    AVAILITY_PRIOR_AUTH_PATH: zod_1.z.preprocess(emptyStringToUndefined, zod_1.z.string().min(1).optional().default("/v1/authorizations")),
     AVAILITY_TIMEOUT_MS: zod_1.z.coerce.number().default(30000),
     NODE_ENV: zod_1.z.string().optional(),
 });

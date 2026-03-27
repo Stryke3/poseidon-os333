@@ -97,7 +97,7 @@ export const KANBAN_DATA: Record<string, KanbanColumn> = {
     color: "#0d9eaa",
     cards: [
       { id: "K-007", businessLine: "implants", title: "Hip Replacement Implant — Medicare", value: "$28,100", priority: "high", assignee: "KL", payer: "Medicare", type: "Implants", due: "2026-03-17" },
-      { id: "K-008", businessLine: "dme", title: "CPAP w/ Humidifier — ResMed", value: "$2,200", priority: "med", assignee: "MM", payer: "Aetna", type: "DME", due: "2026-03-18" },
+      { id: "K-008", businessLine: "dme", title: "Knee Brace L1833 — Aetna", value: "$980", priority: "med", assignee: "MM", payer: "Aetna", type: "DME", due: "2026-03-18" },
     ],
   },
   denied: {
@@ -105,7 +105,7 @@ export const KANBAN_DATA: Record<string, KanbanColumn> = {
     label: "Denied",
     color: "#e03a3a",
     cards: [
-      { id: "K-009", businessLine: "dme", title: "CPAP denial — UHC medical necessity", value: "$2,200", priority: "high", assignee: "JA", payer: "UHC", type: "DME", due: "2026-03-16" },
+      { id: "K-009", businessLine: "dme", title: "Hip Brace L1686 denial — UHC medical necessity", value: "$1,450", priority: "high", assignee: "JA", payer: "UHC", type: "DME", due: "2026-03-16" },
       { id: "K-010", businessLine: "biologics", title: "Biologics denial — wrong DX code", value: "$11,600", priority: "high", assignee: "RC", payer: "BCBS", type: "Biologics", due: "2026-03-18" },
     ],
   },

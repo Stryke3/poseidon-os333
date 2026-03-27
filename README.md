@@ -169,6 +169,7 @@ Production notes:
 Production cutover helpers:
 - `bash scripts/validate_production_env.sh` validates required secrets, HTTPS settings, and placeholder removal.
 - `bash scripts/verify_deploy_readiness.sh --strict-env` is the production-only pre-cutover gate after real secrets are installed.
+- `bash scripts/meeting_ready.sh` runs a non-destructive full-stack bring-up + health checks for demo/meeting readiness.
 - `bash scripts/backup_postgres.sh` writes a timestamped PostgreSQL dump into `backups/postgres/`.
 - `bash scripts/restore_postgres.sh backups/postgres/<file>.dump` restores a captured PostgreSQL backup.
 - `bash scripts/backup_stateful_storage.sh` archives MinIO data, Redis persistence, and Trident model artifacts into `backups/stateful/`.

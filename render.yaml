@@ -1,168 +1,383 @@
-# ============================================================================
-# Poseidon — Render Blueprint
-# ============================================================================
+# Poseidon / StrykeFox — Render Blueprint
+#
+# New Blueprint from this repo → fills generated secrets; then set in the Dashboard:
+#   - NEXTAUTH_URL = https://<your-dashboard-service>.onrender.com
+#   - CORS_ALLOW_ORIGINS = same URL (comma-list if multiple)
+#   - Availity / Stedi / optional integrations (marked sync: false below)
+#
+# Private services (core, trident, …) use Docker Compose DNS names. Public entry is `dashboard` only.
+# Nginx from docker-compose is not used here; Next proxies to backend URLs over the private network.
+
+databases:
+  - name: poseidon-db
+    databaseName: poseidon_db
+    plan: basic-256mb
+    ipAllowList: []
+
+envVarGroups:
+  - name: poseidon-secrets
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NEXTAUTH_SECRET
+        generateValue: true
+      - key: POSEIDON_API_KEY
+        generateValue: true
+      - key: INTERNAL_API_KEY
+        generateValue: true
+      - key: CORS_ALLOW_ORIGINS
+        sync: false
+      - key: NEXTAUTH_URL
+        sync: false
+      - key: AVAILITY_CLIENT_ID
+        sync: false
+      - key: AVAILITY_CLIENT_SECRET
+        sync: false
+      - key: AVAILITY_SCOPE
+        sync: false
+      - key: STEDI_API_KEY
+        sync: false
+      - key: MATIA_API_URL
+        sync: false
+      - key: MATIA_PIPELINE_PATH
+        sync: false
+      - key: MATIA_API_BEARER
+        sync: false
+      - key: MATIA_INTEGRATION_ENABLED
+        sync: false
+
+  - name: poseidon-backend-common
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: CORE_API_URL
+        value: http://core:8001
+      - key: TRIDENT_API_URL
+        value: http://trident:8002
+      - key: INTAKE_API_URL
+        value: http://intake:8003
+      - key: ML_API_URL
+        value: http://ml:8004
+      - key: AVAILITY_BASE_URL
+        value: https://tst.api.availity.com
+      - key: AVAILITY_TOKEN_URL
+        value: https://tst.api.availity.com/v1/token
+      - key: AVAILITY_ELIGIBILITY_PATH
+        value: /v1/coverages/eligibility
+      - key: AVAILITY_PRIOR_AUTH_PATH
+        value: /v1/authorizations
+      - key: AVAILITY_ELIGIBILITY_URL
+        value: https://tst.api.availity.com/v1/coverages/eligibility
+      - key: TRUSTED_HOSTS
+        value: localhost,127.0.0.1,core,trident,intake,ml,edi,availity,minio,dashboard,*.onrender.com
 
 services:
-  # ── Core API ───────────────────────────────────────────────────────────────
-  - type: web
-    name: poseidon-core
-    runtime: docker
-    dockerfilePath: services/core/Dockerfile
-    dockerContext: services
-    plan: free
-    healthCheckPath: /ready
+  - type: keyvalue
+    name: poseidon-kv
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+
+  - type: pserv
+    runtime: image
+    name: minio
+    image:
+      url: docker.io/minio/minio:RELEASE.2025-04-03T14-56-28Z
+    dockerCommand: server /data --console-address ":9001"
+    disk:
+      name: minio-data
+      mountPath: /data
+      sizeGB: 5
     envVars:
+      - key: MINIO_ROOT_USER
+        value: poseidon
+      - key: MINIO_ROOT_PASSWORD
+        generateValue: true
+
+  # --- Application (private) — same build layout as docker-compose ---
+
+  - type: pserv
+    runtime: docker
+    name: core
+    dockerfilePath: ./services/core/Dockerfile
+    dockerContext: ./services
+    disk:
+      name: core-data
+      mountPath: /app/data
+      sizeGB: 2
+    envVars:
+      - fromGroup: poseidon-secrets
+      - fromGroup: poseidon-backend-common
+      - key: SERVICE_NAME
+        value: core
       - key: PORT
         value: "8001"
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: poseidon-db
+          property: connectionString
       - key: REDIS_URL
-        value: ""
-      - key: JWT_SECRET
-        generateValue: true
-      - key: SECRET_KEY
-        generateValue: true
-      - key: JWT_ALGORITHM
-        value: HS256
-      - key: JWT_EXPIRY_HOURS
-        value: "8"
+        fromService:
+          type: keyvalue
+          name: poseidon-kv
+          property: connectionString
       - key: MINIO_ENDPOINT
-        value: ""
-      - key: MINIO_ACCESS_KEY
-        value: ""
-      - key: MINIO_SECRET_KEY
-        value: ""
-      - key: MINIO_BUCKET
-        value: poseidon-docs
+        value: minio:9000
+      - key: MINIO_PUBLIC_ENDPOINT
+        value: minio:9000
       - key: MINIO_SECURE
         value: "false"
-      - key: ENVIRONMENT
-        value: production
-      - key: LOG_LEVEL
-        value: INFO
-      - key: PHI_IN_LOGS
-        value: "false"
-      - key: SERVICE_NAME
-        value: core
+      - key: MINIO_BUCKET
+        value: poseidon-docs
+      - key: MINIO_ACCESS_KEY
+        fromService:
+          type: pserv
+          name: minio
+          envVarKey: MINIO_ROOT_USER
+      - key: MINIO_SECRET_KEY
+        fromService:
+          type: pserv
+          name: minio
+          envVarKey: MINIO_ROOT_PASSWORD
 
-  # ── Trident ML ─────────────────────────────────────────────────────────────
-  - type: web
-    name: poseidon-trident
+  - type: pserv
     runtime: docker
-    dockerfilePath: services/trident/Dockerfile
-    dockerContext: services
-    plan: free
-    healthCheckPath: /ready
+    name: trident
+    dockerfilePath: ./services/trident/Dockerfile
+    dockerContext: ./services
+    disk:
+      name: trident-models
+      mountPath: /app/models
+      sizeGB: 2
     envVars:
+      - fromGroup: poseidon-secrets
+      - fromGroup: poseidon-backend-common
+      - key: SERVICE_NAME
+        value: trident
       - key: PORT
         value: "8002"
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: poseidon-db
+          property: connectionString
       - key: REDIS_URL
-        value: ""
-      - key: JWT_SECRET
-        generateValue: true
-      - key: SECRET_KEY
-        generateValue: true
-      - key: SERVICE_NAME
-        value: trident
+        fromService:
+          type: keyvalue
+          name: poseidon-kv
+          property: connectionString
+      - key: MINIO_ENDPOINT
+        value: minio:9000
+      - key: MINIO_PUBLIC_ENDPOINT
+        value: minio:9000
+      - key: MINIO_SECURE
+        value: "false"
+      - key: MINIO_BUCKET
+        value: poseidon-docs
+      - key: MINIO_ACCESS_KEY
+        fromService:
+          type: pserv
+          name: minio
+          envVarKey: MINIO_ROOT_USER
+      - key: MINIO_SECRET_KEY
+        fromService:
+          type: pserv
+          name: minio
+          envVarKey: MINIO_ROOT_PASSWORD
 
-  # ── Intake ─────────────────────────────────────────────────────────────────
-  - type: web
-    name: poseidon-intake
+  - type: pserv
     runtime: docker
-    dockerfilePath: services/intake/Dockerfile
-    dockerContext: services
-    plan: free
-    healthCheckPath: /ready
+    name: intake
+    dockerfilePath: ./services/intake/Dockerfile
+    dockerContext: ./services
+    disk:
+      name: intake-data
+      mountPath: /app/data
+      sizeGB: 2
     envVars:
+      - fromGroup: poseidon-secrets
+      - fromGroup: poseidon-backend-common
+      - key: SERVICE_NAME
+        value: intake
       - key: PORT
         value: "8003"
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: poseidon-db
+          property: connectionString
       - key: REDIS_URL
-        value: ""
-      - key: JWT_SECRET
-        generateValue: true
-      - key: SECRET_KEY
-        generateValue: true
-      - key: SERVICE_NAME
-        value: intake
+        fromService:
+          type: keyvalue
+          name: poseidon-kv
+          property: connectionString
+      - key: MINIO_ENDPOINT
+        value: minio:9000
+      - key: MINIO_PUBLIC_ENDPOINT
+        value: minio:9000
+      - key: MINIO_SECURE
+        value: "false"
+      - key: MINIO_BUCKET
+        value: poseidon-docs
+      - key: MINIO_ACCESS_KEY
+        fromService:
+          type: pserv
+          name: minio
+          envVarKey: MINIO_ROOT_USER
+      - key: MINIO_SECRET_KEY
+        fromService:
+          type: pserv
+          name: minio
+          envVarKey: MINIO_ROOT_PASSWORD
 
-  # ── ML Service ─────────────────────────────────────────────────────────────
-  - type: web
-    name: poseidon-ml
+  - type: pserv
     runtime: docker
-    dockerfilePath: services/ml/Dockerfile
-    dockerContext: services
-    plan: free
-    healthCheckPath: /ready
+    name: ml
+    dockerfilePath: ./services/ml/Dockerfile
+    dockerContext: ./services
+    disk:
+      name: ml-models
+      mountPath: /app/models
+      sizeGB: 2
     envVars:
+      - fromGroup: poseidon-secrets
+      - fromGroup: poseidon-backend-common
+      - key: SERVICE_NAME
+        value: ml
       - key: PORT
         value: "8004"
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: poseidon-db
+          property: connectionString
       - key: REDIS_URL
-        value: ""
-      - key: JWT_SECRET
-        generateValue: true
-      - key: SECRET_KEY
-        generateValue: true
-      - key: SERVICE_NAME
-        value: ml
+        fromService:
+          type: keyvalue
+          name: poseidon-kv
+          property: connectionString
+      - key: MINIO_ENDPOINT
+        value: minio:9000
+      - key: MINIO_PUBLIC_ENDPOINT
+        value: minio:9000
+      - key: MINIO_SECURE
+        value: "false"
+      - key: MINIO_BUCKET
+        value: poseidon-docs
+      - key: MINIO_ACCESS_KEY
+        fromService:
+          type: pserv
+          name: minio
+          envVarKey: MINIO_ROOT_USER
+      - key: MINIO_SECRET_KEY
+        fromService:
+          type: pserv
+          name: minio
+          envVarKey: MINIO_ROOT_PASSWORD
 
-  # ── EDI Service ────────────────────────────────────────────────────────────
-  - type: web
-    name: poseidon-edi
+  - type: pserv
     runtime: docker
-    dockerfilePath: services/edi/Dockerfile
-    dockerContext: services/edi
-    plan: free
-    healthCheckPath: /health
+    name: edi
+    dockerfilePath: ./services/edi/Dockerfile
+    dockerContext: ./services/edi
     envVars:
+      - fromGroup: poseidon-secrets
+      - fromGroup: poseidon-backend-common
+      - key: SERVICE_NAME
+        value: edi
       - key: PORT
         value: "8006"
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: poseidon-db
+          property: connectionString
       - key: REDIS_URL
-        value: ""
-      - key: STEDI_API_KEY
-        value: ""
+        fromService:
+          type: keyvalue
+          name: poseidon-kv
+          property: connectionString
+      - key: MINIO_ENDPOINT
+        value: minio:9000
+      - key: MINIO_PUBLIC_ENDPOINT
+        value: minio:9000
+      - key: MINIO_SECURE
+        value: "false"
+      - key: MINIO_BUCKET
+        value: poseidon-docs
+      - key: MINIO_ACCESS_KEY
+        fromService:
+          type: pserv
+          name: minio
+          envVarKey: MINIO_ROOT_USER
+      - key: MINIO_SECRET_KEY
+        fromService:
+          type: pserv
+          name: minio
+          envVarKey: MINIO_ROOT_PASSWORD
       - key: EDI_DRY_RUN
         value: "true"
       - key: SUBMISSION_METHOD
         value: stedi_api
-      - key: SERVICE_NAME
-        value: edi
 
-  # ── Dashboard (Next.js) ────────────────────────────────────────────────────
-  - type: web
-    name: poseidon-dashboard
+  - type: pserv
     runtime: docker
-    dockerfilePath: frontend/Dockerfile
-    dockerContext: frontend
-    plan: free
+    name: availity
+    dockerfilePath: ./services/availity/Dockerfile
+    dockerContext: ./services/availity
+    envVars:
+      - fromGroup: poseidon-secrets
+      - fromGroup: poseidon-backend-common
+      - key: SERVICE_NAME
+        value: availity
+      - key: PORT
+        value: "8005"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: poseidon-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: poseidon-kv
+          property: connectionString
+      - key: MINIO_ENDPOINT
+        value: minio:9000
+      - key: MINIO_PUBLIC_ENDPOINT
+        value: minio:9000
+      - key: MINIO_SECURE
+        value: "false"
+      - key: MINIO_BUCKET
+        value: poseidon-docs
+      - key: MINIO_ACCESS_KEY
+        fromService:
+          type: pserv
+          name: minio
+          envVarKey: MINIO_ROOT_USER
+      - key: MINIO_SECRET_KEY
+        fromService:
+          type: pserv
+          name: minio
+          envVarKey: MINIO_ROOT_PASSWORD
+
+  # --- Public UI ---
+
+  - type: web
+    runtime: docker
+    name: dashboard
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
     healthCheckPath: /api/health
     envVars:
+      - fromGroup: poseidon-secrets
       - key: PORT
         value: "3000"
-      - key: NEXTAUTH_SECRET
-        generateValue: true
-      - key: NEXTAUTH_URL
-        sync: false
+      - key: NEXT_PUBLIC_AVAILITY_SERVICE_URL
+        value: /availity-api
       - key: CORE_API_URL
-        sync: false
+        value: http://core:8001
       - key: TRIDENT_API_URL
-        sync: false
+        value: http://trident:8002
       - key: INTAKE_API_URL
-        sync: false
+        value: http://intake:8003
       - key: ML_API_URL
-        sync: false
+        value: http://ml:8004
+      - key: AVAILITY_SERVICE_URL
+        value: http://availity:8005
       - key: EDI_API_URL
-        sync: false
-      - key: SINCH_PROJECT_ID
-        sync: false
-      - key: SINCH_KEY_ID
-        sync: false
-      - key: SINCH_KEY_SECRET
-        sync: false
+        value: http://edi:8006

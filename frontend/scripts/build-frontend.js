@@ -41,15 +41,26 @@ function clearBuildArtifacts() {
 }
 
 function runBuild() {
-  return spawnSync(
+  const result = spawnSync(
     process.platform === "win32" ? "npx.cmd" : "npx",
     ["next", "build", "--webpack"],
     {
       cwd: rootDir,
-      stdio: "inherit",
+      stdio: "pipe",
+      encoding: "utf8",
       env: process.env,
     },
   )
+
+  if (result.stdout) {
+    process.stdout.write(result.stdout)
+  }
+
+  if (result.stderr) {
+    process.stderr.write(result.stderr)
+  }
+
+  return result
 }
 
 function isRetryable(result) {

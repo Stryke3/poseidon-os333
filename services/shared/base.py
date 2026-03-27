@@ -167,15 +167,18 @@ class Settings:
         return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/0"
 
     def validate(self) -> None:
-        required = {
+        required: dict[str, str] = {
             "JWT_SECRET": self.secret_key,
-            "POSTGRES_PASSWORD": self.db_password,
             "MINIO_ACCESS_KEY": self.minio_access_key,
-            "REDIS_PASSWORD": self.redis_password,
             "MINIO_SECRET_KEY": self.minio_secret_key,
             "POSEIDON_API_KEY": self.poseidon_api_key,
             "INTERNAL_API_KEY": self.internal_api_key,
         }
+        # Managed providers (e.g. Render) often supply full URLs and omit discrete passwords.
+        if not self.database_url or _is_placeholder(self.database_url):
+            required["POSTGRES_PASSWORD"] = self.db_password
+        if not self.redis_url_value or _is_placeholder(self.redis_url_value):
+            required["REDIS_PASSWORD"] = self.redis_password
 
         invalid = [name for name, value in required.items() if _is_placeholder(value)]
         if invalid and self.is_production:

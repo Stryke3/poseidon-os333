@@ -20,6 +20,7 @@ export async function moveKanbanCard(
     eligibility_verification: "eligibility_check",
     prior_auth: "pending_auth",
     documentation: "documents_pending",
+    delivered: "delivered",
     claim_submitted: "submitted",
     pending_payment: "pending_payment",
     denied: "denied",

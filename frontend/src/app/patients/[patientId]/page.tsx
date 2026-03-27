@@ -254,10 +254,10 @@ export default async function PatientFilePage({
             <p className="mt-1 text-xs text-slate-500">Patient ID: {patientId}</p>
           </div>
           <Link
-            href="/intake"
+            href="/"
             className="rounded-full border border-accent-blue/30 px-4 py-2 text-sm text-accent-blue transition hover:border-accent-blue hover:text-white"
           >
-            Back to Intake
+            Back to Dashboard
           </Link>
         </div>
       </PageShell>

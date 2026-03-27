@@ -51,7 +51,7 @@ const STAGES = [
 
 const SEED_ORDERS = [
   // INTAKE
-  { id: "ORD-2041", patient: "Maria Gutierrez", dob: "04/11/1962", hcpcs: "E0601", payer: "Medicare", amount: 1240, stage: "intake", daysInStage: 0, action: "Verify insurance", priority: "normal", icd: "G47.33" },
+  { id: "ORD-2041", patient: "Maria Gutierrez", dob: "04/11/1962", hcpcs: "L1833", payer: "Medicare", amount: 980, stage: "intake", daysInStage: 0, action: "Verify brace documentation", priority: "normal", icd: "M17.11" },
   { id: "ORD-2042", patient: "James Wilson", dob: "08/22/1958", hcpcs: "L1906", payer: "UHC", amount: 3200, stage: "intake", daysInStage: 1, action: "Missing Rx", priority: "warning", icd: "M79.621" },
   
   // ELIGIBILITY
@@ -65,7 +65,7 @@ const SEED_ORDERS = [
   
   // SUBMITTED
   { id: "ORD-2018", patient: "Thomas Brown", dob: "12/01/1952", hcpcs: "E1399", payer: "UHC", amount: 5200, stage: "submitted", daysInStage: 4, action: "Tracking", priority: "normal", icd: "G47.30" },
-  { id: "ORD-2019", patient: "Linda Martinez", dob: "06/15/1961", hcpcs: "E0601", payer: "Aetna", amount: 1240, stage: "submitted", daysInStage: 7, action: "Tracking", priority: "normal", icd: "G47.33" },
+  { id: "ORD-2019", patient: "Linda Martinez", dob: "06/15/1961", hcpcs: "L1686", payer: "Aetna", amount: 1450, stage: "submitted", daysInStage: 7, action: "Tracking", priority: "normal", icd: "M16.11" },
   
   // PENDING PAYMENT
   { id: "ORD-2010", patient: "Richard Lee", dob: "11/28/1949", hcpcs: "K0823", payer: "Medicare", amount: 4800, stage: "pending", daysInStage: 18, action: "Payment in transit", priority: "normal", icd: "M54.5" },
@@ -76,7 +76,7 @@ const SEED_ORDERS = [
   { id: "ORD-2006", patient: "Michael Johnson", dob: "04/27/1951", hcpcs: "E0148", payer: "Humana", amount: 1750, stage: "denied", daysInStage: 12, action: "Appeal — Med necessity", carc: "CO-50", priority: "urgent", icd: "M62.81" },
   
   // PAID (recent wins)
-  { id: "ORD-1998", patient: "Barbara Anderson", dob: "10/10/1947", hcpcs: "E0601", payer: "Medicare", amount: 1180, stage: "paid", daysInStage: 2, action: "Closed", priority: "normal", icd: "G47.33" },
+  { id: "ORD-1998", patient: "Barbara Anderson", dob: "10/10/1947", hcpcs: "L1833", payer: "Medicare", amount: 980, stage: "paid", daysInStage: 2, action: "Closed", priority: "normal", icd: "M17.11" },
   { id: "ORD-1999", patient: "William Thompson", dob: "07/08/1954", hcpcs: "K0001", payer: "UHC", amount: 2100, stage: "paid", daysInStage: 1, action: "Closed", priority: "normal", icd: "M54.5" },
 ];
 
