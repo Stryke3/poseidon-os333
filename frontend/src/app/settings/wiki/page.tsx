@@ -46,7 +46,7 @@ const SECTIONS: Section[] = [
       {
         title: "Upload via Live Ingest",
         detail:
-          'Navigate to the Intake workspace and use the Live Ingest dropzone to upload your CSV. The system parses each row, creates patient records, seeds orders with HCPCS line items and ICD-10 diagnoses, and links insurance automatically.',
+          'Navigate to the Intake workspace and use the Live Ingest dropzone to upload your CSV or PDF. CSV files import row-by-row, while PDFs are parsed for patient, payer, HCPCS, and diagnosis details before the system creates patient records and seeds orders automatically.',
         route: "/intake",
         routeLabel: "Open Intake Workspace",
       },

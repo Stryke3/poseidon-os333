@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const CORE_API_URL = process.env.CORE_API_URL || "http://core:8001";
+const CORE_API_URL =
+  process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001";
 
 /**
  * Inbound fax webhook — called by Sinch when a fax is received.
@@ -50,9 +51,7 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(INTERNAL_API_KEY
-          ? { Authorization: `Bearer ${INTERNAL_API_KEY}` }
-          : {}),
+        ...(INTERNAL_API_KEY ? { "X-Internal-API-Key": INTERNAL_API_KEY } : {}),
       },
       body: JSON.stringify(inboundEntry),
     });

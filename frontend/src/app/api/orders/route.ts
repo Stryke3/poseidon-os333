@@ -21,3 +21,32 @@ export async function GET(req: NextRequest) {
   const payload = await res.json().catch(() => ({}))
   return Response.json(payload, { status: res.status })
 }
+
+export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions)
+  if (!session?.user?.accessToken) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  const body = await req.json().catch(() => null)
+  if (!body || typeof body !== "object") {
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 })
+  }
+
+  const res = await fetch(`${CORE}/orders`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.user.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  }).catch(() => null)
+
+  if (!res) {
+    return Response.json({ error: "Unable to reach core service" }, { status: 502 })
+  }
+
+  const payload = await res.json().catch(() => ({}))
+  return Response.json(payload, { status: res.status })
+}

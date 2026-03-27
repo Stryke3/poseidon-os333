@@ -33,8 +33,9 @@ export async function POST(req: NextRequest) {
     const upstream = new FormData();
     upstream.append("file", file);
 
-    const INTAKE_API_URL = process.env.INTAKE_API_URL || "http://intake:8003";
-    const res = await fetch(`${INTAKE_API_URL}/api/v1/parse`, {
+    const INTAKE_API_URL =
+      process.env.INTAKE_API_URL || "http://poseidon_intake:8003";
+    const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/parse-document`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token.accessToken}` },
       body: upstream,

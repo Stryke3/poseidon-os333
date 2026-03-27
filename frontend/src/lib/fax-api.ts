@@ -17,6 +17,12 @@ export interface FaxSendPayload {
   urgency: string;
   notes?: string;
   authorizationOnFile?: boolean;
+  releaseSignedBy?: string;
+  releaseSignerRelationship?: string;
+  releaseSignedAt?: string;
+  releasePurpose?: string;
+  releaseAuthorizedBy?: string;
+  releaseAttachmentLabel?: string;
 }
 
 export interface FaxSendResult {
@@ -47,6 +53,7 @@ export interface FaxLogEntry {
   sent_by?: string;
   timestamp?: string;
   created_at?: string;
+  release_metadata?: Record<string, unknown>;
 }
 
 export interface OcrResult {

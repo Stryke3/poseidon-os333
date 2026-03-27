@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-const CORE_API_URL = process.env.CORE_API_URL || "http://core:8001";
+const CORE_API_URL =
+  process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001";
 
 export async function GET(req: NextRequest) {
   const token = await getToken({ req });

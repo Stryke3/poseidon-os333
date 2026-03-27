@@ -37,24 +37,43 @@ interface DashboardShellProps {
 
 type Variant = NonNullable<DashboardShellProps["variant"]>
 
-const PIPELINE_ORDER = ["pendingAuth", "authorized", "submitted", "denied", "appealed", "paid"] as const
+const PIPELINE_ORDER = [
+  "intake",
+  "eligibility_verification",
+  "prior_auth",
+  "documentation",
+  "delivered",
+  "claim_submitted",
+  "pending_payment",
+  "denied",
+  "appealed",
+  "paid",
+] as const
 
 const COLUMN_LABELS: Record<string, string> = {
-  pendingAuth: "Pending Auth",
-  authorized: "Authorized",
-  submitted: "Submitted",
+  intake: "Intake",
+  eligibility_verification: "Eligibility",
+  prior_auth: "Auth / CMN",
+  documentation: "Documentation",
+  delivered: "Delivered",
+  claim_submitted: "Submitted",
+  pending_payment: "Pmt Pending",
   denied: "Denied",
   appealed: "Appealed",
   paid: "Paid",
 }
 
 const COLUMN_DOT: Record<string, string> = {
-  pendingAuth: "bg-amber-400",
-  authorized: "bg-blue-400",
-  submitted: "bg-cyan-400",
+  intake: "bg-amber-400",
+  eligibility_verification: "bg-blue-400",
+  prior_auth: "bg-cyan-400",
+  documentation: "bg-violet-400",
+  delivered: "bg-teal-400",
+  claim_submitted: "bg-sky-400",
+  pending_payment: "bg-emerald-400",
   denied: "bg-red-400",
   appealed: "bg-purple-400",
-  paid: "bg-emerald-400",
+  paid: "bg-green-400",
 }
 
 const STATUS_COLORS: Record<AccountRecord["status"], string> = {
@@ -235,9 +254,9 @@ function VariantShell({
     if (payload.cards.length) {
       setKanban((prev) => ({
         ...prev,
-        pendingAuth: {
-          ...prev.pendingAuth,
-          cards: Array.from(new Map([...payload.cards, ...prev.pendingAuth.cards].map((c) => [c.id, c])).values()),
+        intake: {
+          ...prev.intake,
+          cards: Array.from(new Map([...payload.cards, ...prev.intake.cards].map((c) => [c.id, c])).values()),
         },
       }))
     }
@@ -675,17 +694,18 @@ function IntakeContent({
   blockedCount: number
   accent: typeof VARIANT_ACCENT.intake
 }) {
-  const pendingCount = kanban.pendingAuth?.cards.length || 0
-  const authCount = kanban.authorized?.cards.length || 0
-  const ordersToPlace = pendingCount + authCount
+  const intakeCount = kanban.intake?.cards.length || 0
+  const eligibilityCount = kanban.eligibility_verification?.cards.length || 0
+  const authCount = kanban.prior_auth?.cards.length || 0
+  const ordersToPlace = intakeCount + eligibilityCount + authCount
 
   return (
     <>
       {/* KPI strip */}
       <div className="border-b border-white/5 bg-[rgba(8,16,28,0.6)]">
         <div className="mx-auto flex max-w-[2200px] items-center gap-6 overflow-x-auto px-4 py-2.5">
-          <KpiChip label="Pending Auth" value={`${pendingCount}`} sub="awaiting authorization" color="text-amber-300" />
-          <KpiChip label="Orders to Place" value={`${ordersToPlace}`} sub="intake + authorized" color="text-cyan-300" />
+          <KpiChip label="In Intake" value={`${intakeCount}`} sub="new patient work" color="text-amber-300" />
+          <KpiChip label="Orders to Place" value={`${ordersToPlace}`} sub="intake + eligibility + auth" color="text-cyan-300" />
           <KpiChip label="Blocked" value={`${blockedCount}`} sub="verification needed" color="text-red-300" />
           <KpiChip label="Total Queue" value={`${kpis.outstandingOrders.value}`} sub={`${kpis.outstandingOrders.urgent} urgent`} color="text-emerald-300" />
         </div>

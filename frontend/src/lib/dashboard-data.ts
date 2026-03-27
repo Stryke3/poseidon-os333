@@ -490,9 +490,10 @@ type PatientAccountAggregate = {
   topCode: string
 }
 
-function isUuid(value: string | null | undefined): value is string {
-  if (!value) return false
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+function getRealPatientId(order: OrderRecord) {
+  const patientId = order.patient_id?.trim()
+  if (!patientId || patientId.startsWith("matia-")) return null
+  return patientId
 }
 
 function toCurrency(value: number) {
@@ -699,7 +700,7 @@ function buildPatientAggregates(
 
   for (const order of orders) {
     const patientId = order.patient_id || order.id
-    const realPatientId = isUuid(order.patient_id) ? order.patient_id : null
+    const realPatientId = getRealPatientId(order)
     const patientKey = getPatientKey(order)
     const stage = getColumnId(order.status)
     const stageKey = `${patientKey}::${stage}`
@@ -859,7 +860,7 @@ export function buildDashboardData(orders: OrderRecord[], denials: DenialRecord[
           ? "denied"
           : patient.stage === "appealed"
             ? "appeal"
-            : patient.stage === "pendingAuth"
+            : patient.stage !== "paid"
               ? "pending"
               : "active"
 

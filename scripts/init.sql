@@ -555,6 +555,32 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS fax_log (
+    id UUID PRIMARY KEY,
+    org_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
+    direction VARCHAR(16) NOT NULL,
+    fax_number VARCHAR(64) NOT NULL,
+    facility VARCHAR(255),
+    patient_name VARCHAR(255),
+    patient_dob VARCHAR(32),
+    patient_mrn VARCHAR(128),
+    record_types JSONB DEFAULT '[]'::jsonb,
+    urgency VARCHAR(32),
+    status VARCHAR(32) NOT NULL,
+    pages INTEGER DEFAULT 0,
+    service VARCHAR(64),
+    sinch_fax_id VARCHAR(255),
+    sent_by VARCHAR(255),
+    file_url TEXT,
+    received_at TIMESTAMPTZ,
+    release_metadata JSONB DEFAULT '{}'::jsonb,
+    raw_webhook JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_fax_log_org_created_at ON fax_log (org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fax_log_direction_created_at ON fax_log (direction, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS notifications (
     id BIGSERIAL PRIMARY KEY,
     org_id UUID NOT NULL REFERENCES organizations(id),

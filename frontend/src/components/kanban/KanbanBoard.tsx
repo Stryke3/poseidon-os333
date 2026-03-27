@@ -69,13 +69,22 @@ type PatientChart = {
 
 function isChartPatientId(value?: string) {
   if (!value) return false
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  return !value.startsWith("matia-")
 }
 
 function getChartHref(card: KanbanCard): string | undefined {
   if (isChartPatientId(card.patientId)) return `/patients/${card.patientId}`
   if (card.href?.startsWith("/patients/")) return card.href
   return undefined
+}
+
+function getFaxHref(card: KanbanCard): string {
+  const params = new URLSearchParams()
+  const patientName = card.title.split(" - ")[0]?.trim()
+  if (patientName) params.set("patient", patientName)
+  if (card.patientId) params.set("patientId", card.patientId)
+  if (card.payer) params.set("payer", card.payer)
+  return params.size > 0 ? `/fax?${params.toString()}` : "/fax"
 }
 
 interface KanbanBoardProps {
@@ -437,6 +446,7 @@ export default function KanbanBoard({
                 const isLoading = loadingPatientId === card.patientId
                 const chartError = card.patientId ? chartErrors[card.patientId] : ""
                 const chartHref = getChartHref(card)
+                const faxHref = getFaxHref(card)
 
                 return (
                   <div
@@ -527,6 +537,14 @@ export default function KanbanBoard({
                             </div>
                           )}
                           <div className="flex items-center gap-2">
+                            <Link
+                              href={faxHref}
+                              className="rounded-full border border-accent-gold/30 bg-accent-gold/10 px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-accent-gold-2 hover:border-accent-gold hover:text-white"
+                              onClick={(e) => e.stopPropagation()}
+                              target="_blank"
+                            >
+                              Fax
+                            </Link>
                             {chartHref && (
                               <Link
                                 href={chartHref}
@@ -709,6 +727,14 @@ export default function KanbanBoard({
 
                               <div className="mt-auto flex items-center justify-between gap-2 pt-1">
                                 <div className="flex gap-2">
+                                  <Link
+                                    className="rounded-full border border-accent-gold/30 bg-accent-gold/10 px-2 py-1 text-[9px] uppercase tracking-[0.14em] text-accent-gold-2 transition hover:border-accent-gold hover:text-white"
+                                    href={faxHref}
+                                    onClick={(e) => e.stopPropagation()}
+                                    target="_blank"
+                                  >
+                                    Fax
+                                  </Link>
                                   <button
                                     className="rounded-full border border-white/10 px-2 py-1 text-[9px] uppercase tracking-[0.14em] text-slate-300 transition hover:border-accent-blue/40 hover:text-white"
                                     onClick={() => refreshPatientChart(card.patientId)}

@@ -1526,16 +1526,44 @@ async def v1_intake_batch(file: UploadFile = File(...)):
 async def v1_parse_document(file: UploadFile = File(...)):
     content = await file.read()
     text = _extract_pdf_text(content)
-    patient_name = _extract_first(text, [r"(?:Patient|Member)(?: Name)?[:\s]+([A-Z][A-Z,\-'\s]+)"])
+    patient_name = _extract_first(
+        text,
+        [
+            r"(?:Patient|Member)(?: Name)?[:\s]+([A-Z][A-Z,\-'\s]+)",
+            r"(?:Patient|Member)\s*[:#]?\s*([A-Z][A-Z,\-'\s]+)",
+            r"Name[:\s]+([A-Z][A-Z,\-'\s]+)",
+        ],
+    )
     first_name, last_name = _split_name(patient_name)
+    dob_raw = _extract_first(
+        text,
+        [
+            r"(?:DOB|Date of Birth|Birth Date)[:\s]+([0-9/\-]{6,10})",
+            r"\bDOB\b[^0-9]{0,8}([0-9/\-]{6,10})",
+        ],
+    )
+    payer_name = _extract_first(
+        text,
+        [
+            r"(?:Insurance|Payer|Plan)[:\s]+([A-Z][A-Z0-9&.,'\/\-\s]+)",
+            r"(?:Primary Payer|Carrier)[:\s]+([A-Z][A-Z0-9&.,'\/\-\s]+)",
+        ],
+    )
+    member_id = _extract_first(
+        text,
+        [
+            r"(?:Member ID|Subscriber ID|Insurance ID)[:\s]+([A-Z0-9\-]+)",
+            r"(?:ID Number|Policy Number|Member #)[:\s]+([A-Z0-9\-]+)",
+        ],
+    )
     return {
         "patient_name": patient_name,
         "first_name": first_name,
         "last_name": last_name,
-        "date_of_birth": _normalize_date(_extract_first(text, [r"(?:DOB|Date of Birth)[:\s]+([0-9/\-]{6,10})"])),
+        "date_of_birth": _normalize_date(dob_raw) if dob_raw else "",
         "insurance_info": {
-            "payer_name": _extract_first(text, [r"(?:Insurance|Payer|Plan)[:\s]+([A-Z][A-Z0-9&.,'\/\-\s]+)"]),
-            "member_id": _extract_first(text, [r"(?:Member ID|Subscriber ID)[:\s]+([A-Z0-9\-]+)"]),
+            "payer_name": payer_name,
+            "member_id": member_id,
         },
         "diagnosis_codes": list(set(re.findall(r"\b[A-Z]\d{2}(?:\.\d{1,4})?\b", text))),
         "physician_npi": _extract_first(text, [r"\bNPI[:\s]+(\d{10})\b"]),

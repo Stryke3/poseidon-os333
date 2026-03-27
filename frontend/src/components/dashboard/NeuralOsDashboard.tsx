@@ -29,39 +29,55 @@ type SystemState = {
 type BusinessLineId = "all" | "dme" | "implants" | "biologics" | "matia"
 
 const PIPELINE_ORDER = [
-  "pendingAuth",
-  "authorized",
-  "submitted",
+  "intake",
+  "eligibility_verification",
+  "prior_auth",
+  "documentation",
+  "delivered",
+  "claim_submitted",
+  "pending_payment",
   "denied",
   "appealed",
   "paid",
 ] as const
 
 const COLUMN_LABELS: Record<string, string> = {
-  pendingAuth: "Pending Auth",
-  authorized: "Authorized",
-  submitted: "Submitted",
+  intake: "Intake",
+  eligibility_verification: "Eligibility",
+  prior_auth: "Auth / CMN",
+  documentation: "Documentation",
+  delivered: "Delivered",
+  claim_submitted: "Submitted",
+  pending_payment: "Pmt Pending",
   denied: "Denied",
   appealed: "Appealed",
   paid: "Paid",
 }
 
 const COLUMN_COLORS: Record<string, string> = {
-  pendingAuth: "border-amber-400/50 text-amber-300",
-  authorized: "border-blue-400/50 text-blue-300",
-  submitted: "border-cyan-400/50 text-cyan-300",
+  intake: "border-amber-400/50 text-amber-300",
+  eligibility_verification: "border-blue-400/50 text-blue-300",
+  prior_auth: "border-cyan-400/50 text-cyan-300",
+  documentation: "border-violet-400/50 text-violet-300",
+  delivered: "border-teal-400/50 text-teal-300",
+  claim_submitted: "border-sky-400/50 text-sky-300",
+  pending_payment: "border-emerald-400/50 text-emerald-300",
   denied: "border-red-400/50 text-red-300",
   appealed: "border-purple-400/50 text-purple-300",
-  paid: "border-emerald-400/50 text-emerald-300",
+  paid: "border-green-400/50 text-green-300",
 }
 
 const COLUMN_DOT: Record<string, string> = {
-  pendingAuth: "bg-amber-400",
-  authorized: "bg-blue-400",
-  submitted: "bg-cyan-400",
+  intake: "bg-amber-400",
+  eligibility_verification: "bg-blue-400",
+  prior_auth: "bg-cyan-400",
+  documentation: "bg-violet-400",
+  delivered: "bg-teal-400",
+  claim_submitted: "bg-sky-400",
+  pending_payment: "bg-emerald-400",
   denied: "bg-red-400",
   appealed: "bg-purple-400",
-  paid: "bg-emerald-400",
+  paid: "bg-green-400",
 }
 
 const PRIORITY_STYLES: Record<string, string> = {
@@ -119,7 +135,7 @@ function cardMatchesBusinessLine(card: KanbanCard, bl: BusinessLineId) {
 
 function isChartPatientId(value?: string) {
   if (!value) return false
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  return !value.startsWith("matia-")
 }
 
 function getChartHref(card: KanbanCard): string | undefined {
@@ -355,6 +371,13 @@ export default function NeuralOsDashboard({
             Fax
           </Link>
 
+          <Link
+            className="rounded-lg border border-emerald-400/30 bg-emerald-400/12 px-3 py-2 text-xs font-medium text-emerald-100 transition hover:border-emerald-300/50 hover:bg-emerald-400/20 hover:text-white"
+            href="/intake/new"
+          >
+            New Patient
+          </Link>
+
           {/* Trident toggle */}
           <button
             className={cn(
@@ -423,6 +446,13 @@ export default function NeuralOsDashboard({
               onClick={() => setMenuOpen(false)}
             >
               Open Fax
+            </Link>
+            <Link
+              className="mb-4 block rounded-lg border border-emerald-400/35 bg-emerald-400/15 px-3 py-2.5 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-400/25 hover:text-white"
+              href="/intake/new"
+              onClick={() => setMenuOpen(false)}
+            >
+              New Patient Intake
             </Link>
 
             <nav className="space-y-1">
@@ -572,15 +602,25 @@ export default function NeuralOsDashboard({
         </div>
       </div>
 
-      <Link
+      <div
         className={cn(
-          "fixed bottom-5 right-4 z-30 rounded-full border border-cyan-400/30 bg-cyan-400/12 px-4 py-3 text-sm font-semibold text-cyan-100 shadow-[0_16px_40px_rgba(5,8,15,0.4)] transition hover:scale-[1.02] hover:border-cyan-300/50 hover:bg-cyan-400/20 hover:text-white",
+          "fixed bottom-5 right-4 z-30 flex flex-col gap-3",
           tridentOpen ? "bottom-24 md:bottom-28" : "",
         )}
-        href="/fax"
       >
-        Fax
-      </Link>
+        <Link
+          className="rounded-full border border-emerald-400/30 bg-emerald-400/12 px-4 py-3 text-sm font-semibold text-emerald-100 shadow-[0_16px_40px_rgba(5,8,15,0.4)] transition hover:scale-[1.02] hover:border-emerald-300/50 hover:bg-emerald-400/20 hover:text-white"
+          href="/intake/new"
+        >
+          New Patient
+        </Link>
+        <Link
+          className="rounded-full border border-cyan-400/30 bg-cyan-400/12 px-4 py-3 text-sm font-semibold text-cyan-100 shadow-[0_16px_40px_rgba(5,8,15,0.4)] transition hover:scale-[1.02] hover:border-cyan-300/50 hover:bg-cyan-400/20 hover:text-white"
+          href="/fax"
+        >
+          Fax
+        </Link>
+      </div>
 
       {/* ── Trident AI Bar ───────────────────────── */}
       {tridentOpen && (
@@ -747,7 +787,7 @@ function PatientCard({
               <DetailCell label="Assignee" value={card.assignee} />
               <DetailCell label="Orders" value={String(card.orderCount || card.orderIds?.length || 1)} />
               <DetailCell label="Due" value={formatDateLabel(card.due)} />
-              <DetailCell label="Status" value={columnId.replace(/([A-Z])/g, " $1").trim()} />
+              <DetailCell label="Status" value={COLUMN_LABELS[columnId] || columnId} />
             </div>
 
             {card.locked && card.lockReason && (

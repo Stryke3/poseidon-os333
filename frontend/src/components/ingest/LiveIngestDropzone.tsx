@@ -93,11 +93,11 @@ export default function LiveIngestDropzone({
             Live Ingest
           </p>
           <h2 className="mt-2 text-2xl font-semibold text-white">
-            Drop Intake Spreadsheet
+            Drop Intake File
           </h2>
           <p className="mt-2 max-w-2xl text-sm text-slate-300">
-            Upload a CSV file. The server parses it and submits rows to the live Core import endpoint.
-            Missing patients are created there automatically.
+            Upload a CSV or PDF file. CSVs import row-by-row, and PDFs are parsed for patient,
+            payer, HCPCS, and diagnosis details before being sent to the live Core import endpoint.
           </p>
         </div>
         <button
@@ -132,10 +132,10 @@ export default function LiveIngestDropzone({
       >
         <div>
           <p className="text-base font-semibold text-white">
-            {loading ? "Uploading and creating live records..." : "Drag and drop CSV here"}
+            {loading ? "Uploading and creating live records..." : "Drag and drop CSV or PDF here"}
           </p>
           <p className="mt-2 text-sm text-slate-400">
-            Recommended columns: patient name, DOB, member ID, payer, HCPCS, ICD, notes.
+            Recommended CSV columns: patient name, DOB, member ID, payer, HCPCS, ICD, notes.
           </p>
         </div>
       </div>
@@ -143,7 +143,7 @@ export default function LiveIngestDropzone({
       <input
         ref={inputRef}
         type="file"
-        accept=".csv"
+        accept=".csv,.pdf"
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0]

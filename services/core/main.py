@@ -81,6 +81,42 @@ async def exec_write(conn, query: str, *params) -> int:
         return cur.rowcount
 
 
+async def _ensure_fax_tables(conn) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fax_log (
+                id UUID PRIMARY KEY,
+                org_id UUID,
+                direction VARCHAR(16) NOT NULL,
+                fax_number VARCHAR(64) NOT NULL,
+                facility VARCHAR(255),
+                patient_name VARCHAR(255),
+                patient_dob VARCHAR(32),
+                patient_mrn VARCHAR(128),
+                record_types JSONB DEFAULT '[]'::jsonb,
+                urgency VARCHAR(32),
+                status VARCHAR(32) NOT NULL,
+                pages INTEGER DEFAULT 0,
+                service VARCHAR(64),
+                sinch_fax_id VARCHAR(255),
+                sent_by VARCHAR(255),
+                file_url TEXT,
+                received_at TIMESTAMPTZ,
+                release_metadata JSONB DEFAULT '{}'::jsonb,
+                raw_webhook JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """
+        )
+        await cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fax_log_org_created_at ON fax_log (org_id, created_at DESC)"
+        )
+        await cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fax_log_direction_created_at ON fax_log (direction, created_at DESC)"
+        )
+
+
 async def audit_log(
     conn,
     org_id: str,
@@ -1524,6 +1560,26 @@ class AdminUserUpdate(BaseModel):
     permissions_deny: list[str] | None = None
 
 
+class FaxLogEntryPayload(BaseModel):
+    direction: str = "outbound"
+    fax_number: str
+    facility: str | None = None
+    patient_name: str | None = None
+    patient_dob: str | None = None
+    patient_mrn: str | None = None
+    record_types: list[str] = []
+    urgency: str | None = None
+    status: str = "queued"
+    pages: int = 0
+    service: str | None = None
+    sinch_fax_id: str | None = None
+    sent_by: str | None = None
+    file_url: str | None = None
+    received_at: str | None = None
+    release_metadata: dict[str, Any] = {}
+    raw_webhook: dict[str, Any] = {}
+
+
 class PatientCreate(BaseModel):
     first_name: str
     last_name: str
@@ -1945,23 +2001,28 @@ async def _import_apply_financial_snapshot(
         """
         UPDATE orders
         SET
-            total_billed = COALESCE($2::numeric, total_billed),
-            paid_amount = COALESCE($3::numeric, paid_amount),
+            total_billed = COALESCE($1::numeric, total_billed),
+            paid_amount = COALESCE($2::numeric, paid_amount),
             total_paid = COALESCE($3::numeric, total_paid),
             denied_amount = COALESCE($4::numeric, denied_amount),
-            payment_date = CASE WHEN $3::numeric IS NOT NULL AND $3::numeric > 0 THEN COALESCE(payment_date, CURRENT_DATE) ELSE payment_date END,
-            denial_date = CASE WHEN $4::numeric IS NOT NULL AND $4::numeric > 0 THEN COALESCE(denial_date, CURRENT_DATE) ELSE denial_date END,
-            status = COALESCE($5::text, status),
-            billing_status = COALESCE($6::text, billing_status),
+            payment_date = CASE WHEN $5::numeric IS NOT NULL AND $6::numeric > 0 THEN COALESCE(payment_date, CURRENT_DATE) ELSE payment_date END,
+            denial_date = CASE WHEN $7::numeric IS NOT NULL AND $8::numeric > 0 THEN COALESCE(denial_date, CURRENT_DATE) ELSE denial_date END,
+            status = COALESCE($9::text, status),
+            billing_status = COALESCE($10::text, billing_status),
             updated_at = NOW()
-        WHERE id = $1::uuid AND org_id = $7::uuid
+        WHERE id = $11::uuid AND org_id = $12::uuid
         """,
-        order_id,
         billed,
         paid,
+        paid,
+        denied,
+        paid,
+        paid,
+        denied,
         denied,
         inferred,
         billing_status,
+        order_id,
         org_id,
     )
 
@@ -2337,6 +2398,131 @@ async def update_user_password(
 # ---------------------------------------------------------------------------
 # Patient Routes
 # ---------------------------------------------------------------------------
+
+@app.get("/fax/log")
+async def get_fax_log(
+    request: Request,
+    user: dict = Depends(require_permissions("view_patients")),
+    direction: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        await _ensure_fax_tables(conn)
+        params: list[Any] = [user["org_id"]]
+        where = ["(org_id = $1 OR org_id IS NULL)"]
+        if direction:
+            params.append(direction)
+            where.append(f"direction = ${len(params)}")
+        params.extend([max(1, min(limit, 200)), max(offset, 0)])
+        rows = await fetch_all(
+            conn,
+            f"""
+            SELECT id, direction, fax_number, facility, patient_name, patient_dob, patient_mrn,
+                   record_types, urgency, status, pages, service, sinch_fax_id, sent_by, file_url,
+                   received_at, release_metadata, raw_webhook, created_at
+            FROM fax_log
+            WHERE {' AND '.join(where)}
+            ORDER BY created_at DESC
+            LIMIT ${len(params) - 1} OFFSET ${len(params)}
+            """,
+            *params,
+        )
+        total_row = await fetch_one(
+            conn,
+            f"SELECT COUNT(*)::int AS total FROM fax_log WHERE {' AND '.join(where)}",
+            *params[: len(params) - 2],
+        )
+    return {"entries": [_serialize(dict(row)) for row in rows], "total": int((total_row or {}).get("total") or 0)}
+
+
+@app.post("/fax/log", status_code=201)
+async def create_fax_log(
+    payload: FaxLogEntryPayload,
+    request: Request,
+    user: dict = Depends(require_permissions("create_patients")),
+):
+    db = request.app.state.db_pool
+    fax_id = str(uuid.uuid4())
+    async with db.connection() as conn:
+        await _ensure_fax_tables(conn)
+        await exec_write(
+            conn,
+            """
+            INSERT INTO fax_log (
+                id, org_id, direction, fax_number, facility, patient_name, patient_dob, patient_mrn,
+                record_types, urgency, status, pages, service, sinch_fax_id, sent_by, file_url,
+                received_at, release_metadata, raw_webhook
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19::jsonb)
+            """,
+            fax_id,
+            user["org_id"],
+            payload.direction,
+            payload.fax_number,
+            payload.facility,
+            payload.patient_name,
+            payload.patient_dob,
+            payload.patient_mrn,
+            json.dumps(payload.record_types or []),
+            payload.urgency,
+            payload.status,
+            payload.pages,
+            payload.service,
+            payload.sinch_fax_id,
+            payload.sent_by or user.get("email") or user["sub"],
+            payload.file_url,
+            payload.received_at,
+            json.dumps(payload.release_metadata or {}),
+            json.dumps(payload.raw_webhook or {}),
+        )
+        await audit_log(conn, user["org_id"], user["sub"], "create", "fax_log", fax_id, _client_ip(request))
+        row = await fetch_one(conn, "SELECT * FROM fax_log WHERE id = $1", fax_id)
+    return _serialize(dict(row or {"id": fax_id}))
+
+
+@app.post("/fax/inbound", status_code=201)
+async def create_inbound_fax(
+    payload: FaxLogEntryPayload,
+    request: Request,
+    _: bool = Depends(require_internal_api_key()),
+):
+    db = request.app.state.db_pool
+    fax_id = str(uuid.uuid4())
+    async with db.connection() as conn:
+        await _ensure_fax_tables(conn)
+        await exec_write(
+            conn,
+            """
+            INSERT INTO fax_log (
+                id, org_id, direction, fax_number, facility, patient_name, patient_dob, patient_mrn,
+                record_types, urgency, status, pages, service, sinch_fax_id, sent_by, file_url,
+                received_at, release_metadata, raw_webhook
+            )
+            VALUES ($1,NULL,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::jsonb)
+            """,
+            fax_id,
+            payload.direction or "inbound",
+            payload.fax_number,
+            payload.facility,
+            payload.patient_name,
+            payload.patient_dob,
+            payload.patient_mrn,
+            json.dumps(payload.record_types or []),
+            payload.urgency,
+            payload.status or "received",
+            payload.pages,
+            payload.service or "sinch",
+            payload.sinch_fax_id,
+            payload.sent_by,
+            payload.file_url,
+            payload.received_at or datetime.now(timezone.utc).isoformat(),
+            json.dumps(payload.release_metadata or {}),
+            json.dumps(payload.raw_webhook or {}),
+        )
+        row = await fetch_one(conn, "SELECT * FROM fax_log WHERE id = $1", fax_id)
+    return _serialize(dict(row or {"id": fax_id, "status": "received"}))
 
 @app.post("/patients", status_code=201)
 async def create_patient(
@@ -2781,8 +2967,16 @@ async def list_reps(
 # ---------------------------------------------------------------------------
 
 async def _score_order_with_trident(request: Request, org_id: str, order_id: str) -> None:
-    trident_base = (settings.trident_url or "").rstrip("/")
-    if not trident_base:
+    candidate_bases: list[str] = []
+    for base in [
+        settings.trident_url,
+        "http://poseidon_trident:8002",
+        "http://trident:8002",
+    ]:
+        normalized = (base or "").strip().rstrip("/")
+        if normalized and normalized not in candidate_bases:
+            candidate_bases.append(normalized)
+    if not candidate_bases:
         return
     db = request.app.state.db_pool
     try:
@@ -2821,26 +3015,75 @@ async def _score_order_with_trident(request: Request, org_id: str, order_id: str
             "payer_id": str(order.get("payer_id") or "UNKNOWN"),
             "patient_age": _patient_age_years(order.get("dob")),
         }
+        recommended_hcpcs_by_icd10: list[dict[str, Any]] = []
+        trident_base_used = ""
         async with httpx.AsyncClient(timeout=20.0) as client:
-            tr = await client.post(f"{trident_base}/api/v1/trident/score", json=score_body)
-            if not tr.is_success:
+            tr = None
+            for base in candidate_bases:
+                try:
+                    candidate = await client.post(f"{base}/api/v1/trident/score", json=score_body)
+                    if candidate.is_success:
+                        tr = candidate
+                        trident_base_used = base
+                        break
+                except httpx.HTTPError:
+                    continue
+            if tr is None:
                 return
             payload = tr.json()
-            score = payload.get("score")
+            score = payload.get("score", payload.get("denial_probability"))
             score_val = float(score) if isinstance(score, (int, float)) else None
             if score_val is None:
                 return
             tier = "high" if score_val >= settings.denial_threshold else "med" if score_val >= 0.35 else "low"
+            for icd10 in icd10_codes:
+                try:
+                    cm = await client.get(f"{trident_base_used}/api/v1/trident/code-map", params={"icd10": icd10})
+                except httpx.HTTPError:
+                    continue
+                if not cm.is_success:
+                    continue
+                parsed = cm.json()
+                cm_payload = parsed if isinstance(parsed, dict) else {}
+                for row in cm_payload.get("matches") or []:
+                    code = _normalize_text(row.get("hcpcs_code")).upper()
+                    if not code:
+                        continue
+                    recommended_hcpcs_by_icd10.append(
+                        {
+                            "icd10": icd10,
+                            "hcpcs_code": code,
+                            "avg_reimbursement": float(row.get("avg_reimbursement") or 0),
+                            "denial_probability": float(row.get("denial_probability") or 0),
+                            "sample_count": int(row.get("sample_count") or 0),
+                        }
+                    )
+        best_codes = sorted(
+            recommended_hcpcs_by_icd10,
+            key=lambda r: (float(r.get("avg_reimbursement") or 0), int(r.get("sample_count") or 0)),
+            reverse=True,
+        )[:5]
+        trident_flags = {
+            "icd10_codes": icd10_codes,
+            "input_hcpcs_codes": hcpcs_codes,
+            "recommended_hcpcs_by_icd10": best_codes,
+            "score_payload": payload,
+            "scored_at": datetime.now(timezone.utc).isoformat(),
+        }
         async with db.connection() as conn:
             await exec_write(
                 conn,
                 """
                 UPDATE orders
-                SET denial_risk_score = $1, risk_tier = $2, updated_at = NOW()
-                WHERE id = $3 AND org_id = $4
+                SET denial_risk_score = $1,
+                    risk_tier = $2,
+                    trident_flags = $3::jsonb,
+                    updated_at = NOW()
+                WHERE id = $4 AND org_id = $5
                 """,
                 score_val,
                 tier,
+                json.dumps(trident_flags),
                 order_id,
                 org_id,
             )
@@ -2928,6 +3171,7 @@ async def import_orders(
     patients_created = 0
     orders_created = 0
     duplicates_skipped = 0
+    created_order_ids: list[str] = []
 
     async with db.connection() as conn:
         prepared: list[tuple[int, ImportOrderPayload, tuple[Any, ...], tuple[str, str, str, str, str, list[str], list[str]]]] = []
@@ -3132,6 +3376,7 @@ async def import_orders(
                     diagnosis_codes,
                 )
                 orders_created += 1
+                created_order_ids.append(order_id)
                 results.append({
                     "index": index,
                     "status": "created",
@@ -3153,6 +3398,8 @@ async def import_orders(
     created = sum(1 for item in results if item["status"] == "created")
     failed = sum(1 for item in results if item["status"] == "failed")
     results.sort(key=lambda item: item.get("index", 0))
+    for created_order_id in created_order_ids:
+        asyncio.create_task(_score_order_with_trident(request, str(user["org_id"]), created_order_id))
     return {
         "created": created,
         "failed": failed,
@@ -3161,6 +3408,81 @@ async def import_orders(
         "orders_created": orders_created,
         "results": results,
     }
+
+
+async def _queue_pending_trident_scores(request: Request, org_id: str, limit: int) -> dict[str, Any]:
+    db = request.app.state.db_pool
+    pending_statuses = [
+        "intake",
+        "eligibility_check",
+        "documents_pending",
+        "physician_signature",
+        "pending_auth",
+        "auth_approved",
+        "ready_to_submit",
+        "draft",
+    ]
+    bounded_limit = max(1, min(limit, 5000))
+    async with db.connection() as conn:
+        rows = await fetch_all(
+            conn,
+            """
+            SELECT id, status
+            FROM orders
+            WHERE org_id = $1
+              AND status = ANY($2::text[])
+            ORDER BY updated_at DESC
+            LIMIT $3
+            """,
+            org_id,
+            pending_statuses,
+            bounded_limit,
+        )
+    order_ids = [str(r["id"]) for r in rows]
+    for order_id in order_ids:
+        await _score_order_with_trident(request, org_id, order_id)
+    return {
+        "queued": len(order_ids),
+        "processed": len(order_ids),
+        "statuses": pending_statuses,
+        "limit": bounded_limit,
+    }
+
+
+@app.post("/workflow/trident/score-pending")
+async def score_pending_orders_with_trident(
+    request: Request,
+    limit: int = 500,
+    user: dict = Depends(require_permissions("update_order_status")),
+):
+    return await _queue_pending_trident_scores(request, str(user["org_id"]), limit)
+
+
+@app.post("/internal/trident/score-pending")
+async def score_pending_orders_with_trident_internal(
+    request: Request,
+    org_id: str | None = None,
+    limit: int = 500,
+    _: bool = Depends(require_internal_api_key()),
+):
+    resolved_org_id = _normalize_text(org_id)
+    if not resolved_org_id:
+        db = request.app.state.db_pool
+        async with db.connection() as conn:
+            row = await fetch_one(
+                conn,
+                """
+                SELECT org_id::text AS org_id
+                FROM orders
+                GROUP BY org_id
+                ORDER BY COUNT(*) DESC
+                LIMIT 1
+                """,
+            )
+        if not row or not row.get("org_id"):
+            return {"queued": 0, "statuses": [], "limit": max(1, min(limit, 5000))}
+        resolved_org_id = str(row["org_id"])
+    return await _queue_pending_trident_scores(request, resolved_org_id, limit)
 
 
 @app.get("/orders")

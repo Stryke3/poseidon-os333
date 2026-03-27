@@ -200,6 +200,11 @@ export default function StrykeFoxFaxSystem() {
     urgency: "routine",
     notes: "",
     authorizationOnFile: false,
+    releaseSignedBy: "",
+    releaseSignerRelationship: "Self",
+    releaseSignedAt: new Date().toISOString().slice(0, 10),
+    releasePurpose: "Continuity of care",
+    releaseAuthorizedBy: "Patient-executed release",
     attachments: [] as File[],
   });
 
@@ -358,6 +363,13 @@ export default function StrykeFoxFaxSystem() {
       customEnd: form.customEnd,
       urgency: form.urgency,
       notes: form.notes,
+      authorizationOnFile: form.authorizationOnFile,
+      releaseSignedBy: form.releaseSignedBy,
+      releaseSignerRelationship: form.releaseSignerRelationship,
+      releaseSignedAt: form.releaseSignedAt,
+      releasePurpose: form.releasePurpose,
+      releaseAuthorizedBy: form.releaseAuthorizedBy,
+      releaseAttachmentLabel: `${form.patientName || "patient"}_release_authorization`,
     };
 
     try {
@@ -380,6 +392,13 @@ export default function StrykeFoxFaxSystem() {
         sinch_fax_id: result.faxId,
         sent_by: session?.user?.email || "unknown",
         timestamp: result.timestamp || new Date().toISOString(),
+        release_metadata: {
+          authorization_on_file: form.authorizationOnFile,
+          signed_by: form.releaseSignedBy,
+          signer_relationship: form.releaseSignerRelationship,
+          signed_at: form.releaseSignedAt,
+          purpose: form.releasePurpose,
+        },
       };
 
       setFaxLog((prev) => [logEntry, ...prev]);
@@ -405,6 +424,11 @@ export default function StrykeFoxFaxSystem() {
         urgency: "routine",
         notes: "",
         authorizationOnFile: false,
+        releaseSignedBy: "",
+        releaseSignerRelationship: "Self",
+        releaseSignedAt: new Date().toISOString().slice(0, 10),
+        releasePurpose: "Continuity of care",
+        releaseAuthorizedBy: "Patient-executed release",
         attachments: [],
       }));
     } catch (err) {
@@ -523,7 +547,9 @@ export default function StrykeFoxFaxSystem() {
   const canSend =
     isValidFaxNumber(form.recipientFax) &&
     form.patientName.trim().length > 0 &&
-    form.authorizationOnFile;
+    form.authorizationOnFile &&
+    form.releaseSignedBy.trim().length > 0 &&
+    form.releaseSignedAt.trim().length > 0;
 
   // ── Shared styles ──
   const inputClass =
@@ -554,6 +580,12 @@ export default function StrykeFoxFaxSystem() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <a
+              href="/intake/new"
+              className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-900 text-white transition hover:bg-slate-700"
+            >
+              New Patient Intake
+            </a>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               HIPAA Compliant
@@ -864,6 +896,64 @@ export default function StrykeFoxFaxSystem() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Release Signed By *</label>
+                  <input
+                    type="text"
+                    placeholder="Patient or legal representative"
+                    value={form.releaseSignedBy}
+                    onChange={(e) => updateForm("releaseSignedBy", e.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Signer Relationship *</label>
+                  <select
+                    value={form.releaseSignerRelationship}
+                    onChange={(e) => updateForm("releaseSignerRelationship", e.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="Self">Self</option>
+                    <option value="Parent / Guardian">Parent / Guardian</option>
+                    <option value="Healthcare Proxy">Healthcare Proxy</option>
+                    <option value="Power of Attorney">Power of Attorney</option>
+                    <option value="Personal Representative">Personal Representative</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelClass}>Release Signature Date *</label>
+                  <input
+                    type="date"
+                    value={form.releaseSignedAt}
+                    onChange={(e) => updateForm("releaseSignedAt", e.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Release Purpose</label>
+                  <input
+                    type="text"
+                    value={form.releasePurpose}
+                    onChange={(e) => updateForm("releasePurpose", e.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className={labelClass}>Release Authorized By</label>
+                <input
+                  type="text"
+                  value={form.releaseAuthorizedBy}
+                  onChange={(e) => updateForm("releaseAuthorizedBy", e.target.value)}
+                  className={inputClass}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  A release authorization page will be generated automatically and attached to the fax.
+                </p>
+              </div>
+
               <div>
                 <label className={`${labelClass} mb-2`}>
                   Attachments (Authorization Form, ID, etc.)
@@ -952,6 +1042,14 @@ export default function StrykeFoxFaxSystem() {
               form.patientName && (
                 <p className="text-xs text-red-500 font-semibold text-center -mt-2">
                   {"\u2610"} Authorization confirmation required before sending
+                </p>
+              )}
+            {form.authorizationOnFile &&
+              (!form.releaseSignedBy.trim() || !form.releaseSignedAt.trim()) &&
+              form.recipientFax &&
+              form.patientName && (
+                <p className="text-xs text-red-500 font-semibold text-center -mt-2">
+                  {"\u2610"} Patient-executed release signer and signed date are required
                 </p>
               )}
           </div>

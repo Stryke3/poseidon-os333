@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getToken } from "next-auth/jwt"
 
+const INTAKE_API_URL =
+  process.env.INTAKE_API_URL || "http://poseidon_intake:8003"
+
 interface ImportOrderPayload {
   patient_name: string
   first_name?: string
@@ -125,6 +128,21 @@ function parseRows(buffer: Buffer) {
   return rows
 }
 
+type ParsedPdfDocument = {
+  patient_name?: string
+  first_name?: string
+  last_name?: string
+  date_of_birth?: string
+  insurance_info?: {
+    payer_name?: string
+    member_id?: string
+  }
+  physician_npi?: string
+  hcpcs_codes?: string[]
+  diagnosis_codes?: string[]
+  raw_text_preview?: string
+}
+
 function mapRowsToOrders(rows: Record<string, unknown>[]) {
   return rows
     .map((raw) => {
@@ -205,6 +223,40 @@ function mapRowsToOrders(rows: Record<string, unknown>[]) {
     .filter((item): item is ImportOrderPayload => Boolean(item))
 }
 
+function mapParsedPdfToOrders(parsed: ParsedPdfDocument): ImportOrderPayload[] {
+  const combinedName = `${parsed.first_name?.trim() || ""} ${parsed.last_name?.trim() || ""}`.trim()
+  const patientName = parsed.patient_name?.trim() || combinedName
+  if (!patientName) return []
+
+  const nameParts = splitName(patientName)
+  const hcpcsCodes = (parsed.hcpcs_codes || [])
+    .map((code) => String(code || "").trim().toUpperCase())
+    .filter(Boolean)
+  const diagnosisCodes = (parsed.diagnosis_codes || [])
+    .map((code) => String(code || "").trim().toUpperCase().replace(/\./g, ""))
+    .filter(Boolean)
+  const notes = parsed.raw_text_preview?.trim() || "Imported from PDF intake document."
+
+  return [
+    {
+      patient_name: patientName,
+      first_name: parsed.first_name?.trim() || nameParts.first_name,
+      last_name: parsed.last_name?.trim() || nameParts.last_name,
+      dob: normalizeDob(parsed.date_of_birth || ""),
+      insurance_id: parsed.insurance_info?.member_id?.trim() || "",
+      payer: parsed.insurance_info?.payer_name?.trim() || "",
+      payer_id: parsed.insurance_info?.payer_name?.trim() || "",
+      hcpcs: hcpcsCodes[0] || "",
+      hcpcs_codes: hcpcsCodes,
+      icd: diagnosisCodes[0] || "",
+      diagnosis_codes: diagnosisCodes,
+      referring_physician_npi: parsed.physician_npi?.trim() || "",
+      priority: "standard",
+      notes,
+    },
+  ]
+}
+
 function aggregateImportedOrders(orders: ImportOrderPayload[]) {
   const grouped = new Map<string, AggregatedImportRecord>()
 
@@ -281,6 +333,35 @@ async function getCoreAuth(req: NextRequest) {
   return { coreBase, token: authJson.access_token as string }
 }
 
+async function parsePdfDocument(file: File, token: string) {
+  const upstream = new FormData()
+  upstream.append("file", file, file.name)
+
+  const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/parse-document`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: upstream,
+    cache: "no-store",
+  }).catch(() => null)
+
+  if (!res) {
+    throw new Error("Unable to reach intake document parser.")
+  }
+
+  const data = (await res.json().catch(() => null)) as ParsedPdfDocument | { detail?: string } | null
+  if (!res.ok) {
+    const detail =
+      data && typeof data === "object" && "detail" in data && typeof data.detail === "string"
+        ? data.detail
+        : `PDF parsing failed: ${res.status}`
+    throw new Error(detail)
+  }
+
+  return (data || {}) as ParsedPdfDocument
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
@@ -290,25 +371,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No file uploaded." }, { status: 400 })
     }
 
-    if (!/\.csv$/i.test(file.name)) {
+    if (!/\.(csv|pdf)$/i.test(file.name)) {
       return NextResponse.json(
-        { error: "Accepted format: .csv" },
-        { status: 400 },
-      )
-    }
-
-    const buffer = Buffer.from(await file.arrayBuffer())
-    const rows = parseRows(buffer)
-    const orders = mapRowsToOrders(rows)
-
-    if (!orders.length) {
-      return NextResponse.json(
-        { error: "No usable patient rows were found in the uploaded file." },
+        { error: "Accepted formats: .csv, .pdf" },
         { status: 400 },
       )
     }
 
     const { coreBase, token } = await getCoreAuth(req)
+    const isPdf = /\.pdf$/i.test(file.name)
+    const buffer = isPdf ? null : Buffer.from(await file.arrayBuffer())
+    const rows = buffer ? parseRows(buffer) : []
+    const orders = isPdf
+      ? mapParsedPdfToOrders(await parsePdfDocument(file, token))
+      : mapRowsToOrders(rows)
+
+    if (!orders.length) {
+      return NextResponse.json(
+        {
+          error: isPdf
+            ? "No usable patient data was found in the uploaded PDF."
+            : "No usable patient rows were found in the uploaded file.",
+        },
+        { status: 400 },
+      )
+    }
+
     const internalKey = process.env.INTERNAL_API_KEY?.trim() ?? ""
     const importHeaders: Record<string, string> = {
       "Content-Type": "application/json",
@@ -340,7 +428,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       status: "ok",
       sourceFile: file.name,
-      parsedRows: rows.length,
+      parsedRows: isPdf ? 1 : rows.length,
       submittedOrders: orders.length,
       importResult: importJson,
       ingestedPatients: aggregatedImports.map((patient, index) => ({
