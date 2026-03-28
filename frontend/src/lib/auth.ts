@@ -18,8 +18,9 @@ interface LiveUser {
   permissions?: string[]
 }
 
+// Default: Compose/Render service hostname `core`. For host `next dev`, set CORE_API_URL in .env.local.
 const CORE_API_URL =
-  process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
+  process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://core:8001"
 const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET
 const APP_ENV = (process.env.NODE_ENV || "development").toLowerCase()
 

@@ -167,23 +167,31 @@ class Settings:
         return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/0"
 
     def validate(self) -> None:
-        required: dict[str, str] = {
+        # Hard-required: service cannot function at all without these.
+        hard_required: dict[str, str] = {
             "JWT_SECRET": self.secret_key,
-            "MINIO_ACCESS_KEY": self.minio_access_key,
-            "MINIO_SECRET_KEY": self.minio_secret_key,
+        }
+        # Managed providers (e.g. Render) supply full URLs; discrete passwords only needed otherwise.
+        if not self.database_url or _is_placeholder(self.database_url):
+            hard_required["POSTGRES_PASSWORD"] = self.db_password
+        if not self.redis_url_value or _is_placeholder(self.redis_url_value):
+            hard_required["REDIS_PASSWORD"] = self.redis_password
+
+        hard_invalid = [name for name, value in hard_required.items() if _is_placeholder(value)]
+        if hard_invalid and self.is_production:
+            joined = ", ".join(sorted(hard_invalid))
+            raise RuntimeError(f"Missing required production secrets: {joined}")
+
+        # Soft-required: log warnings, fail at request time rather than boot time.
+        soft_required: dict[str, str] = {
             "POSEIDON_API_KEY": self.poseidon_api_key,
             "INTERNAL_API_KEY": self.internal_api_key,
+            "MINIO_SECRET_KEY": self.minio_secret_key,
         }
-        # Managed providers (e.g. Render) often supply full URLs and omit discrete passwords.
-        if not self.database_url or _is_placeholder(self.database_url):
-            required["POSTGRES_PASSWORD"] = self.db_password
-        if not self.redis_url_value or _is_placeholder(self.redis_url_value):
-            required["REDIS_PASSWORD"] = self.redis_password
-
-        invalid = [name for name, value in required.items() if _is_placeholder(value)]
-        if invalid and self.is_production:
-            joined = ", ".join(sorted(invalid))
-            raise RuntimeError(f"Missing required production secrets: {joined}")
+        soft_invalid = [name for name, value in soft_required.items() if _is_placeholder(value)]
+        if soft_invalid:
+            joined = ", ".join(sorted(soft_invalid))
+            logger.warning("Missing production secrets (service will boot but some endpoints may fail): %s", joined)
 
 
 settings = Settings()
