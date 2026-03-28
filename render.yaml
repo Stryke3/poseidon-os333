@@ -70,7 +70,6 @@ services:
     name: minio
     image:
       url: docker.io/minio/minio:RELEASE.2025-04-03T14-56-28Z
-    dockerCommand: server /data --console-address ":9001"
     disk:
       name: minio-data
       mountPath: /data
