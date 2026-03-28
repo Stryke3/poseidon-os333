@@ -51,9 +51,9 @@ envVarGroups:
       - key: TRUSTED_HOSTS
         value: localhost,127.0.0.1,core,trident,intake,ml,edi,availity,minio,dashboard,*.onrender.com,dashboard.strykefox.com
       - key: MINIO_ENDPOINT
-        value: minio:9000
+        value: minio:10000
       - key: MINIO_PUBLIC_ENDPOINT
-        value: minio:9000
+        value: minio:10000
       - key: MINIO_SECURE
         value: "false"
       - key: MINIO_BUCKET
@@ -70,6 +70,7 @@ services:
     name: minio
     image:
       url: docker.io/minio/minio:RELEASE.2025-04-03T14-56-28Z
+    dockerCommand: minio server /data --address :10000 --console-address :9001
     disk:
       name: minio-data
       mountPath: /data
