@@ -1,8 +1,7 @@
-import { getServerSession } from "next-auth"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 
-import { authOptions } from "@/lib/auth"
+import { getSafeServerSession } from "@/lib/auth"
 import {
   HeroPanel,
   PageShell,
@@ -231,7 +230,7 @@ export default async function PatientFilePage({
   params: Promise<{ patientId: string }>
 }) {
   const { patientId } = await params
-  const session = await getServerSession(authOptions)
+  const session = await getSafeServerSession()
   if (!session?.user?.accessToken) redirect("/login")
 
   const res = await fetch(`${CORE_API_URL}/patients/${patientId}/chart`, {

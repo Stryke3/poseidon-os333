@@ -1,7 +1,6 @@
-import { getServerSession } from "next-auth"
 import { redirect } from "next/navigation"
 
-import { authOptions } from "@/lib/auth"
+import { getSafeServerSession } from "@/lib/auth"
 import SettingsTabs from "@/components/admin/SettingsTabs"
 
 export default async function SettingsLayout({
@@ -9,7 +8,7 @@ export default async function SettingsLayout({
 }: {
   children: React.ReactNode
 }) {
-  const session = await getServerSession(authOptions)
+  const session = await getSafeServerSession()
   if (!session?.user?.accessToken) {
     redirect("/login")
   }

@@ -1,15 +1,14 @@
 import type { ReactNode } from "react"
 import Link from "next/link"
-import { getServerSession } from "next-auth"
 import { redirect } from "next/navigation"
-import { authOptions } from "@/lib/auth"
+import { getSafeServerSession } from "@/lib/auth"
 
 /**
  * Admin-only shell: integrations and other `/admin/*` routes.
  * Provides consistent PageShell chrome and back-navigation.
  */
 export default async function AdminLayout({ children }: { children: ReactNode }) {
-  const session = await getServerSession(authOptions)
+  const session = await getSafeServerSession()
   if (!session?.user?.accessToken) {
     redirect("/login")
   }

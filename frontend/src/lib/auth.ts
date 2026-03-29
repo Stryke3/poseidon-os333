@@ -1,4 +1,4 @@
-import type { NextAuthOptions } from "next-auth"
+import { getServerSession, type NextAuthOptions } from "next-auth"
 import CredentialsProvider from "next-auth/providers/credentials"
 
 type AppRole =
@@ -21,11 +21,12 @@ interface LiveUser {
 // Default: Compose/Render service hostname `core`. For host `next dev`, set CORE_API_URL in .env.local.
 const CORE_API_URL =
   process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://core:8001"
-const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET
+const NEXTAUTH_SECRET =
+  process.env.NEXTAUTH_SECRET || process.env.JWT_SECRET || process.env.SECRET_KEY
 const APP_ENV = (process.env.NODE_ENV || "development").toLowerCase()
 
 if (!NEXTAUTH_SECRET && APP_ENV === "production") {
-  throw new Error("NEXTAUTH_SECRET is required in production.")
+  console.warn("NEXTAUTH_SECRET is unset in production; auth routes may be unavailable.")
 }
 
 export const authOptions: NextAuthOptions = {
@@ -109,4 +110,15 @@ export const authOptions: NextAuthOptions = {
     },
   },
   secret: NEXTAUTH_SECRET,
+}
+
+export async function getSafeServerSession() {
+  if (!NEXTAUTH_SECRET) return null
+
+  try {
+    return await getServerSession(authOptions)
+  } catch (error) {
+    console.warn("Unable to resolve server session.", error)
+    return null
+  }
 }

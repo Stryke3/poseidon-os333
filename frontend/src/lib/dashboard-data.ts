@@ -1,12 +1,12 @@
-import { getServerSession } from "next-auth"
 import { redirect } from "next/navigation"
 
-import { authOptions } from "@/lib/auth"
+import { getSafeServerSession } from "@/lib/auth"
 import { getHcpcsShortDescription } from "@/lib/hcpcs"
 import type { AccountRecord, KanbanCard, KanbanColumn } from "@/lib/data"
 
 const CORE_API_URL =
   process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
+const CORE_FETCH_TIMEOUT_MS = Number.parseInt(process.env.CORE_FETCH_TIMEOUT_MS || "8000", 10)
 
 /** When unset, Matia pipeline is not fetched (avoids hammering localhost in dev). */
 function matiaPipelineBaseUrl(): string | null {
@@ -229,6 +229,23 @@ async function fetchMatiaPipelineAsOrders(accessToken: string): Promise<OrderRec
   const data = await res.json().catch(() => null)
   const rows = extractMatiaPipelineRecords(data)
   return rows.map(matiaRowToOrderRecord).filter((o): o is OrderRecord => o !== null)
+}
+
+async function fetchCoreJson(
+  path: string,
+  headers: Record<string, string>,
+) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), CORE_FETCH_TIMEOUT_MS)
+  try {
+    return await fetch(`${CORE_API_URL}${path}`, {
+      headers,
+      cache: "no-store",
+      signal: controller.signal,
+    }).catch(() => null)
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 type OrderRecord = {
@@ -923,7 +940,7 @@ export function buildDashboardData(orders: OrderRecord[], denials: DenialRecord[
 }
 
 export async function getLiveDashboardData() {
-  const session = await getServerSession(authOptions)
+  const session = await getSafeServerSession()
 
   if (!session?.user?.accessToken) {
     redirect("/login")
@@ -935,26 +952,11 @@ export async function getLiveDashboardData() {
   }
 
   const [ordersRes, denialsRes, appealsRes, communicationsRes, integrationsRes] = await Promise.all([
-    fetch(`${CORE_API_URL}/orders?limit=200`, {
-      headers,
-      cache: "no-store",
-    }).catch(() => null),
-    fetch(`${CORE_API_URL}/denials?limit=200`, {
-      headers,
-      cache: "no-store",
-    }).catch(() => null),
-    fetch(`${CORE_API_URL}/appeals?limit=200`, {
-      headers,
-      cache: "no-store",
-    }).catch(() => null),
-    fetch(`${CORE_API_URL}/communications/feed?limit=30`, {
-      headers,
-      cache: "no-store",
-    }).catch(() => null),
-    fetch(`${CORE_API_URL}/integrations/status`, {
-      headers,
-      cache: "no-store",
-    }).catch(() => null),
+    fetchCoreJson("/orders?limit=200", headers),
+    fetchCoreJson("/denials?limit=200", headers),
+    fetchCoreJson("/appeals?limit=200", headers),
+    fetchCoreJson("/communications/feed?limit=30", headers),
+    fetchCoreJson("/integrations/status", headers),
   ])
 
   if (!ordersRes || !ordersRes.ok) {

@@ -1,14 +1,13 @@
-import { getServerSession } from "next-auth"
 import { redirect } from "next/navigation"
 
 import AdminSettingsConsole from "@/components/admin/AdminSettingsConsole"
-import { authOptions } from "@/lib/auth"
+import { getSafeServerSession } from "@/lib/auth"
 
 const CORE_API_URL =
   process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
 
 export default async function SettingsPage() {
-  const session = await getServerSession(authOptions)
+  const session = await getSafeServerSession()
   const canManageUsers =
     session?.user?.role === "admin" || (session?.user?.permissions || []).includes("manage_users")
   if (!session?.user?.accessToken) {
