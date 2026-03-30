@@ -18,15 +18,59 @@ interface LiveUser {
   permissions?: string[]
 }
 
-// Default: Compose/Render service hostname `core`. For host `next dev`, set CORE_API_URL in .env.local.
-const CORE_API_URL =
-  process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://core:8001"
+const CORE_API_URLS = Array.from(
+  new Set(
+    [
+      process.env.POSEIDON_API_URL,
+      process.env.CORE_API_URL,
+      "http://core:8001",
+      "http://core-8cql:10000",
+    ]
+      .map((value) => value?.trim())
+      .filter((value): value is string => Boolean(value))
+  )
+)
 const NEXTAUTH_SECRET =
   process.env.NEXTAUTH_SECRET || process.env.JWT_SECRET || process.env.SECRET_KEY
 const APP_ENV = (process.env.NODE_ENV || "development").toLowerCase()
 
 if (!NEXTAUTH_SECRET && APP_ENV === "production") {
   console.warn("NEXTAUTH_SECRET is unset in production; auth routes may be unavailable.")
+}
+
+async function authenticateAgainstCore(email: string, password: string) {
+  for (const baseUrl of CORE_API_URLS) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8000)
+
+    try {
+      const res = await fetch(`${baseUrl.replace(/\/$/, "")}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+        cache: "no-store",
+        signal: controller.signal,
+      })
+
+      if (res.ok) {
+        return (await res.json()) as {
+          access_token?: string
+          role?: AppRole
+          org_id?: string
+          user_id?: string
+          permissions?: string[]
+        }
+      }
+
+      if (res.status === 401) return null
+    } catch {
+      // Try the next known internal Core address.
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
+  return null
 }
 
 export const authOptions: NextAuthOptions = {
@@ -40,27 +84,12 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null
 
-        const res = await fetch(`${CORE_API_URL}/auth/login`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: credentials.email,
-            password: credentials.password,
-          }),
-          cache: "no-store",
-        }).catch(() => null)
+        const email = credentials.email.trim().toLowerCase()
+        const password = credentials.password
 
-        if (!res?.ok) return null
+        const data = await authenticateAgainstCore(email, password)
 
-        const data = (await res.json()) as {
-          access_token?: string
-          role?: AppRole
-          org_id?: string
-          user_id?: string
-          permissions?: string[]
-        }
-
-        if (!data.access_token || !data.role) return null
+        if (!data?.access_token || !data.role) return null
 
         const user: LiveUser = {
           id: data.user_id || credentials.email,
@@ -73,7 +102,7 @@ export const authOptions: NextAuthOptions = {
 
         return {
           ...user,
-          name: credentials.email,
+          name: email,
         }
       },
     }),

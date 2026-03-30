@@ -67,7 +67,27 @@ function LoginContent() {
     })
 
     if (result?.error) {
-      setError("Invalid credentials. Contact your administrator.")
+      let message = "Invalid credentials. Contact your administrator."
+      try {
+        const st = await fetch("/api/core-status", { cache: "no-store" })
+        const body = (await st.json()) as {
+          reachable?: boolean
+          databaseOk?: boolean
+        }
+        if (body.reachable === false) {
+          message =
+            "This app cannot reach the Core API (login server). If you use npm run dev on your computer, add CORE_API_URL=http://127.0.0.1:8001 to frontend/.env.local, run docker compose so Core is up, then restart the dev server."
+        } else if (body.databaseOk === false) {
+          message =
+            "Core is running but cannot reach the database. Check DATABASE_URL for the Core service and that Postgres is up (e.g. docker compose ps)."
+        } else {
+          message =
+            "Invalid email or password. Default admin is in scripts/seed_admin.sql (email + password in the file comments). Re-run that SQL against your DB to reset the hash if needed."
+        }
+      } catch {
+        /* keep default message */
+      }
+      setError(message)
       setLoading(false)
       return
     }
