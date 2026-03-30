@@ -6,6 +6,7 @@ const CORE_API_URLS = Array.from(
       process.env.POSEIDON_API_URL,
       process.env.CORE_API_URL,
       "http://core:8001",
+      "http://core-8cql:8001",
       "http://core-8cql:10000",
     ]
       .map((value) => value?.trim())
