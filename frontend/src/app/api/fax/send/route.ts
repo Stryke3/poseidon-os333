@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getToken } from "next-auth/jwt";
+import { getServerSession } from "next-auth";
 import { getRequiredEnv, getServiceBaseUrl } from "@/lib/runtime-config";
+import { authOptions } from "@/lib/auth";
 
 const SINCH_FAX_BASE = "https://fax.api.sinch.com/v3";
 
@@ -211,8 +212,8 @@ function normalizeFaxNumber(num: string): string {
 }
 
 export async function POST(req: NextRequest) {
-  const token = await getToken({ req });
-  if (!token?.accessToken) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.accessToken) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -293,8 +294,9 @@ export async function POST(req: NextRequest) {
   const sinchBody = new FormData();
   sinchBody.append("to", toNumber);
 
-  if (payload.senderFax) {
-    sinchBody.append("from", normalizeFaxNumber(payload.senderFax));
+  const configuredFromNumber = process.env.SINCH_FROM_NUMBER?.trim() || "";
+  if (configuredFromNumber) {
+    sinchBody.append("from", normalizeFaxNumber(configuredFromNumber));
   }
 
   // Header text appears at the top of each fax page
@@ -343,10 +345,32 @@ export async function POST(req: NextRequest) {
     const faxData = await faxRes.json().catch(() => ({}));
 
     if (!faxRes.ok) {
+      const sinchDetail =
+        Array.isArray(faxData?.details) && faxData.details.length
+          ? faxData.details
+              .flatMap((detail: { message?: string; fieldViolations?: { field?: string; description?: string }[] }) => {
+                const violations = Array.isArray(detail?.fieldViolations)
+                  ? detail.fieldViolations
+                      .map((violation) =>
+                        violation?.field && violation?.description
+                          ? `${violation.field}: ${violation.description}`
+                          : violation?.description || violation?.field || "",
+                      )
+                      .filter(Boolean)
+                  : [];
+                if (violations.length) return violations;
+                return detail?.message ? [detail.message] : [];
+              })
+              .join(" | ")
+          : typeof faxData?.message === "string"
+            ? faxData.message
+            : undefined;
+
       return NextResponse.json(
         {
           error: "Fax transmission failed",
           sinchStatus: faxRes.status,
+          detail: sinchDetail,
         },
         { status: 502 }
       );
@@ -366,7 +390,7 @@ export async function POST(req: NextRequest) {
       pages: 2 + attachmentBuffers.length,
       service: "sinch",
       sinch_fax_id: faxData.id || null,
-      sent_by: token.email || "unknown",
+      sent_by: session.user.email || "unknown",
       release_metadata: {
         authorization_on_file: Boolean(payload.authorizationOnFile),
         signed_by: payload.releaseSignedBy || payload.patientName,
@@ -382,7 +406,7 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token.accessToken}`,
+        Authorization: `Bearer ${session.user.accessToken}`,
       },
       body: JSON.stringify(logPayload),
     }).catch(() => {

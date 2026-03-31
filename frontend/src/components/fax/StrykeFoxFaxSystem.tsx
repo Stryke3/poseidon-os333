@@ -185,7 +185,7 @@ export default function StrykeFoxFaxSystem() {
 
   const [form, setForm] = useState({
     recipientFax: "",
-    senderFax: "(469) 362-8685",
+    senderFax: "",
     recipientName: "",
     recipientFacility: "",
     senderName: session?.user?.name || "Adams Stryker SFM",
@@ -687,13 +687,16 @@ export default function StrykeFoxFaxSystem() {
                   <label className={labelClass}>Sender Fax / Callback</label>
                   <input
                     type="tel"
-                    placeholder="(___) ___-____"
+                    placeholder="Optional callback number"
                     value={form.senderFax}
                     onChange={(e) =>
                       updateForm("senderFax", formatPhone(e.target.value))
                     }
                     className={monoInputClass}
                   />
+                  <p className="text-xs text-slate-400 mt-1">
+                    This is shown on the cover page only unless a verified Sinch sender number is configured.
+                  </p>
                 </div>
                 <div>
                   <label className={labelClass}>Recipient Name / Attn</label>

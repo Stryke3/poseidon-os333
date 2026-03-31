@@ -75,6 +75,18 @@ export interface OcrResult {
   message?: string;
 }
 
+type RawOcrResult = OcrResult & {
+  patient_name?: string;
+  first_name?: string;
+  last_name?: string;
+  date_of_birth?: string;
+  insurance_info?: {
+    payer_name?: string;
+    member_id?: string;
+  };
+  raw_text_preview?: string;
+};
+
 /**
  * Send a HIPAA-compliant fax via the Fax.Plus API.
  * Supports optional file attachments (authorization form, patient records, etc.)
@@ -154,5 +166,15 @@ export async function processOcr(file: File): Promise<OcrResult> {
     throw new Error(data.error || "OCR processing failed");
   }
 
-  return data as OcrResult;
+  const raw = data as RawOcrResult;
+
+  return {
+    ...raw,
+    patientName: raw.patientName || raw.patient_name || "",
+    firstName: raw.firstName || raw.first_name || "",
+    lastName: raw.lastName || raw.last_name || "",
+    dob: raw.dob || raw.date_of_birth || "",
+    insuranceId: raw.insuranceId || raw.insurance_info?.member_id || "",
+    rawText: raw.rawText || raw.raw_text_preview || "",
+  };
 }
