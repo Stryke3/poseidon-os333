@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server"
 import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
+export const dynamic = "force-dynamic"
 
 type ReadyBody = { checks?: Record<string, string> }
 
 export async function GET() {
+  const coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL")
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 6000)
   try {
-    const res = await fetch(`${CORE_API_URL}/ready`, {
+    const res = await fetch(`${coreApiUrl}/ready`, {
       method: "GET",
       cache: "no-store",
       signal: controller.signal,
@@ -27,7 +28,7 @@ export async function GET() {
       databaseOk: checks?.database === "ok",
       checks: checks ?? null,
       ready: res.ok,
-      target: CORE_API_URL,
+      target: coreApiUrl,
     })
   } catch {
     return NextResponse.json({
@@ -35,7 +36,7 @@ export async function GET() {
       databaseOk: false,
       checks: null,
       ready: false,
-      target: CORE_API_URL,
+      target: coreApiUrl,
     })
   } finally {
     clearTimeout(timeout)
