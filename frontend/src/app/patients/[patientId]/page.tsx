@@ -13,8 +13,6 @@ import { DocumentManager, type DocSlot } from "@/components/patient/DocumentMana
 import { formatHcpcsList, getHcpcsShortDescription } from "@/lib/hcpcs"
 import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
-
 type ChartDocument = {
   id?: string
   doc_type?: string
@@ -281,11 +279,12 @@ export default async function PatientFilePage({
 }: {
   params: Promise<{ patientId: string }>
 }) {
+  const coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL")
   const { patientId } = await params
   const session = await getSafeServerSession()
   if (!session?.user?.accessToken) redirect("/login")
 
-  const res = await fetch(`${CORE_API_URL}/patients/${patientId}/chart`, {
+  const res = await fetch(`${coreApiUrl}/patients/${patientId}/chart`, {
     headers: {
       Authorization: `Bearer ${session.user.accessToken}`,
       "Content-Type": "application/json",

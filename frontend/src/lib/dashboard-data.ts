@@ -5,7 +5,6 @@ import { getHcpcsShortDescription } from "@/lib/hcpcs"
 import type { AccountRecord, KanbanCard, KanbanColumn } from "@/lib/data"
 import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
 const CORE_FETCH_TIMEOUT_MS = Number.parseInt(process.env.CORE_FETCH_TIMEOUT_MS || "8000", 10)
 
 /** When unset, Matia pipeline is not fetched. */
@@ -231,10 +230,11 @@ async function fetchCoreJson(
   path: string,
   headers: Record<string, string>,
 ) {
+  const coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL")
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), CORE_FETCH_TIMEOUT_MS)
   try {
-    return await fetch(`${CORE_API_URL}${path}`, {
+    return await fetch(`${coreApiUrl}${path}`, {
       headers,
       cache: "no-store",
       signal: controller.signal,
@@ -421,7 +421,7 @@ function buildSystemState(orders: OrderRecord[], integrations?: Record<string, u
 
   let hostLabel = "Core"
   try {
-    hostLabel = new URL(CORE_API_URL).host || "Core"
+    hostLabel = new URL(getServiceBaseUrl("POSEIDON_API_URL")).host || "Core"
   } catch {
     /* ignore */
   }

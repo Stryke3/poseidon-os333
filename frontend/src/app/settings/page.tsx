@@ -4,9 +4,8 @@ import AdminSettingsConsole from "@/components/admin/AdminSettingsConsole"
 import { getSafeServerSession } from "@/lib/auth"
 import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
-
 export default async function SettingsPage() {
+  const coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL")
   const session = await getSafeServerSession()
   const canManageUsers =
     session?.user?.role === "admin" || (session?.user?.permissions || []).includes("manage_users")
@@ -17,7 +16,7 @@ export default async function SettingsPage() {
     redirect("/intake")
   }
 
-  const res = await fetch(`${CORE_API_URL}/api/v1/admin/users`, {
+  const res = await fetch(`${coreApiUrl}/api/v1/admin/users`, {
     headers: {
       Authorization: `Bearer ${session.user.accessToken}`,
       "Content-Type": "application/json",

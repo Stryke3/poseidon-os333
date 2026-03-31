@@ -19,16 +19,16 @@ interface LiveUser {
   permissions?: string[]
 }
 
-const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
 const NEXTAUTH_SECRET = getRequiredEnv("NEXTAUTH_SECRET")
 const APP_ENV = (process.env.NODE_ENV || "development").toLowerCase()
 
 async function authenticateAgainstCore(email: string, password: string) {
+  const coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL")
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 8000)
 
   try {
-    const res = await fetch(`${CORE_API_URL}/auth/login`, {
+    const res = await fetch(`${coreApiUrl}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
