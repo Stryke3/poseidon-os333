@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getToken } from "next-auth/jwt"
+import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const INTAKE_API_URL =
-  process.env.INTAKE_API_URL || "http://poseidon_intake:8003"
+const INTAKE_API_URL = getServiceBaseUrl("INTAKE_API_URL")
 
 export async function POST(req: NextRequest) {
   const token = await getToken({ req })

@@ -1,24 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getServiceBaseUrl } from "@/lib/runtime-config";
 
-const CORE_API_URL =
-  process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001";
+const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL");
+
+function secureCompare(left: string, right: string) {
+  if (left.length !== right.length) return false;
+  let mismatch = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    mismatch |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return mismatch === 0;
+}
 
 /**
  * Inbound fax webhook — called by Sinch when a fax is received.
  * No auth token required (webhook), but we validate the source.
  */
 export async function POST(req: NextRequest) {
-  const SINCH_WEBHOOK_SECRET = process.env.SINCH_WEBHOOK_SECRET;
+  const SINCH_WEBHOOK_SECRET = process.env.SINCH_WEBHOOK_SECRET?.trim() || "";
+  if (!SINCH_WEBHOOK_SECRET) {
+    return NextResponse.json({ error: "Webhook not configured" }, { status: 503 });
+  }
 
-  // Validate webhook signature if configured
-  if (SINCH_WEBHOOK_SECRET) {
-    const signature =
-      req.headers.get("x-sinch-signature") ||
-      req.headers.get("authorization") ||
-      "";
-    if (!signature.includes(SINCH_WEBHOOK_SECRET)) {
-      return NextResponse.json({ error: "Invalid signature" }, { status: 403 });
-    }
+  const signature =
+    req.headers.get("x-sinch-signature")?.trim() ||
+    req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ||
+    "";
+  if (!signature || !secureCompare(signature, SINCH_WEBHOOK_SECRET)) {
+    return NextResponse.json({ error: "Invalid signature" }, { status: 403 });
   }
 
   let body;
@@ -45,20 +54,25 @@ export async function POST(req: NextRequest) {
   };
 
   // Forward to core for storage & OCR pipeline trigger
-  const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY;
+  const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY?.trim() || "";
+  if (!INTERNAL_API_KEY) {
+    return NextResponse.json({ error: "Internal forwarding not configured" }, { status: 503 });
+  }
   try {
-    await fetch(`${CORE_API_URL}/fax/inbound`, {
+    const upstream = await fetch(`${CORE_API_URL}/fax/inbound`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(INTERNAL_API_KEY ? { "X-Internal-API-Key": INTERNAL_API_KEY } : {}),
+        "X-Internal-API-Key": INTERNAL_API_KEY,
       },
       body: JSON.stringify(inboundEntry),
     });
+    if (!upstream.ok) {
+      return NextResponse.json({ error: "Upstream intake failed" }, { status: 502 });
+    }
   } catch {
-    console.error("[fax/inbound] Failed to forward to core");
+    return NextResponse.json({ error: "Upstream intake unavailable" }, { status: 502 });
   }
 
-  // Always return 200 to acknowledge webhook
   return NextResponse.json({ received: true, id: inboundEntry.sinch_fax_id });
 }

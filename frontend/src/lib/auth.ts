@@ -1,5 +1,6 @@
 import { getServerSession, type NextAuthOptions } from "next-auth"
 import CredentialsProvider from "next-auth/providers/credentials"
+import { getRequiredEnv, getServiceBaseUrl } from "@/lib/runtime-config"
 
 type AppRole =
   | "admin"
@@ -18,60 +19,43 @@ interface LiveUser {
   permissions?: string[]
 }
 
-const CORE_API_URLS = Array.from(
-  new Set(
-    [
-      process.env.POSEIDON_API_URL,
-      process.env.CORE_API_URL,
-      "http://core:8001",
-      "http://core-8cql:8001",
-      "http://core-8cql:10000",
-    ]
-      .map((value) => value?.trim())
-      .filter((value): value is string => Boolean(value))
-  )
-)
-const NEXTAUTH_SECRET =
-  process.env.NEXTAUTH_SECRET || process.env.JWT_SECRET || process.env.SECRET_KEY
+const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
+const NEXTAUTH_SECRET = getRequiredEnv("NEXTAUTH_SECRET")
 const APP_ENV = (process.env.NODE_ENV || "development").toLowerCase()
 
-if (!NEXTAUTH_SECRET && APP_ENV === "production") {
-  console.warn("NEXTAUTH_SECRET is unset in production; auth routes may be unavailable.")
-}
-
 async function authenticateAgainstCore(email: string, password: string) {
-  for (const baseUrl of CORE_API_URLS) {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 8000)
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 8000)
 
-    try {
-      const res = await fetch(`${baseUrl.replace(/\/$/, "")}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-        cache: "no-store",
-        signal: controller.signal,
-      })
+  try {
+    const res = await fetch(`${CORE_API_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+      cache: "no-store",
+      signal: controller.signal,
+    })
 
-      if (res.ok) {
-        return (await res.json()) as {
-          access_token?: string
-          role?: AppRole
-          org_id?: string
-          user_id?: string
-          permissions?: string[]
-        }
+    if (res.ok) {
+      return (await res.json()) as {
+        access_token?: string
+        role?: AppRole
+        org_id?: string
+        user_id?: string
+        permissions?: string[]
       }
-
-      if (res.status === 401) return null
-    } catch {
-      // Try the next known internal Core address.
-    } finally {
-      clearTimeout(timeout)
     }
-  }
 
-  return null
+    if (res.status === 401) return null
+    return null
+  } catch {
+    if (APP_ENV === "production") {
+      throw new Error("Authentication dependency unavailable.")
+    }
+    return null
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 export const authOptions: NextAuthOptions = {
@@ -143,12 +127,9 @@ export const authOptions: NextAuthOptions = {
 }
 
 export async function getSafeServerSession() {
-  if (!NEXTAUTH_SECRET) return null
-
   try {
     return await getServerSession(authOptions)
-  } catch (error) {
-    console.warn("Unable to resolve server session.", error)
+  } catch {
     return null
   }
 }

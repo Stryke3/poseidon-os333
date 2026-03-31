@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getToken } from "next-auth/jwt"
+import { getRequiredEnv, getServiceBaseUrl } from "@/lib/runtime-config"
 
-const INTAKE_API_URL =
-  process.env.INTAKE_API_URL || "http://poseidon_intake:8003"
+const INTAKE_API_URL = getServiceBaseUrl("INTAKE_API_URL")
 
 interface ImportOrderPayload {
   patient_name: string
@@ -285,16 +285,8 @@ function aggregateImportedOrders(orders: ImportOrderPayload[]) {
 }
 
 async function getCoreAuth(req: NextRequest) {
-  const coreBase =
-    process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
-  const nextAuthSecret = process.env.NEXTAUTH_SECRET
-  const allowServiceAccount =
-    process.env.ALLOW_CORE_SERVICE_ACCOUNT_FALLBACK === "true" &&
-    process.env.NODE_ENV !== "production"
-
-  if (!nextAuthSecret && process.env.NODE_ENV === "production") {
-    throw new Error("NEXTAUTH_SECRET is required in production for live ingest.")
-  }
+  const coreBase = getServiceBaseUrl("POSEIDON_API_URL")
+  const nextAuthSecret = getRequiredEnv("NEXTAUTH_SECRET")
 
   const sessionToken = await getToken({
     req,
@@ -305,32 +297,7 @@ async function getCoreAuth(req: NextRequest) {
     return { coreBase, token: sessionToken.accessToken }
   }
 
-  if (!allowServiceAccount) {
-    throw new Error("Live ingest requires an authenticated operator session.")
-  }
-
-  const email = process.env.CORE_API_EMAIL || ""
-  const password = process.env.CORE_API_PASSWORD || ""
-
-  if (!email || !password) {
-    throw new Error(
-      "Live ingest is not configured. Sign in again or set CORE_API_EMAIL and CORE_API_PASSWORD.",
-    )
-  }
-
-  const authRes = await fetch(`${coreBase}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-    cache: "no-store",
-  })
-
-  if (!authRes.ok) {
-    throw new Error(`Core auth failed: ${authRes.status}`)
-  }
-
-  const authJson = await authRes.json()
-  return { coreBase, token: authJson.access_token as string }
+  throw new Error("Live ingest requires an authenticated operator session.")
 }
 
 async function parsePdfDocument(file: File, token: string) {
@@ -452,9 +419,7 @@ export async function POST(req: NextRequest) {
         orderCount: patient.orderCount,
       })),
     })
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Live ingest failed."
-    return NextResponse.json({ error: message }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: "Live ingest failed." }, { status: 500 })
   }
 }

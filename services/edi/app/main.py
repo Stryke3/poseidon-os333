@@ -37,6 +37,33 @@ SERVICE_PORT = int(os.getenv("SERVICE_PORT", "8006"))
 DRY_RUN = os.getenv("EDI_DRY_RUN", "false").lower() == "true"
 SUBMISSION_METHOD = os.getenv("SUBMISSION_METHOD", "availity_sftp")  # availity_sftp or stedi_api
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+ENVIRONMENT = os.getenv("ENVIRONMENT", os.getenv("NODE_ENV", "development")).lower()
+
+
+def _required_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
+
+
+def _validate_startup_secrets() -> None:
+    _required_env("DATABASE_URL")
+
+    if ENVIRONMENT == "production" and DRY_RUN:
+        raise RuntimeError("EDI_DRY_RUN cannot be enabled in production.")
+
+    if SUBMISSION_METHOD not in {"availity_sftp", "stedi_api"}:
+        raise RuntimeError("SUBMISSION_METHOD must be either 'availity_sftp' or 'stedi_api'.")
+
+    if SUBMISSION_METHOD == "availity_sftp":
+        _required_env("AVAILITY_SFTP_USER")
+        _required_env("AVAILITY_SFTP_PASS")
+    elif SUBMISSION_METHOD == "stedi_api":
+        _required_env("STEDI_API_KEY")
+
+
+_validate_startup_secrets()
 
 
 @asynccontextmanager

@@ -2,8 +2,9 @@ import { getServerSession } from "next-auth"
 import { NextRequest } from "next/server"
 
 import { authOptions } from "@/lib/auth"
+import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const CORE = process.env.CORE_API_URL || process.env.POSEIDON_API_URL || "http://poseidon_core:8001"
+const CORE = getServiceBaseUrl("POSEIDON_API_URL")
 
 export async function PATCH(req: NextRequest, context: { params: Promise<{ orderId: string }> }) {
   const { orderId } = await context.params

@@ -2,9 +2,26 @@ import { getServerSession } from "next-auth"
 import { NextResponse } from "next/server"
 
 import { authOptions } from "@/lib/auth"
+import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const CORE_API_URL =
-  process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
+const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
+
+function isAllowedStorageUrl(value: string) {
+  try {
+    const parsed = new URL(value)
+    const allowedHosts = new Set(
+      [
+        process.env.MINIO_ENDPOINT?.trim().split(":")[0],
+        "minio",
+      ].filter(Boolean),
+    )
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? allowedHosts.has(parsed.hostname)
+      : false
+  } catch {
+    return false
+  }
+}
 
 /**
  * Proxy driver's license image downloads so the browser never needs to reach
@@ -40,6 +57,9 @@ export async function GET(
   const { download_url } = (await metaRes.json()) as { download_url: string }
   if (!download_url) {
     return NextResponse.json({ error: "No download URL available" }, { status: 404 })
+  }
+  if (!isAllowedStorageUrl(download_url)) {
+    return NextResponse.json({ error: "Invalid storage URL" }, { status: 502 })
   }
 
   const fileRes = await fetch(download_url, { cache: "no-store" })

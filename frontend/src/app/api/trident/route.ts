@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
+import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const CORE_API_URL =
-  process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
-const TRIDENT_API_URL = process.env.TRIDENT_API_URL || "http://poseidon_trident:8002"
+const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
+const TRIDENT_API_URL = getServiceBaseUrl("TRIDENT_API_URL")
 
 const TRIDENT_RL_WINDOW_MS = 60_000
 const TRIDENT_RL_MAX = 30

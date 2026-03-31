@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
+import { getRequiredEnv, getServiceBaseUrl } from "@/lib/runtime-config";
 
 const SINCH_FAX_BASE = "https://fax.api.sinch.com/v3";
 
@@ -216,16 +217,21 @@ export async function POST(req: NextRequest) {
   }
 
   // Sinch credentials
-  const SINCH_PROJECT_ID = process.env.SINCH_PROJECT_ID;
-  const SINCH_KEY_ID = process.env.SINCH_KEY_ID;
-  const SINCH_KEY_SECRET = process.env.SINCH_KEY_SECRET;
-
-  if (!SINCH_PROJECT_ID || !SINCH_KEY_ID || !SINCH_KEY_SECRET) {
+  let SINCH_PROJECT_ID = "";
+  let SINCH_KEY_ID = "";
+  let SINCH_KEY_SECRET = "";
+  let callbackBase = "";
+  let coreApiUrl = "";
+  try {
+    SINCH_PROJECT_ID = getRequiredEnv("SINCH_PROJECT_ID");
+    SINCH_KEY_ID = getRequiredEnv("SINCH_KEY_ID");
+    SINCH_KEY_SECRET = getRequiredEnv("SINCH_KEY_SECRET");
+    callbackBase = getServiceBaseUrl("NEXTAUTH_URL");
+    coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL");
+  } catch {
     return NextResponse.json(
-      {
-        error: "Fax service not configured. Set SINCH_PROJECT_ID, SINCH_KEY_ID, and SINCH_KEY_SECRET.",
-      },
-      { status: 503 }
+      { error: "Fax service is not configured for production-safe execution." },
+      { status: 503 },
     );
   }
 
@@ -298,7 +304,6 @@ export async function POST(req: NextRequest) {
   );
 
   // Callback URL for fax completion webhook
-  const callbackBase = process.env.NEXTAUTH_URL || "http://localhost:3000";
   sinchBody.append("callbackUrl", `${callbackBase}/api/fax/inbound`);
   sinchBody.append("callbackUrlContentType", "application/json");
 
@@ -338,14 +343,9 @@ export async function POST(req: NextRequest) {
     const faxData = await faxRes.json().catch(() => ({}));
 
     if (!faxRes.ok) {
-      console.error("[fax/send] Sinch error:", faxRes.status, faxData);
       return NextResponse.json(
         {
           error: "Fax transmission failed",
-          detail:
-            faxData.message ||
-            faxData.error?.message ||
-            `HTTP ${faxRes.status}`,
           sinchStatus: faxRes.status,
         },
         { status: 502 }
@@ -378,9 +378,7 @@ export async function POST(req: NextRequest) {
     };
 
     // Fire-and-forget log to core
-    const CORE_API_URL =
-      process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001";
-    fetch(`${CORE_API_URL}/fax/log`, {
+    fetch(`${coreApiUrl}/fax/log`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -400,8 +398,7 @@ export async function POST(req: NextRequest) {
       timestamp: new Date().toISOString(),
       ...logPayload,
     });
-  } catch (err) {
-    console.error("[fax/send] Network error:", err);
+  } catch {
     return NextResponse.json(
       { error: "Unable to reach Sinch fax service" },
       { status: 502 }

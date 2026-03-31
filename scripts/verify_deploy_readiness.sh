@@ -90,7 +90,6 @@ validate_strict_env() {
 log "Checking required tools"
 require_cmd python3
 require_cmd npm
-require_cmd docker
 require_cmd bash
 
 check_env_file
@@ -102,11 +101,11 @@ log "Auditing container image pinning"
   bash scripts/check_container_pins.sh >/tmp/poseidon-container-pins.out
 )
 
-log "Validating docker compose configuration"
-(
-  cd "$ROOT_DIR"
-  docker compose config >/tmp/poseidon-compose-config.out
-)
+if [[ -f "${ROOT_DIR}/render.yaml" ]]; then
+  log "Render blueprint detected"
+else
+  fail "Missing render.yaml"
+fi
 
 log "Compiling Python services for syntax validation"
 (

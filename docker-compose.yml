@@ -72,6 +72,9 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    ports:
+      # Local `next dev`: set CORE_API_URL=http://127.0.0.1:8001 in frontend/.env.local
+      - "127.0.0.1:8001:8001"
     networks:
       - poseidon_net
     healthcheck:
@@ -231,6 +234,8 @@ services:
     environment:
       SERVICE_NAME: dashboard
       PORT: 3000
+      # NextAuth server-side login (must reach Core on the compose network)
+      CORE_API_URL: ${CORE_API_URL:-http://core:8001}
       # Server-side proxy for admin Availity routes (/api/integrations/availity/*)
       AVAILITY_SERVICE_URL: ${AVAILITY_SERVICE_URL:-http://availity:8005}
       # EDI service proxy (837P/835)

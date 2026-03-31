@@ -36,39 +36,27 @@ Revenue cycle + relationship management with full patient record (demographics, 
 
 AI (Claude) code shortcuts for this project: see [.cursor/CURSOR_SHORTCUTS.md](.cursor/CURSOR_SHORTCUTS.md). Quick ref: **Chat** `Cmd+L` / `Ctrl+L`, **Inline edit** `Cmd+K` / `Ctrl+K`, **Composer** `Cmd+I` / `Ctrl+I`.
 
+## Deployment Model
+
+This repository is now GitHub + Render first.
+
+- Application code lives in GitHub and deploys through [render.yaml](/Volumes/WORKSPACE/poseidon%202/render.yaml).
+- Backend services receive `DATABASE_URL`, `REDIS_URL`, and other runtime secrets from Render-managed service settings.
+- Do not treat local Docker Compose as the canonical production environment or as the source of truth for database connectivity.
+
 ## Quick Start
 
 ```bash
 # 1. Clone and configure
 cp .env.template .env
-# Edit .env and replace every CHANGE_ME / placeholder value before production boot
+# Edit local-only values if you are running pieces of the stack in development.
+# Production secrets should live in Render, not in checked-in files.
 
-# 2. First-time launch
-docker compose up -d --build
-
-# 2.5. Readiness validation
+# 2. Validate the repo before shipping
 bash scripts/verify_deploy_readiness.sh
-
-# 3. Verify health (through nginx on :80 — default compose does not publish 8001–8004 on the host)
-curl -s http://localhost/api/health
-curl -s http://localhost/api/ready
-curl -s http://localhost/trident-api/health
-curl -s http://localhost/intake-api/health
-curl -s http://localhost/ml-api/health
-# Dashboard (Next) /api/health is not exposed on the host by default; compose healthcheck hits it inside the container:
-# docker compose exec dashboard wget -qO- http://localhost:3000/api/health
-# Optional: docker compose exec core curl -s http://localhost:8001/ready
-
-# 4. View logs
-docker compose logs -f core
-docker compose logs -f trident
-
-# 5. (Existing DBs only) Add POD column for CRM proof-of-delivery tracking
-psql -U poseidon -d poseidon -f scripts/migrations/001_add_pod_document_id.sql
-
-# 6. Create a database backup before major changes or cutover
-bash scripts/backup_postgres.sh
 ```
+
+For production verification, use the Render dashboard, Render logs, and the live service URLs defined in [render.yaml](/Volumes/WORKSPACE/poseidon%202/render.yaml). The backend `DATABASE_URL` values are intentionally managed per service in Render rather than by local Compose.
 
 ## Mobile build & Firestarter deploy
 
@@ -78,7 +66,7 @@ The dashboard is **mobile-friendly** (responsive layout, touch-friendly kanban, 
 
 POSEIDON is **a CRM meets EMR**: pipeline and relationship tracking (orders, POD, rep worklist) with full **patient record** in one place—demographics, diagnoses, orders, DMEs, proof of delivery (POD), SWO, CMS-1500, and timeline. Click a card to open the patient account (EMR-style record) with order tracking, documents, and **View full patient record (PDF)**.
 
-- **Use the app via the main nginx URL** so `/api` is proxied to Core (e.g. `http://dashboard.strykefox.com` or `http://localhost` with nginx on port 80). If you open the dashboard container directly on **port 3000** only (no nginx), `/api` requests will 404 and data won’t load. From the host, Core/Trident/Intake/ML are not published on 8001–8004 by default—use **`http://localhost/api/...`** (via nginx) or add compose `ports` for debugging.
+- **Use the live dashboard origin** so `/api` is routed through the deployed frontend and backend services. In production, that means the Render-hosted dashboard and backend URLs, not an old local nginx or Compose path.
 - **Logo:** Put your logo at `frontend/logo.svg`. The app shows it when present; otherwise it shows the “P” mark. Rebuild the dashboard image (or refresh after replacing the file in a volume) and do a hard refresh (Ctrl+Shift+R / Cmd+Shift+R) if the old logo is cached.
 - **Live data:** The dashboard polls `/api/orders` and `/api/denials` on load and every 60s. Use the header “Refresh” for an immediate sync.
 - **Kanban → SQL:** Dragging a card to a new column calls `PATCH /orders/{id}/status` and updates the database. Admin, Billing, and Rep roles can update order status.
@@ -112,6 +100,7 @@ Production notes:
 - `NEXTAUTH_SECRET` is required for the dashboard in production.
 - `CORS_ALLOW_ORIGINS` and `TRUSTED_HOSTS` should be set to your real domains before internet exposure.
 - The frontend is pinned to `Next.js 16` and production builds run with `--webpack` for stable repeatable builds in this environment.
+- `DATABASE_URL` is a Render-managed per-service secret. Update it in Render for `core`, `trident`, `intake`, `ml`, `edi`, and `availity` rather than relying on stale local Postgres defaults.
 - Live ingest now requires a real signed-in operator in production; service-account fallback is disabled unless explicitly enabled outside production.
 - Human dashboard logins are environment-managed and may be rotated independently of historical seed prompts. Do not rely on old docs that mention fixed credentials such as `admin@strykefox.com` / `StrykeFox2026!`.
 - `CORE_API_EMAIL` / `CORE_API_PASSWORD` are automation credentials for service-to-service and scripted ingest paths. They are not the canonical source of truth for operator-facing login instructions.

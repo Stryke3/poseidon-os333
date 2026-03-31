@@ -17,9 +17,9 @@ Last updated: 2026-03-22
 
 ## Stack verification (this workspace)
 
-- **`docker compose ps`**: postgres, redis, minio, core, trident, intake, ml, dashboard, nginx reported **up** with healthy checks where defined (snapshot 2026-03-21).
-- **Through nginx (`http://localhost`)**: **`/api/health`** and **`/api/ready`** return OK for Core; use **`/trident-api/...`**, **`/intake-api/...`**, **`/ml-api/...`** for sibling services (see `nginx/nginx.conf`). Compose **does not publish 8001–8004 on the host** by default—use these paths or `docker compose exec <service> curl ...`.
-- **`scripts/verify_deploy_readiness.sh`** no longer requires **`rg`**; it uses **`grep`** if ripgrep is missing.
+- The current deployment model is **GitHub + Render**, with service configuration defined in [render.yaml](/Volumes/WORKSPACE/poseidon%202/render.yaml).
+- Backend services expect `DATABASE_URL` and other runtime secrets from Render-managed env vars, not from a local `postgres` service in Compose.
+- `scripts/verify_deploy_readiness.sh` now serves as a repo/build validation step rather than proof that a local Docker stack is the canonical runtime.
 
 ## Spreadsheet assets present in repo
 

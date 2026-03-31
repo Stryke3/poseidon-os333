@@ -28,7 +28,7 @@ bash scripts/ingest_lvco.sh --file /path/to/file.csv
 ```
 
 - **Auth:** set `POSEIDON_INGEST_EMAIL` / `POSEIDON_INGEST_PASSWORD`, or use `POSEIDON_ACCESS_TOKEN`. `CORE_API_EMAIL` / `CORE_API_PASSWORD` remain valid for automation-oriented flows, but they should not be treated as the default human dashboard login.
-- **URL:** `CORE_BASE_URL` defaults to `http://localhost/api` (nginx on the host). For `docker compose exec` from a container that talks to Core directly, use e.g. `CORE_BASE_URL=http://poseidon_core:8001` (no `/api` prefix).
+- **URL:** `CORE_BASE_URL` should point at the live Core origin for the active environment. In production, use the deployed Render-backed API route rather than an old local Compose hostname.
 - **XLSX:** install `openpyxl` once: `pip install openpyxl` (or `python3 -m pip install openpyxl`).
 
 Column mapping matches the dashboard live ingest route (`frontend/src/app/api/ingest/live/route.ts`): patient name, payer, HCPCS/CPT, ICD, DOB, etc.

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import nodemailer from "nodemailer"
+import { getRequiredEnv } from "@/lib/runtime-config"
 
-const DEFAULT_RECIPIENT = "patients@strykefox.com"
 const WINDOW_MS = 10 * 60 * 1000
 const MAX_REQUESTS_PER_WINDOW = 5
 const inquiryRequestLog = new Map<string, number[]>()
@@ -150,7 +150,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const recipient = process.env.PUBLIC_INQUIRY_TO || DEFAULT_RECIPIENT
+    const recipient = getRequiredEnv("PUBLIC_INQUIRY_TO")
     const gmailUser = process.env.GMAIL_INTAKE_USER || process.env.EMAIL_INTAKE_USERNAME || ""
     const clientId = process.env.GMAIL_OAUTH_CLIENT_ID || ""
     const clientSecret = process.env.GMAIL_OAUTH_CLIENT_SECRET || ""
@@ -207,8 +207,7 @@ export async function POST(req: NextRequest) {
     })
 
     return NextResponse.json({ status: "ok" })
-  } catch (error) {
-    console.error("public inquiry failed", error)
+  } catch {
     return NextResponse.json(
       { error: "Unable to send inquiry." },
       { status: 500 },

@@ -170,6 +170,9 @@ class Settings:
         # Hard-required: service cannot function at all without these.
         hard_required: dict[str, str] = {
             "JWT_SECRET": self.secret_key,
+            "POSEIDON_API_KEY": self.poseidon_api_key,
+            "INTERNAL_API_KEY": self.internal_api_key,
+            "MINIO_SECRET_KEY": self.minio_secret_key,
         }
         # Managed providers (e.g. Render) supply full URLs; discrete passwords only needed otherwise.
         if not self.database_url or _is_placeholder(self.database_url):
@@ -182,16 +185,34 @@ class Settings:
             joined = ", ".join(sorted(hard_invalid))
             raise RuntimeError(f"Missing required production secrets: {joined}")
 
-        # Soft-required: log warnings, fail at request time rather than boot time.
-        soft_required: dict[str, str] = {
-            "POSEIDON_API_KEY": self.poseidon_api_key,
-            "INTERNAL_API_KEY": self.internal_api_key,
-            "MINIO_SECRET_KEY": self.minio_secret_key,
-        }
-        soft_invalid = [name for name, value in soft_required.items() if _is_placeholder(value)]
-        if soft_invalid:
-            joined = ", ".join(sorted(soft_invalid))
-            logger.warning("Missing production secrets (service will boot but some endpoints may fail): %s", joined)
+        if self.is_production:
+            if any(origin in {"http://localhost", "http://127.0.0.1"} for origin in self.cors_origins):
+                raise RuntimeError(
+                    "CORS_ALLOW_ORIGINS contains localhost in production. "
+                    "Only deployed origins are permitted."
+                )
+            if self.smtp_host and (
+                _is_placeholder(self.smtp_user)
+                or _is_placeholder(self.smtp_password)
+                or _is_placeholder(self.email_from_address)
+            ):
+                raise RuntimeError(
+                    "SMTP_HOST is configured but SMTP credentials are incomplete: "
+                    "SMTP_USER, SMTP_PASSWORD, EMAIL_FROM_ADDRESS required."
+                )
+            if any(
+                not _is_placeholder(value)
+                for value in (
+                    self.google_client_id,
+                    self.google_client_secret,
+                    self.google_refresh_token,
+                )
+            ):
+                if _is_placeholder(self.google_client_id) or _is_placeholder(self.google_client_secret) or _is_placeholder(self.google_refresh_token):
+                    raise RuntimeError(
+                        "Google integration is partially configured. "
+                        "GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN are all required."
+                    )
 
 
 settings = Settings()
@@ -312,8 +333,8 @@ def create_app(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Internal-API-Key", "X-Requested-With"],
     )
 
     # Request timing middleware

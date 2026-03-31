@@ -3,20 +3,16 @@ import { redirect } from "next/navigation"
 import { getSafeServerSession } from "@/lib/auth"
 import { getHcpcsShortDescription } from "@/lib/hcpcs"
 import type { AccountRecord, KanbanCard, KanbanColumn } from "@/lib/data"
+import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const CORE_API_URL =
-  process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
+const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
 const CORE_FETCH_TIMEOUT_MS = Number.parseInt(process.env.CORE_FETCH_TIMEOUT_MS || "8000", 10)
 
-/** When unset, Matia pipeline is not fetched (avoids hammering localhost in dev). */
+/** When unset, Matia pipeline is not fetched. */
 function matiaPipelineBaseUrl(): string | null {
   const explicit = process.env.MATIA_API_URL?.trim()
   if (explicit) return explicit.replace(/\/$/, "")
-  if (process.env.MATIA_INTEGRATION_ENABLED === "true") {
-    return process.env.NODE_ENV === "production"
-      ? "https://matia.strykefox.com"
-      : "http://127.0.0.1:8010"
-  }
+  if (process.env.MATIA_INTEGRATION_ENABLED === "true") return "https://matia.strykefox.com"
   return null
 }
 

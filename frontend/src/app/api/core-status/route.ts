@@ -1,60 +1,43 @@
 import { NextResponse } from "next/server"
+import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const CORE_API_URLS = Array.from(
-  new Set(
-    [
-      process.env.POSEIDON_API_URL,
-      process.env.CORE_API_URL,
-      "http://core:8001",
-      "http://core-8cql:8001",
-      "http://core-8cql:10000",
-    ]
-      .map((value) => value?.trim())
-      .filter((value): value is string => Boolean(value))
-  )
-)
+const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
 
 type ReadyBody = { checks?: Record<string, string> }
 
 export async function GET() {
-  for (const baseUrl of CORE_API_URLS) {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 6000)
-
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 6000)
+  try {
+    const res = await fetch(`${CORE_API_URL}/ready`, {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+    })
+    let checks: Record<string, string> | undefined
     try {
-      const res = await fetch(`${baseUrl.replace(/\/$/, "")}/ready`, {
-        method: "GET",
-        cache: "no-store",
-        signal: controller.signal,
-      })
-      let checks: Record<string, string> | undefined
-      try {
-        const body = (await res.json()) as ReadyBody
-        checks = body.checks
-      } catch {
-        checks = undefined
-      }
-
-      return NextResponse.json({
-        reachable: true,
-        databaseOk: checks?.database === "ok",
-        checks: checks ?? null,
-        ready: res.ok,
-        target: baseUrl,
-      })
+      const body = (await res.json()) as ReadyBody
+      checks = body.checks
     } catch {
-      clearTimeout(timeout)
-      continue
-    } finally {
-      clearTimeout(timeout)
+      checks = undefined
     }
-  }
 
-  return NextResponse.json({
-    reachable: false,
-    databaseOk: false,
-    checks: null,
-    ready: false,
-    target: null,
-  })
+    return NextResponse.json({
+      reachable: true,
+      databaseOk: checks?.database === "ok",
+      checks: checks ?? null,
+      ready: res.ok,
+      target: CORE_API_URL,
+    })
+  } catch {
+    return NextResponse.json({
+      reachable: false,
+      databaseOk: false,
+      checks: null,
+      ready: false,
+      target: CORE_API_URL,
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
 }

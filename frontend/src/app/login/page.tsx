@@ -76,10 +76,10 @@ function LoginContent() {
         }
         if (body.reachable === false) {
           message =
-            "This app cannot reach the Core API (login server). If you use npm run dev on your computer, add CORE_API_URL=http://127.0.0.1:8001 to frontend/.env.local, run docker compose so Core is up, then restart the dev server."
+            "This app cannot reach the Core API (login server). Check the Core service health and service URL in Render, then confirm the frontend is pointing at the correct Core base URL."
         } else if (body.databaseOk === false) {
           message =
-            "Core is running but cannot reach the database. Check DATABASE_URL for the Core service and that Postgres is up (e.g. docker compose ps)."
+            "Core is running but cannot reach the database. Check the Core service DATABASE_URL in Render and confirm the managed Postgres instance is healthy."
         } else {
           message =
             "Invalid email or password. Default admin is in scripts/seed_admin.sql (email + password in the file comments). Re-run that SQL against your DB to reset the hash if needed."

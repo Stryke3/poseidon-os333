@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import os
+import hashlib
 import re
 import sys
 import uuid
@@ -99,6 +100,19 @@ async def _record_workflow_event(conn, org_id: str, event_type: str, payload: di
         event_type,
         json.dumps(payload),
     )
+
+
+def _json_hash(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _request_idempotency_key(request: Request) -> str | None:
+    value = request.headers.get("Idempotency-Key")
+    if not value:
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +336,13 @@ class EmailPollRequest(BaseModel):
     search: str = "UNSEEN"
 
 
+class LegacyPatientIntakePayload(BaseModel):
+    source: str
+    payload: dict[str, Any]
+    submitted_at: str | None = None
+    idempotency_key: str | None = None
+
+
 def _decode_mime_header(value: str | None) -> str:
     if not value:
         return ""
@@ -371,7 +392,7 @@ def _infer_hcpcs_from_diagnosis(diagnosis_codes: list[str]) -> tuple[list[str], 
         for code in normalized:
             if any(code.startswith(prefix) for prefix in prefixes):
                 return list(hcpcs_codes), source
-    return ["L1833"], "fallback-default-knee-bracing"
+    return [], "no-inference"
 
 
 def _split_name(full_name: str) -> tuple[str, str]:
@@ -450,7 +471,7 @@ def _parse_pdf_attachment(filename: str, content: bytes, message_meta: dict[str,
         "insurance_id": insurance_id,
         "payer": payer,
         "hcpcs_codes": hcpcs_codes,
-        "diagnosis_codes": diagnosis_codes or ["Z0000"],
+        "diagnosis_codes": diagnosis_codes,
         "priority": priority,
         "notes": f"Email intake PDF: {filename}",
         "source_channel": "email_pdf",
@@ -483,7 +504,7 @@ def _parse_csv_attachment(filename: str, content: bytes, message_meta: dict[str,
         first_name, last_name = _split_name(patient_name)
         hcpcs_raw = row.get("hcpcs") or row.get("hcpcs_code") or row.get("hcpcs_codes") or ""
         dx_raw = row.get("icd") or row.get("diagnosis_code") or row.get("diagnosis_codes") or ""
-        diagnosis_codes = _split_codes(dx_raw) or ["Z0000"]
+        diagnosis_codes = _split_codes(dx_raw)
         hcpcs_codes = _split_codes(hcpcs_raw)
         inferred_note = None
         if not hcpcs_codes:
@@ -859,42 +880,55 @@ async def poll_email_intake(request: Request, payload: EmailPollRequest):
     total_orders = 0
     total_attachments = 0
 
+    successfully_processed_ids: list[str] = []
+    failed_messages = 0
+
     for message in messages:
         message_orders: list[dict[str, Any]] = []
         processed_attachments: list[dict[str, Any]] = []
+        message_status = "processed"
+        message_failure: str | None = None
 
-        for filename, content in message["attachments"]:
-            total_attachments += 1
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            save_path = PROCESSED_DIR / f"{timestamp}_{filename}"
-            save_path.write_bytes(content)
+        try:
+            for filename, content in message["attachments"]:
+                total_attachments += 1
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                save_path = PROCESSED_DIR / f"{timestamp}_{filename}"
+                save_path.write_bytes(content)
 
-            parsed_orders = _parse_attachment(filename, content, message)
-            if parsed_orders:
-                message_orders.extend(parsed_orders)
-                processed_attachments.append({
-                    "filename": filename,
-                    "saved_to": str(save_path),
-                    "orders_detected": len(parsed_orders),
-                })
+                parsed_orders = _parse_attachment(filename, content, message)
+                if parsed_orders:
+                    message_orders.extend(parsed_orders)
+                    processed_attachments.append({
+                        "filename": filename,
+                        "saved_to": str(save_path),
+                        "orders_detected": len(parsed_orders),
+                    })
 
-        import_result = None
-        workflow_results: list[dict[str, Any]] = []
-        if message_orders:
-            import_result = await _submit_orders_to_core(message_orders)
-            total_orders += len(message_orders)
-            for item in import_result.get("results", []):
-                if item.get("status") == "created" and item.get("order_id"):
-                    try:
-                        workflow_results.append(
-                            await _advance_core_order_workflow(str(item["order_id"]))
-                        )
-                    except HTTPException as exc:
-                        workflow_results.append({
-                            "order_id": item["order_id"],
-                            "status": "workflow_error",
-                            "detail": exc.detail,
-                        })
+            import_result = None
+            workflow_results: list[dict[str, Any]] = []
+            if message_orders:
+                import_result = await _submit_orders_to_core(message_orders)
+                total_orders += len(message_orders)
+                for item in import_result.get("results", []):
+                    if item.get("status") == "created" and item.get("order_id"):
+                        try:
+                            workflow_results.append(
+                                await _advance_core_order_workflow(str(item["order_id"]))
+                            )
+                        except HTTPException as exc:
+                            workflow_results.append({
+                                "order_id": item["order_id"],
+                                "status": "workflow_error",
+                                "detail": exc.detail,
+                            })
+            successfully_processed_ids.append(message["imap_id"])
+        except Exception as exc:
+            failed_messages += 1
+            message_status = "failed"
+            message_failure = str(exc)[:300]
+            import_result = None
+            workflow_results = []
 
         processed_messages.append({
             "imap_id": message["imap_id"],
@@ -903,6 +937,8 @@ async def poll_email_intake(request: Request, payload: EmailPollRequest):
             "from": message["from"],
             "attachments_processed": processed_attachments,
             "orders_submitted": len(message_orders),
+            "status": message_status,
+            "failure_reason": message_failure,
             "import_result": import_result,
             "workflow_results": workflow_results,
         })
@@ -912,13 +948,14 @@ async def poll_email_intake(request: Request, payload: EmailPollRequest):
         "messages": len(processed_messages),
         "attachments": total_attachments,
         "orders_submitted": total_orders,
+        "failed_messages": failed_messages,
         "mailbox": payload.mailbox,
     }))
 
     if payload.mark_seen:
         await _mark_email_messages_seen(
             payload.mailbox,
-            [message["imap_id"] for message in processed_messages],
+            successfully_processed_ids,
         )
 
     return {
@@ -927,6 +964,7 @@ async def poll_email_intake(request: Request, payload: EmailPollRequest):
         "messages_checked": len(messages),
         "attachments_processed": total_attachments,
         "orders_submitted": total_orders,
+        "failed_messages": failed_messages,
         "messages": processed_messages,
     }
 
@@ -959,22 +997,57 @@ async def data_inventory():
 
 
 @app.post("/patient-intake")
-async def patient_intake(request: Request):
+async def patient_intake(request: Request, payload: LegacyPatientIntakePayload):
     """Mommy Care Kit and other intake form submissions."""
-    payload = await request.json()
+    if not payload.source.strip():
+        raise HTTPException(status_code=400, detail="source is required")
+    if not payload.payload:
+        raise HTTPException(status_code=400, detail="payload is required")
+
+    normalized = payload.model_dump()
+    idempotency_key = payload.idempotency_key or _request_idempotency_key(request) or _json_hash(normalized)
     intake_id = str(uuid.uuid4())
+    received_at = datetime.now(timezone.utc).isoformat()
+
+    redis = get_redis(request)
+    dedup_key = f"intake:patient_form:{idempotency_key}"
+    accepted = await redis.set(dedup_key, intake_id, ex=24 * 60 * 60, nx=True)
+    if not accepted:
+        prior = await redis.get(dedup_key)
+        return {
+            "intake_id": prior or intake_id,
+            "status": "duplicate_ignored",
+            "idempotent_replay": True,
+            "received_at": received_at,
+        }
 
     # Save raw intake
     save_path = DATA_DIR / "training" / f"intake_{intake_id}.json"
-    save_path.write_text(json.dumps(payload, indent=2))
+    save_path.write_text(
+        json.dumps(
+            {
+                "intake_id": intake_id,
+                "source": payload.source,
+                "submitted_at": payload.submitted_at,
+                "received_at": received_at,
+                "idempotency_key": idempotency_key,
+                "processing_status": "received",
+                "failure_reason": None,
+                "payload": payload.payload,
+            },
+            indent=2,
+        )
+    )
 
-    redis = get_redis(request)
     await redis.rpush("intake:patient_form", json.dumps({
         "intake_id": intake_id,
-        "payload_keys": list(payload.keys()),
+        "source": payload.source,
+        "received_at": received_at,
+        "idempotency_key": idempotency_key,
+        "payload_keys": list(payload.payload.keys()),
     }))
 
-    return {"intake_id": intake_id, "status": "received"}
+    return {"intake_id": intake_id, "status": "received", "idempotent_replay": False, "received_at": received_at}
 
 
 # ---------------------------------------------------------------------------
@@ -1052,16 +1125,8 @@ class PriorAuthRequestPayload(BaseModel):
     requested_units: int = 1
 
 
-def _integration_mocks_allowed() -> bool:
-    if settings.is_production:
-        return False
-    return os.getenv("ALLOW_INTEGRATION_MOCKS", "true").lower() == "true"
-
-
-async def _availity_token() -> tuple[str | None, bool]:
+async def _availity_token() -> str:
     if not settings.availity_client_id or not settings.availity_client_secret:
-        if _integration_mocks_allowed():
-            return None, True
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Availity credentials are not configured.",
@@ -1078,52 +1143,40 @@ async def _availity_token() -> tuple[str | None, bool]:
         )
     if response.status_code >= 400:
         logger.warning("Availity token request failed: status=%s", response.status_code)
-        if _integration_mocks_allowed():
-            return None, True
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Availity token request failed.",
         )
-    return response.json().get("access_token"), False
+    token = response.json().get("access_token")
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Availity token response missing access token.",
+        )
+    return token
 
 
 async def _run_eligibility_check(conn, payload: EligibilityRequestPayload) -> dict[str, Any]:
-    token, mock = await _availity_token()
+    token = await _availity_token()
     request_payload = {
         "payer": {"id": payload.payer_id},
         "patient": {"id": payload.patient_id},
         "serviceDates": [datetime.now(timezone.utc).date().isoformat()],
     }
-    if mock:
-        response_payload = {
-            "mock": True,
-            "eligible": True,
-            "coverage": "active",
-            "payer_id": payload.payer_id,
-        }
-        status_value = "eligible"
-        is_eligible = True
-    else:
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            response = await client.post(
-                f"{settings.availity_base_url.rstrip('/')}/availity/v1/eligibility-and-benefits-inquiries",
-                json=request_payload,
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            )
-        if response.status_code >= 400:
-            if not _integration_mocks_allowed():
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail="Eligibility check failed with Availity.",
-                )
-            response_payload = {"mock": True, "eligible": False, "detail": f"Availity status {response.status_code}"}
-            status_value = "error"
-            is_eligible = False
-            mock = True
-        else:
-            response_payload = response.json()
-            is_eligible = bool(response_payload.get("eligible", True))
-            status_value = "eligible" if is_eligible else "ineligible"
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        response = await client.post(
+            f"{settings.availity_base_url.rstrip('/')}/availity/v1/eligibility-and-benefits-inquiries",
+            json=request_payload,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Eligibility check failed with Availity.",
+        )
+    response_payload = response.json()
+    is_eligible = bool(response_payload.get("eligible", True))
+    status_value = "eligible" if is_eligible else "ineligible"
 
     check_id = str(uuid.uuid4())
     await exec_write(
@@ -1174,37 +1227,27 @@ async def _run_eligibility_check(conn, payload: EligibilityRequestPayload) -> di
         "status": status_value,
         "is_eligible": is_eligible,
         "response": response_payload,
-        "mock": mock,
     }
 
 
 async def _run_prior_auth_check(conn, org_id: str, payload: PriorAuthRequestPayload) -> dict[str, Any]:
-    token, mock = await _availity_token()
-    response_payload: dict[str, Any]
-    if mock:
-        response_payload = {
-            "mock": True,
-            "status": "submitted",
-            "auth_number": f"MOCK-{payload.order_id[:8].upper()}",
-        }
-    else:
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            response = await client.post(
-                f"{settings.availity_base_url.rstrip('/')}/availity/v1/prior-authorization-requests",
-                json=payload.model_dump(),
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            )
-        if response.status_code >= 400 and not _integration_mocks_allowed():
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Prior authorization request failed with Availity.",
-            )
-        response_payload = response.json() if response.status_code < 400 else {"mock": True, "status": "pending", "detail": f"Availity status {response.status_code}"}
-        mock = response.status_code >= 400
+    token = await _availity_token()
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        response = await client.post(
+            f"{settings.availity_base_url.rstrip('/')}/availity/v1/prior-authorization-requests",
+            json=payload.model_dump(),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Prior authorization request failed with Availity.",
+        )
+    response_payload: dict[str, Any] = response.json()
 
     auth_id = str(uuid.uuid4())
     auth_number = response_payload.get("auth_number") or response_payload.get("authorizationNumber")
-    status_value = response_payload.get("status") or ("submitted" if not mock else "pending")
+    status_value = response_payload.get("status") or "submitted"
     await exec_write(
         conn,
         """
@@ -1237,7 +1280,7 @@ async def _run_prior_auth_check(conn, org_id: str, payload: PriorAuthRequestPayl
         auth_number,
         payload.order_id,
     )
-    return {"id": auth_id, "status": status_value, "auth_number": auth_number, "mock": mock, "response": response_payload}
+    return {"id": auth_id, "status": status_value, "auth_number": auth_number, "response": response_payload}
 
 
 async def _auto_process_order(conn, org_id: str, order_id: str, patient_id: str, insurance_id: str | None, payer_id: str, hcpcs_codes: list[str], icd10_codes: list[str]):
@@ -1315,179 +1358,236 @@ async def _auto_process_order(conn, org_id: str, order_id: str, patient_id: str,
 @app.post("/api/v1/intake/patient", status_code=201)
 async def v1_patient_intake(payload: IntakePatientPayload, background_tasks: BackgroundTasks, request: Request):
     db = request.app.state.db_pool
+    idempotency_key = _request_idempotency_key(request)
+    normalized_snapshot = payload.model_dump()
+    payload_hash = _json_hash(normalized_snapshot)
     async with db.connection() as conn:
-        existing_patient = await fetch_one(
-            conn,
-            """
-            SELECT id
-            FROM patients
-            WHERE org_id = $1
-              AND lower(first_name) = lower($2)
-              AND lower(last_name) = lower($3)
-              AND COALESCE(date_of_birth, dob) = $4
-            LIMIT 1
-            """,
-            payload.org_id,
-            payload.first_name,
-            payload.last_name,
-            payload.date_of_birth,
-        )
-        patient_id = str(existing_patient["id"]) if existing_patient else str(uuid.uuid4())
-        if not existing_patient:
-            await exec_write(
+        await conn.execute("BEGIN")
+        try:
+            if idempotency_key:
+                existing_order = await fetch_one(
+                    conn,
+                    """
+                    SELECT id, patient_id
+                    FROM orders
+                    WHERE org_id = $1::uuid
+                      AND intake_payload->>'_intake_idempotency_key' = $2
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    payload.org_id,
+                    idempotency_key,
+                )
+                if existing_order:
+                    await conn.execute("COMMIT")
+                    return {
+                        "patient_id": str(existing_order["patient_id"]),
+                        "insurance_id": None,
+                        "physician_id": None,
+                        "order_id": str(existing_order["id"]),
+                        "idempotent_replay": True,
+                    }
+
+            existing_patient = await fetch_one(
                 conn,
                 """
-                INSERT INTO patients (
-                    id, org_id, first_name, last_name, date_of_birth, dob, gender, phone, email,
-                    address_line1, address_line2, city, state, zip_code, territory_id, address
-                )
-                VALUES ($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                SELECT id
+                FROM patients
+                WHERE org_id = $1
+                  AND lower(first_name) = lower($2)
+                  AND lower(last_name) = lower($3)
+                  AND COALESCE(date_of_birth, dob) = $4
+                LIMIT 1
                 """,
-                patient_id,
                 payload.org_id,
                 payload.first_name,
                 payload.last_name,
                 payload.date_of_birth,
-                payload.gender,
-                payload.phone,
-                payload.email,
-                payload.address_line1,
-                payload.address_line2,
-                payload.city,
-                payload.state,
-                payload.zip_code,
-                payload.territory_id,
-                json.dumps(
-                    {
-                        "line1": payload.address_line1,
-                        "line2": payload.address_line2,
-                        "city": payload.city,
-                        "state": payload.state,
-                        "zip": payload.zip_code,
-                    }
-                ),
             )
-
-        insurance_id = str(uuid.uuid4())
-        await exec_write(
-            conn,
-            """
-            INSERT INTO patient_insurances (
-                id, patient_id, payer_name, payer_id, member_id, group_number,
-                subscriber_name, subscriber_dob, relationship, is_primary
-            )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-            """,
-            insurance_id,
-            patient_id,
-            payload.insurance.payer_name,
-            payload.insurance.payer_id,
-            payload.insurance.member_id,
-            payload.insurance.group_number,
-            payload.insurance.subscriber_name,
-            payload.insurance.subscriber_dob,
-            payload.insurance.relationship,
-            payload.insurance.is_primary,
-        )
-
-        physician_id = None
-        if payload.physician and payload.physician.npi:
-            existing_physician = await fetch_one(conn, "SELECT id FROM physicians WHERE npi = $1", payload.physician.npi)
-            physician_id = str(existing_physician["id"]) if existing_physician else str(uuid.uuid4())
-            if not existing_physician:
+            patient_id = str(existing_patient["id"]) if existing_patient else str(uuid.uuid4())
+            if not existing_patient:
                 await exec_write(
                     conn,
                     """
-                    INSERT INTO physicians (id, npi, first_name, last_name, specialty, phone, fax, facility_name, address)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                    INSERT INTO patients (
+                        id, org_id, first_name, last_name, date_of_birth, dob, gender, phone, email,
+                        address_line1, address_line2, city, state, zip_code, territory_id, address
+                    )
+                    VALUES ($1,$2,$3,$4,$5,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
                     """,
-                    physician_id,
-                    payload.physician.npi,
-                    payload.physician.first_name,
-                    payload.physician.last_name,
-                    payload.physician.specialty,
-                    payload.physician.phone,
-                    payload.physician.fax,
-                    payload.physician.facility_name,
-                    json.dumps({}),
+                    patient_id,
+                    payload.org_id,
+                    payload.first_name,
+                    payload.last_name,
+                    payload.date_of_birth,
+                    payload.gender,
+                    payload.phone,
+                    payload.email,
+                    payload.address_line1,
+                    payload.address_line2,
+                    payload.city,
+                    payload.state,
+                    payload.zip_code,
+                    payload.territory_id,
+                    json.dumps(
+                        {
+                            "line1": payload.address_line1,
+                            "line2": payload.address_line2,
+                            "city": payload.city,
+                            "state": payload.state,
+                            "zip": payload.zip_code,
+                        }
+                    ),
                 )
 
-        order_id = str(uuid.uuid4())
-        order_number = f"INTAKE-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{str(order_id)[:6].upper()}"
-        order_data = payload.order
-        hcpcs_codes = [item.get("hcpcs_code") for item in order_data.get("line_items", []) if item.get("hcpcs_code")]
-        icd10_codes = [item.get("icd10_code") for item in order_data.get("diagnoses", []) if item.get("icd10_code")]
-        await exec_write(
-            conn,
-            """
-            INSERT INTO orders (
-                id, org_id, order_number, patient_id, physician_id, referring_physician_npi,
-                status, product_category, vertical, source, priority, territory_id, place_of_service,
-                clinical_notes, clinical_data, total_billed, date_of_service, hcpcs_codes, intake_payload
-            )
-            VALUES ($1,$2,$3,$4,$5,$6,'intake',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-            """,
-            order_id,
-            payload.org_id,
-            order_number,
-            patient_id,
-            physician_id,
-            payload.physician.npi if payload.physician else None,
-            order_data.get("product_category"),
-            order_data.get("vertical"),
-            order_data.get("source") or "intake_form",
-            order_data.get("priority") or "normal",
-            order_data.get("territory_id"),
-            order_data.get("place_of_service") or "12",
-            order_data.get("clinical_notes"),
-            json.dumps(order_data.get("clinical_data") or {}),
-            order_data.get("total_billed"),
-            order_data.get("date_of_service"),
-            json.dumps(hcpcs_codes),
-            json.dumps(order_data),
-        )
-        for diagnosis in order_data.get("diagnoses", []):
+            insurance_id = str(uuid.uuid4())
             await exec_write(
                 conn,
                 """
-                INSERT INTO order_diagnoses (id, order_id, icd10_code, description, is_primary, sequence)
-                VALUES ($1,$2,$3,$4,$5,$6)
+                INSERT INTO patient_insurances (
+                    id, patient_id, payer_name, payer_id, member_id, group_number,
+                    subscriber_name, subscriber_dob, relationship, is_primary
+                )
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
                 """,
-                str(uuid.uuid4()),
-                order_id,
-                diagnosis.get("icd10_code"),
-                diagnosis.get("description"),
-                bool(diagnosis.get("is_primary")),
-                diagnosis.get("sequence") or 1,
+                insurance_id,
+                patient_id,
+                payload.insurance.payer_name,
+                payload.insurance.payer_id,
+                payload.insurance.member_id,
+                payload.insurance.group_number,
+                payload.insurance.subscriber_name,
+                payload.insurance.subscriber_dob,
+                payload.insurance.relationship,
+                payload.insurance.is_primary,
             )
-        for item in order_data.get("line_items", []):
+
+            physician_id = None
+            if payload.physician and payload.physician.npi:
+                existing_physician = await fetch_one(conn, "SELECT id FROM physicians WHERE npi = $1", payload.physician.npi)
+                physician_id = str(existing_physician["id"]) if existing_physician else str(uuid.uuid4())
+                if not existing_physician:
+                    await exec_write(
+                        conn,
+                        """
+                        INSERT INTO physicians (id, npi, first_name, last_name, specialty, phone, fax, facility_name, address)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                        """,
+                        physician_id,
+                        payload.physician.npi,
+                        payload.physician.first_name,
+                        payload.physician.last_name,
+                        payload.physician.specialty,
+                        payload.physician.phone,
+                        payload.physician.fax,
+                        payload.physician.facility_name,
+                        json.dumps({}),
+                    )
+
+            order_id = str(uuid.uuid4())
+            order_number = f"INTAKE-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{str(order_id)[:6].upper()}"
+            order_data = payload.order
+            hcpcs_codes = [item.get("hcpcs_code") for item in order_data.get("line_items", []) if item.get("hcpcs_code")]
+            icd10_codes = [item.get("icd10_code") for item in order_data.get("diagnoses", []) if item.get("icd10_code")]
+            intake_payload = dict(order_data)
+            intake_payload["_intake_received_at"] = datetime.now(timezone.utc).isoformat()
+            intake_payload["_intake_idempotency_key"] = idempotency_key
+            intake_payload["_normalized_payload_hash"] = payload_hash
+            intake_payload["_processing_status"] = "received"
+            intake_payload["_processing_failure_reason"] = None
+
             await exec_write(
                 conn,
                 """
-                INSERT INTO order_line_items (id, order_id, hcpcs_code, modifier, description, quantity, unit_price, billed_amount)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                INSERT INTO orders (
+                    id, org_id, order_number, patient_id, physician_id, referring_physician_npi,
+                    status, product_category, vertical, source, priority, territory_id, place_of_service,
+                    clinical_notes, clinical_data, total_billed, date_of_service, hcpcs_codes, intake_payload
+                )
+                VALUES ($1,$2,$3,$4,$5,$6,'intake',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
                 """,
-                str(uuid.uuid4()),
                 order_id,
-                item.get("hcpcs_code"),
-                item.get("modifier"),
-                item.get("description"),
-                item.get("quantity") or 1,
-                item.get("unit_price"),
-                item.get("billed_amount"),
+                payload.org_id,
+                order_number,
+                patient_id,
+                physician_id,
+                payload.physician.npi if payload.physician else None,
+                order_data.get("product_category"),
+                order_data.get("vertical"),
+                order_data.get("source") or "intake_form",
+                order_data.get("priority") or "normal",
+                order_data.get("territory_id"),
+                order_data.get("place_of_service") or "12",
+                order_data.get("clinical_notes"),
+                json.dumps(order_data.get("clinical_data") or {}),
+                order_data.get("total_billed"),
+                order_data.get("date_of_service"),
+                json.dumps(hcpcs_codes),
+                json.dumps(intake_payload),
             )
-        await _record_workflow_event(conn, payload.org_id, "intake.created", {"order_id": order_id, "patient_id": patient_id}, order_id=order_id)
-        await _auto_process_order(
-            conn,
-            payload.org_id,
-            order_id,
-            patient_id,
-            insurance_id,
-            payload.insurance.payer_id or "unknown",
-            hcpcs_codes,
-            icd10_codes,
-        )
-    return {"patient_id": patient_id, "insurance_id": insurance_id, "physician_id": physician_id, "order_id": order_id}
+            for diagnosis in order_data.get("diagnoses", []):
+                await exec_write(
+                    conn,
+                    """
+                    INSERT INTO order_diagnoses (id, order_id, icd10_code, description, is_primary, sequence)
+                    VALUES ($1,$2,$3,$4,$5,$6)
+                    """,
+                    str(uuid.uuid4()),
+                    order_id,
+                    diagnosis.get("icd10_code"),
+                    diagnosis.get("description"),
+                    bool(diagnosis.get("is_primary")),
+                    diagnosis.get("sequence") or 1,
+                )
+            for item in order_data.get("line_items", []):
+                await exec_write(
+                    conn,
+                    """
+                    INSERT INTO order_line_items (id, order_id, hcpcs_code, modifier, description, quantity, unit_price, billed_amount)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                    """,
+                    str(uuid.uuid4()),
+                    order_id,
+                    item.get("hcpcs_code"),
+                    item.get("modifier"),
+                    item.get("description"),
+                    item.get("quantity") or 1,
+                    item.get("unit_price"),
+                    item.get("billed_amount"),
+                )
+            await _record_workflow_event(
+                conn,
+                payload.org_id,
+                "intake.created",
+                {
+                    "order_id": order_id,
+                    "patient_id": patient_id,
+                    "source": order_data.get("source") or "intake_form",
+                    "received_at": intake_payload["_intake_received_at"],
+                    "idempotency_key": idempotency_key,
+                    "payload_hash": payload_hash,
+                },
+                order_id=order_id,
+            )
+            await _auto_process_order(
+                conn,
+                payload.org_id,
+                order_id,
+                patient_id,
+                insurance_id,
+                payload.insurance.payer_id or "unknown",
+                hcpcs_codes,
+                icd10_codes,
+            )
+            await conn.execute("COMMIT")
+        except Exception as exc:
+            await conn.execute("ROLLBACK")
+            logger.exception("Patient intake failed.")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Intake processing failed: {str(exc)[:200]}",
+            )
+    return {"patient_id": patient_id, "insurance_id": insurance_id, "physician_id": physician_id, "order_id": order_id, "idempotent_replay": False}
 
 
 @app.post("/api/v1/intake/batch")
@@ -1722,7 +1822,24 @@ def _build_stedi_claim_payload(order: dict[str, Any], patient: dict[str, Any], l
 @app.post("/api/v1/intake/submit-claim/{order_id}")
 async def v1_submit_claim(order_id: str, request: Request):
     db = request.app.state.db_pool
+    idempotency_key = _request_idempotency_key(request)
     async with db.connection() as conn:
+        if idempotency_key:
+            existing = await fetch_one(
+                conn,
+                """
+                SELECT id, acknowledgment_payload
+                FROM claim_submissions
+                WHERE order_id = $1
+                  AND acknowledgment_payload->>'idempotency_key' = $2
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                order_id,
+                idempotency_key,
+            )
+            if existing:
+                return {"claim_submission_id": str(existing["id"]), "idempotent_replay": True}
         order = await fetch_one(conn, "SELECT * FROM orders WHERE id = $1", order_id)
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")
@@ -1730,33 +1847,28 @@ async def v1_submit_claim(order_id: str, request: Request):
         lines = [dict(row) for row in await fetch_all(conn, "SELECT * FROM order_line_items WHERE order_id = $1", order_id)]
         submission_payload = _build_stedi_claim_payload(dict(order), dict(patient), lines)
         stedi_api_key = os.getenv("STEDI_API_KEY", "").strip()
-        mock = not bool(stedi_api_key)
         response_payload: dict[str, Any]
         status_value = "submitted"
-        if mock:
-            if not _integration_mocks_allowed():
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Stedi API key is not configured.",
-                )
-            response_payload = {"mock": True, "status": "accepted", "transactionId": f"mock-{order_id[:8]}"}
-        else:
-            async with httpx.AsyncClient(timeout=45.0) as client:
-                response = await client.post(
-                    "https://healthcare.us.stedi.com/2024-04-01/claims",
-                    json=submission_payload,
-                    headers={"Authorization": f"Bearer {stedi_api_key}", "Content-Type": "application/json"},
-                )
-            if response.status_code >= 400 and not _integration_mocks_allowed():
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail="Claim submission failed with Stedi.",
-                )
-            response_payload = response.json() if response.status_code < 400 else {"mock": True, "status": "error", "detail": f"Stedi status {response.status_code}"}
-            if response.status_code >= 400:
-                status_value = "error"
-                mock = True
+        if not stedi_api_key:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Stedi API key is not configured.",
+            )
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            response = await client.post(
+                "https://healthcare.us.stedi.com/2024-04-01/claims",
+                json=submission_payload,
+                headers={"Authorization": f"Bearer {stedi_api_key}", "Content-Type": "application/json"},
+            )
+        if response.status_code >= 400:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Claim submission failed with Stedi.",
+            )
+        response_payload = response.json()
         submission_id = str(uuid.uuid4())
+        ack_payload = dict(response_payload)
+        ack_payload["idempotency_key"] = idempotency_key
         await exec_write(
             conn,
             """
@@ -1771,13 +1883,13 @@ async def v1_submit_claim(order_id: str, request: Request):
             order.get("payer_id"),
             response_payload.get("transactionId"),
             json.dumps(submission_payload),
-            json.dumps(response_payload),
+            json.dumps(ack_payload),
             status_value,
         )
         if status_value == "submitted":
             await exec_write(conn, "UPDATE orders SET status = 'submitted', submitted_at = NOW(), updated_at = NOW() WHERE id = $1", order_id)
-        await _record_workflow_event(conn, str(order["org_id"]), "claim.submitted", {"order_id": order_id, "mock": mock}, order_id=order_id)
-    return {"claim_submission_id": submission_id, "mock": mock, "response": response_payload}
+        await _record_workflow_event(conn, str(order["org_id"]), "claim.submitted", {"order_id": order_id}, order_id=order_id)
+    return {"claim_submission_id": submission_id, "response": response_payload, "idempotent_replay": False}
 
 
 @app.get("/api/v1/intake/claim-status/{order_id}")
@@ -1807,6 +1919,13 @@ async def v1_process_acknowledgment(payload: dict[str, Any], request: Request):
         raise HTTPException(status_code=400, detail="Missing claim_submission_id")
     db = request.app.state.db_pool
     async with db.connection() as conn:
+        submission = await fetch_one(
+            conn,
+            "SELECT id, order_id, org_id, status FROM claim_submissions WHERE id = $1",
+            submission_id,
+        )
+        if not submission:
+            raise HTTPException(status_code=404, detail="Claim submission not found")
         updated = await exec_write(
             conn,
             """
@@ -1819,6 +1938,32 @@ async def v1_process_acknowledgment(payload: dict[str, Any], request: Request):
             json.dumps(payload),
             payload.get("status"),
             submission_id,
+        )
+        next_status = str(payload.get("status") or "").lower()
+        if next_status in {"accepted", "paid"}:
+            await exec_write(
+                conn,
+                "UPDATE orders SET status = 'pending_payment', updated_at = NOW() WHERE id = $1",
+                str(submission["order_id"]),
+            )
+        elif next_status in {"denied", "rejected", "failed"}:
+            await exec_write(
+                conn,
+                "UPDATE orders SET status = 'denied', updated_at = NOW() WHERE id = $1",
+                str(submission["order_id"]),
+            )
+        await _record_workflow_event(
+            conn,
+            str(submission["org_id"]),
+            "claim.acknowledgment_processed",
+            {
+                "claim_submission_id": submission_id,
+                "order_id": str(submission["order_id"]),
+                "previous_submission_status": str(submission["status"]),
+                "ack_status": payload.get("status"),
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            },
+            order_id=str(submission["order_id"]),
         )
     if not updated:
         raise HTTPException(status_code=404, detail="Claim submission not found")

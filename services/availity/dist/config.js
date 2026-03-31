@@ -48,6 +48,16 @@ if (!parsed.success) {
     throw new Error(`Invalid environment configuration: ${parsed.error.message}`);
 }
 const env = parsed.data;
+const isProduction = (env.NODE_ENV ?? "").toLowerCase() === "production";
+if (isProduction) {
+    if (!env.AVAILITY_CLIENT_ID || !env.AVAILITY_CLIENT_SECRET) {
+        throw new Error("Missing required production secrets: AVAILITY_CLIENT_ID and AVAILITY_CLIENT_SECRET.");
+    }
+}
+const llmEnabled = String(process.env.MANUAL_EXTRACTION_LLM ?? "").toLowerCase() === "true";
+if (isProduction && llmEnabled && !process.env.OPENAI_API_KEY?.trim()) {
+    throw new Error("MANUAL_EXTRACTION_LLM is enabled in production but OPENAI_API_KEY is missing.");
+}
 /** Availity-only config (validated subset). */
 exports.availityConfig = {
     baseUrl: env.AVAILITY_BASE_URL,
@@ -58,7 +68,7 @@ exports.availityConfig = {
     eligibilityPath: env.AVAILITY_ELIGIBILITY_PATH,
     priorAuthPath: env.AVAILITY_PRIOR_AUTH_PATH,
     timeoutMs: env.AVAILITY_TIMEOUT_MS,
-    isProduction: env.NODE_ENV === "production",
+    isProduction,
 };
 /** Full service config (existing shape for imports). */
 exports.config = {
@@ -81,7 +91,7 @@ exports.config = {
             : defaultTridentManualsRoot(),
     },
     manualExtraction: {
-        llmEnabled: String(process.env.MANUAL_EXTRACTION_LLM ?? "").toLowerCase() === "true",
+        llmEnabled,
         openaiModel: process.env.MANUAL_EXTRACTION_OPENAI_MODEL?.trim() || "gpt-4o-mini",
         openaiApiKey: process.env.OPENAI_API_KEY?.trim() || "",
     },

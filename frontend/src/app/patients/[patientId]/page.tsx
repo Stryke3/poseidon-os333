@@ -11,9 +11,9 @@ import {
 import ClaimActions from "@/components/patient/ClaimActions"
 import { DocumentManager, type DocSlot } from "@/components/patient/DocumentManager"
 import { formatHcpcsList, getHcpcsShortDescription } from "@/lib/hcpcs"
+import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const CORE_API_URL =
-  process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
+const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
 
 type ChartDocument = {
   id?: string

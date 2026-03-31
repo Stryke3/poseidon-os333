@@ -2,9 +2,9 @@ import { getServerSession } from "next-auth"
 import { NextRequest, NextResponse } from "next/server"
 
 import { authOptions } from "@/lib/auth"
+import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const EDI_API_URL =
-  process.env.EDI_API_URL || "http://poseidon_edi:8006"
+const EDI_API_URL = getServiceBaseUrl("EDI_API_URL")
 
 /**
  * GET  /api/edi?path=/api/v1/remittance/stats&days=30

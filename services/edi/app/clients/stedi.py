@@ -27,8 +27,11 @@ class StediClient:
     """
 
     def __init__(self):
+        authorization = STEDI_API_KEY.strip()
+        if authorization and not authorization.lower().startswith("bearer "):
+            authorization = f"Bearer {authorization}"
         self.headers = {
-            "Authorization": STEDI_API_KEY,
+            "Authorization": authorization,
             "Content-Type": "application/json",
         }
 

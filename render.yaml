@@ -26,6 +26,8 @@ envVarGroups:
         value: production
       - key: CORE_API_URL
         value: http://core:8001
+      - key: POSEIDON_API_URL
+        value: http://core:8001
       - key: TRIDENT_API_URL
         value: http://trident:8002
       - key: INTAKE_API_URL

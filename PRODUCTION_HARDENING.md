@@ -159,25 +159,13 @@ Header check example:
 curl -I https://poseidon.strykefoxmedical.com
 ```
 
-## Step 6 - Docker Stack Alignment
+## Step 6 - Render Alignment
 
-For the self-hosted stack in this repo:
+Production is GitHub + Render first.
 
-- Dashboard container now runs Next.js on port `3000`
-- Main nginx proxy now forwards dashboard traffic to `poseidon_dashboard:3000`
-- nginx health checks should target `/healthz` so a future HTTP→HTTPS redirect does not break container health reporting
-
-Relevant files:
-
-- [frontend/Dockerfile](/Volumes/WORKSPACE/poseidon%202/frontend/Dockerfile)
-- [nginx/nginx.conf](/Volumes/WORKSPACE/poseidon%202/nginx/nginx.conf)
-
-If you deploy with Docker instead of Vercel:
-
-```bash
-docker compose build dashboard nginx
-docker compose up -d dashboard nginx
-```
+- Keep [render.yaml](/Volumes/WORKSPACE/poseidon%202/render.yaml) as the canonical deployment definition.
+- Keep backend `DATABASE_URL` values in Render service settings, since they are intentionally marked `sync: false` in the blueprint.
+- Use Render service health, logs, and deploy history for runtime verification instead of older local Docker assumptions.
 
 ## Step 6.5 - Database Migrations
 
@@ -194,11 +182,7 @@ That helper applies:
 - `003_workflow_automation.sql`
 - `004_fulfillment_billing_workflow.sql`
 
-Full stack restart after migrations:
-
-```bash
-docker compose up -d --build postgres redis minio core trident intake ml dashboard nginx
-```
+After migrations, trigger or confirm fresh deploys for the affected Render services instead of relying on a full local Compose restart.
 
 ## Step 6.75 - Backup And Restore Discipline
 
@@ -237,27 +221,19 @@ bash scripts/restore_stateful_storage.sh backups/stateful/<timestamp>
 Use the root deploy script:
 
 ```bash
-bash poseidon-deploy.sh --all
+bash poseidon-deploy.sh
 ```
 
-`--all` deploys the Vercel frontend **and** rebuilds/restarts the full Docker Compose stack (Core, Trident, Intake, ML, **Availity**, dashboard, nginx, data stores).
-
-Frontend-only (no Docker on this machine):
-
-```bash
-bash poseidon-deploy.sh --vercel-only
-```
-
-That script now:
+Preferred production flow:
 
 - targets `frontend/` as the deploy root
-- refuses to deploy with missing or placeholder frontend env values
+- validates the repo before shipping
 - runs `scripts/verify_deploy_readiness.sh` before shipping
 - validates the Next.js production build
 - requires an explicit `frontend/.env.local`
-- deploys from the already linked Vercel project when available
+- deploys from the already linked frontend project when available
 - uses the webpack production build path on Next.js 16 for deterministic CI and local verification
-- with `--all` (or `POSEIDON_DEPLOY_ALL=1`), runs `docker compose up -d --build` from the repo root (requires Docker and a filled root `.env`)
+- leaves backend runtime ownership to Render instead of trying to rebuild a local Docker production clone
 
 ## Troubleshooting
 

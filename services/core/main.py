@@ -1417,6 +1417,11 @@ def hash_password(pw: str) -> str:
     return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
 
 
+def _normalize_login_email(email: str) -> str:
+    """Lowercase + trim so login matches Postgres rows regardless of stored email casing."""
+    return (email or "").strip().lower()
+
+
 def verify_password(pw: str, stored_hash: str) -> bool:
     if not stored_hash:
         return False
@@ -2090,11 +2095,13 @@ async def _import_apply_financial_snapshot(
 async def login(payload: LoginRequest, request: Request):
     db = request.app.state.db_pool
     matched_legacy_hash = False
+    email_key = _normalize_login_email(str(payload.email))
     async with db.connection() as conn:
         row = await fetch_one(
             conn,
-            "SELECT id, role, org_id, password_hash, permissions FROM users WHERE email = $1 AND active = true",
-            payload.email,
+            "SELECT id, role, org_id, password_hash, permissions FROM users "
+            "WHERE LOWER(TRIM(email)) = $1 AND active IS TRUE AND COALESCE(is_active, TRUE) IS TRUE",
+            email_key,
         )
         if not row or not verify_password(payload.password, row["password_hash"]):
             raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -2187,7 +2194,12 @@ async def request_password_reset(payload: PasswordResetRequest, request: Request
         )
 
     # Build reset URL
-    base_url = os.getenv("NEXTAUTH_URL", "http://localhost")
+    base_url = os.getenv("NEXTAUTH_URL", "").strip()
+    if not base_url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password reset is not configured.",
+        )
     reset_url = f"{base_url}/login?reset_token={raw_token}"
 
     # Try to send email if SMTP is configured
@@ -2218,7 +2230,10 @@ async def request_password_reset(payload: PasswordResetRequest, request: Request
             logger.error("Failed to send reset email: %s", e)
 
     if not email_sent:
-        logger.info("Password reset token for %s: %s (no SMTP configured)", payload.email, raw_token)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password reset delivery is not configured.",
+        )
 
     return {
         "status": "ok",
@@ -5836,11 +5851,12 @@ class V1DocumentPatchPayload(BaseModel):
 async def v1_login(payload: LoginRequest, request: Request):
     auth = await login(payload, request)
     db = request.app.state.db_pool
+    email_key = _normalize_login_email(str(payload.email))
     async with db.connection() as conn:
         row = await fetch_one(
             conn,
-            "SELECT org_id FROM users WHERE email = $1",
-            payload.email,
+            "SELECT org_id FROM users WHERE LOWER(TRIM(email)) = $1",
+            email_key,
         )
     auth["org_id"] = str((row or {}).get("org_id") or "")
     return auth

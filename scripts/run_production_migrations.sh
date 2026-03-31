@@ -14,14 +14,23 @@ set -a
 source "${ENV_FILE}"
 set +a
 
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Missing required command: $1" >&2
+    exit 1
+  }
+}
+
+require_cmd psql
+
 : "${POSTGRES_USER:?POSTGRES_USER must be set in .env}"
 : "${POSTGRES_DB:?POSTGRES_DB must be set in .env}"
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}"
 
-docker compose ps postgres >/dev/null 2>&1 || {
-  echo "postgres service is not running under docker compose" >&2
-  exit 1
-}
+DB_URL="${DATABASE_URL:-}"
+if [[ -z "${DB_URL}" ]]; then
+  DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-localhost}:${POSTGRES_PORT:-5432}/${POSTGRES_DB}"
+fi
 
 for migration in \
   "${ROOT_DIR}/scripts/migrations/001_add_pod_document_id.sql" \
@@ -35,14 +44,10 @@ for migration in \
   "${ROOT_DIR}/scripts/migrations/009_dedup_payment_outcomes.sql"
 do
   echo "Applying $(basename "${migration}")"
-  docker compose exec -T \
-    -e PGPASSWORD="${POSTGRES_PASSWORD}" \
-    postgres \
-    psql \
+  PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+    "${DB_URL}" \
     -v ON_ERROR_STOP=1 \
-    -U "${POSTGRES_USER}" \
-    -d "${POSTGRES_DB}" \
-    -f - < "${migration}"
+    -f "${migration}"
 done
 
 echo "All Poseidon production migrations applied."

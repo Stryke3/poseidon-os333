@@ -1,9 +1,9 @@
 import { getServerSession } from "next-auth"
 import { NextRequest, NextResponse } from "next/server"
 import { authOptions } from "@/lib/auth"
+import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const CORE_API_URL =
-  process.env.POSEIDON_API_URL || process.env.CORE_API_URL || "http://poseidon_core:8001"
+const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ patientId: string }> }) {
   const session = await getServerSession(authOptions)

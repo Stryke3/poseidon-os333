@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
-
-const CORE_API_URL = process.env.CORE_API_URL || "http://core:8001";
+import { getServiceBaseUrl } from "@/lib/runtime-config";
 
 export async function POST(req: NextRequest) {
   const token = await getToken({ req });
@@ -33,8 +32,7 @@ export async function POST(req: NextRequest) {
     const upstream = new FormData();
     upstream.append("file", file);
 
-    const INTAKE_API_URL =
-      process.env.INTAKE_API_URL || "http://poseidon_intake:8003";
+    const INTAKE_API_URL = getServiceBaseUrl("INTAKE_API_URL");
     const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/parse-document`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token.accessToken}` },
