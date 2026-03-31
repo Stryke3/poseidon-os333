@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getServiceBaseUrl } from "@/lib/runtime-config"
 
-const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL")
+export const dynamic = "force-dynamic"
 
 export async function POST(req: NextRequest) {
+  const coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL")
   const body = await req.json()
   const { action, ...payload } = body as { action: string; [key: string]: unknown }
 
@@ -12,7 +13,7 @@ export async function POST(req: NextRequest) {
       ? "/auth/reset-password"
       : "/auth/request-reset"
 
-  const res = await fetch(`${CORE_API_URL}${endpoint}`, {
+  const res = await fetch(`${coreApiUrl}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
