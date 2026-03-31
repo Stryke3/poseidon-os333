@@ -8,6 +8,8 @@ const SINCH_FAX_BASE = "https://fax.api.sinch.com/v3";
 interface FaxPayload {
   recipientFax: string;
   senderFax?: string;
+  patientId?: string;
+  orderId?: string;
   recipientName?: string;
   recipientFacility?: string;
   senderName?: string;
@@ -384,6 +386,8 @@ export async function POST(req: NextRequest) {
       patient_name: payload.patientName,
       patient_dob: payload.patientDOB || null,
       patient_mrn: payload.patientMRN || null,
+      patient_id: payload.patientId || null,
+      order_id: payload.orderId || null,
       record_types: payload.recordTypes,
       urgency: payload.urgency,
       status: "sent",

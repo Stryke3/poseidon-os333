@@ -122,6 +122,27 @@ type FinancialItem = {
   created_at?: string
 }
 
+type PatientFaxEntry = {
+  id?: string
+  direction?: string
+  fax_number?: string
+  facility?: string | null
+  patient_name?: string | null
+  patient_dob?: string | null
+  patient_mrn?: string | null
+  patient_id?: string | null
+  order_id?: string | null
+  related_fax_id?: string | null
+  review_status?: string | null
+  review_reason?: string | null
+  status?: string | null
+  pages?: number
+  service?: string | null
+  file_url?: string | null
+  received_at?: string | null
+  created_at?: string
+}
+
 type PatientChartPayload = {
   patient: {
     id: string
@@ -154,6 +175,7 @@ type PatientChartPayload = {
   denials: FinancialItem[]
   appeals: FinancialItem[]
   eobs: FinancialItem[]
+  faxes?: PatientFaxEntry[]
 }
 
 function formatCurrency(value: number | string | undefined) {
@@ -179,6 +201,36 @@ function parseAmount(value: number | string | undefined) {
     if (Number.isFinite(n)) return n
   }
   return 0
+}
+
+function faxReviewTone(status?: string | null) {
+  switch (status) {
+    case "pending_chart_review":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-100"
+    case "pending_patient_match":
+      return "border-orange-500/30 bg-orange-500/10 text-orange-100"
+    case "unmatched":
+      return "border-red-500/30 bg-red-500/10 text-red-100"
+    default:
+      return "border-white/10 bg-white/5 text-slate-200"
+  }
+}
+
+function faxReviewLabel(status?: string | null) {
+  switch (status) {
+    case "pending_chart_review":
+      return "Review before filing"
+    case "pending_patient_match":
+      return "Link or create patient"
+    case "unmatched":
+      return "Unmatched return fax"
+    case "linked_to_chart":
+      return "Linked to chart"
+    case "reviewed":
+      return "Reviewed"
+    default:
+      return "Logged"
+  }
 }
 
 function sumLedgerPaid(orderId: string, payments: FinancialItem[]) {
@@ -269,6 +321,10 @@ export default async function PatientFilePage({
     [patient.first_name, patient.last_name].filter(Boolean).join(" ") || "Unknown Patient"
 
   const deviceLabel = deriveDeviceLabel(chart.orders)
+  const faxEntries = chart.faxes || []
+  const pendingFaxes = faxEntries.filter((fax) =>
+    ["pending_chart_review", "pending_patient_match", "unmatched"].includes(fax.review_status || ""),
+  )
 
   return (
     <PageShell contentClassName="max-w-[1820px]">
@@ -554,6 +610,71 @@ export default async function PatientFilePage({
                   </div>
                 </div>
               ))}
+            </div>
+          </SectionCard>
+
+          <SectionCard>
+            <SectionHeading
+              eyebrow="Fax Returns"
+              title="Inbound Fax Review Queue"
+              description="Return faxes automatically link back to this chart when we can infer the patient context. Review each one before filing."
+            />
+            {pendingFaxes.length ? (
+              <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                {pendingFaxes.length} inbound fax{pendingFaxes.length === 1 ? "" : "es"} need review before being treated as chart-ready documents.
+              </div>
+            ) : null}
+            <div className="grid gap-3">
+              {faxEntries.length ? faxEntries.map((fax) => (
+                <div
+                  key={fax.id}
+                  className={`rounded-2xl border p-4 ${faxReviewTone(fax.review_status)}`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">
+                        {fax.direction === "inbound" ? "Inbound fax" : "Outbound fax"} · {fax.fax_number || "Unknown number"}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        {fax.facility || "Unspecified facility"}
+                        {fax.pages ? ` · ${fax.pages} page(s)` : ""}
+                        {fax.service ? ` · ${fax.service}` : ""}
+                      </p>
+                      {fax.review_reason ? (
+                        <p className="mt-2 text-xs text-slate-200">{fax.review_reason}</p>
+                      ) : null}
+                    </div>
+                    <div className="text-right">
+                      <span className="inline-block rounded-full border border-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]">
+                        {faxReviewLabel(fax.review_status)}
+                      </span>
+                      <p className="mt-2 text-xs text-slate-400">
+                        {formatDate(fax.received_at || fax.created_at)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-3 text-xs">
+                    {fax.file_url ? (
+                      <a
+                        href={fax.file_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-semibold text-accent-blue transition hover:text-white"
+                      >
+                        Open received fax
+                      </a>
+                    ) : null}
+                    <Link
+                      href="/fax"
+                      className="font-semibold text-slate-300 transition hover:text-white"
+                    >
+                      Review in Fax Center
+                    </Link>
+                  </div>
+                </div>
+              )) : (
+                <p className="text-sm text-slate-500">No fax history is attached to this patient chart yet.</p>
+              )}
             </div>
           </SectionCard>
 

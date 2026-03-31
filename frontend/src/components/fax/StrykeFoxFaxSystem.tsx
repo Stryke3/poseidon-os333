@@ -52,6 +52,39 @@ function isValidFaxNumber(value: string): boolean {
   return value.replace(/\D/g, "").length >= 10;
 }
 
+function reviewBadgeClass(status?: string): string {
+  switch (status) {
+    case "pending_chart_review":
+      return "bg-amber-100 text-amber-700";
+    case "pending_patient_match":
+      return "bg-orange-100 text-orange-700";
+    case "unmatched":
+      return "bg-red-100 text-red-700";
+    case "linked_to_chart":
+    case "reviewed":
+      return "bg-emerald-100 text-emerald-700";
+    default:
+      return "bg-slate-100 text-slate-600";
+  }
+}
+
+function reviewLabel(status?: string): string {
+  switch (status) {
+    case "pending_chart_review":
+      return "Review Chart";
+    case "pending_patient_match":
+      return "Link Or Create";
+    case "unmatched":
+      return "Unmatched";
+    case "linked_to_chart":
+      return "Linked";
+    case "reviewed":
+      return "Reviewed";
+    default:
+      return "Logged";
+  }
+}
+
 // ── Client-side OCR with Tesseract.js (lazy-loaded) ──
 
 async function runClientOcr(
@@ -1434,10 +1467,33 @@ export default function StrykeFoxFaxSystem() {
                           {entry.patient_name
                             ? `Patient: ${entry.patient_name} \u00B7 `
                             : ""}
+                          {entry.direction === "inbound"
+                            ? `Return #: ${entry.fax_number} \u00B7 `
+                            : ""}
                           {entry.pages} page(s)
                           {entry.service ? ` \u00B7 ${entry.service}` : ""}
                           {entry.sent_by ? ` \u00B7 ${entry.sent_by}` : ""}
                         </p>
+                        {entry.review_reason ? (
+                          <p className="text-xs text-amber-700 mt-1">
+                            {entry.review_reason}
+                          </p>
+                        ) : null}
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                          {entry.patient_id ? (
+                            <a
+                              href={`/patients/${entry.patient_id}`}
+                              className="font-semibold text-blue-600 hover:text-blue-700"
+                            >
+                              Open linked patient chart
+                            </a>
+                          ) : null}
+                          {entry.direction === "inbound" && !entry.patient_id ? (
+                            <span className="text-slate-500">
+                              Review this fax and either link it to an existing chart or create a new patient.
+                            </span>
+                          ) : null}
+                        </div>
                         {entry.record_types &&
                           entry.record_types.length > 0 && (
                             <p className="text-xs text-slate-400 mt-0.5 truncate">
@@ -1460,6 +1516,13 @@ export default function StrykeFoxFaxSystem() {
                         >
                           {entry.status.toUpperCase()}
                         </span>
+                        {entry.direction === "inbound" ? (
+                          <span
+                            className={`ml-1 inline-block px-2 py-0.5 rounded-full text-xs font-bold ${reviewBadgeClass(entry.review_status)}`}
+                          >
+                            {reviewLabel(entry.review_status).toUpperCase()}
+                          </span>
+                        ) : null}
                         {entry.urgency && entry.urgency !== "routine" && (
                           <span
                             className={`ml-1 inline-block px-2 py-0.5 rounded-full text-xs font-bold ${

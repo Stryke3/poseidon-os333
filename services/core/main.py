@@ -109,11 +109,25 @@ async def _ensure_fax_tables(conn) -> None:
             )
             """
         )
+        await cur.execute("ALTER TABLE fax_log ADD COLUMN IF NOT EXISTS patient_id UUID")
+        await cur.execute("ALTER TABLE fax_log ADD COLUMN IF NOT EXISTS order_id UUID")
+        await cur.execute("ALTER TABLE fax_log ADD COLUMN IF NOT EXISTS related_fax_id UUID")
+        await cur.execute("ALTER TABLE fax_log ADD COLUMN IF NOT EXISTS review_status VARCHAR(64)")
+        await cur.execute("ALTER TABLE fax_log ADD COLUMN IF NOT EXISTS review_reason TEXT")
         await cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_fax_log_org_created_at ON fax_log (org_id, created_at DESC)"
         )
         await cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_fax_log_direction_created_at ON fax_log (direction, created_at DESC)"
+        )
+        await cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fax_log_patient_created_at ON fax_log (patient_id, created_at DESC)"
+        )
+        await cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fax_log_order_created_at ON fax_log (order_id, created_at DESC)"
+        )
+        await cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fax_log_related_fax_id ON fax_log (related_fax_id)"
         )
 
 
@@ -594,6 +608,184 @@ async def _seed_order_diagnoses_from_codes(conn: Any, order_id: str, diagnosis_c
 def _normalize_text(value: Any) -> str:
     return str(value or "").strip()
 
+
+def _normalize_phone_digits(value: Any) -> str:
+    return re.sub(r"\D+", "", _normalize_text(value))
+
+
+def _split_patient_name(value: Any) -> tuple[str, str]:
+    raw = _normalize_text(value)
+    if not raw:
+        return "", ""
+    if "," in raw:
+        last, first = [part.strip() for part in raw.split(",", 1)]
+        return first, last
+    parts = [part for part in re.split(r"\s+", raw) if part]
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], ""
+    return parts[0], parts[-1]
+
+
+async def _resolve_fax_patient_context(
+    conn,
+    org_id: str | None,
+    payload: "FaxLogEntryPayload",
+) -> dict[str, Any]:
+    context: dict[str, Any] = {
+        "patient_id": None,
+        "order_id": None,
+        "patient_name": _normalize_text(payload.patient_name) or None,
+        "patient_dob": _normalize_text(payload.patient_dob) or None,
+        "patient_mrn": _normalize_text(payload.patient_mrn) or None,
+        "match_source": None,
+    }
+    if not org_id:
+        return context
+
+    patient_row: dict[str, Any] | None = None
+    patient_id = _normalize_text(payload.patient_id)
+    if patient_id:
+        patient_row = await fetch_one(
+            conn,
+            """
+            SELECT id, first_name, last_name, mrn, COALESCE(date_of_birth::text, dob::text) AS patient_dob
+            FROM patients
+            WHERE id = $1 AND org_id = $2
+            """,
+            patient_id,
+            org_id,
+        )
+        if patient_row:
+            context["match_source"] = "patient_id"
+
+    if not patient_row:
+        patient_mrn = _normalize_text(payload.patient_mrn)
+        if patient_mrn:
+            patient_row = await fetch_one(
+                conn,
+                """
+                SELECT id, first_name, last_name, mrn, COALESCE(date_of_birth::text, dob::text) AS patient_dob
+                FROM patients
+                WHERE org_id = $1 AND lower(coalesce(mrn, '')) = lower($2)
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                org_id,
+                patient_mrn,
+            )
+            if patient_row:
+                context["match_source"] = "mrn"
+
+    if not patient_row:
+        first_name, last_name = _split_patient_name(payload.patient_name)
+        patient_dob = _normalize_text(payload.patient_dob)
+        if first_name and last_name and patient_dob:
+            normalized_dob = _normalize_date_string(patient_dob)
+            patient_row = await fetch_one(
+                conn,
+                """
+                SELECT id, first_name, last_name, mrn, COALESCE(date_of_birth::text, dob::text) AS patient_dob
+                FROM patients
+                WHERE org_id = $1
+                  AND lower(first_name) = lower($2)
+                  AND lower(last_name) = lower($3)
+                  AND COALESCE(date_of_birth::text, dob::text) = $4
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                org_id,
+                first_name,
+                last_name,
+                normalized_dob,
+            )
+            if patient_row:
+                context["match_source"] = "demographics"
+
+    if patient_row:
+        context["patient_id"] = str(patient_row["id"])
+        context["patient_name"] = " ".join(
+            part for part in [_normalize_text(patient_row.get("first_name")), _normalize_text(patient_row.get("last_name"))] if part
+        ) or context["patient_name"]
+        context["patient_dob"] = _normalize_text(patient_row.get("patient_dob")) or context["patient_dob"]
+        context["patient_mrn"] = _normalize_text(patient_row.get("mrn")) or context["patient_mrn"]
+
+        requested_order_id = _normalize_text(payload.order_id)
+        if requested_order_id:
+            order_row = await fetch_one(
+                conn,
+                """
+                SELECT id
+                FROM orders
+                WHERE id = $1 AND org_id = $2 AND patient_id = $3
+                """,
+                requested_order_id,
+                org_id,
+                context["patient_id"],
+            )
+            if order_row:
+                context["order_id"] = str(order_row["id"])
+
+        if not context["order_id"]:
+            recent_order = await fetch_one(
+                conn,
+                """
+                SELECT id
+                FROM orders
+                WHERE org_id = $1 AND patient_id = $2
+                ORDER BY updated_at DESC NULLS LAST, created_at DESC
+                LIMIT 1
+                """,
+                org_id,
+                context["patient_id"],
+            )
+            if recent_order:
+                context["order_id"] = str(recent_order["id"])
+
+    return context
+
+
+async def _find_recent_outbound_fax(conn, fax_number: str) -> dict[str, Any] | None:
+    digits = _normalize_phone_digits(fax_number)
+    if not digits:
+        return None
+    row = await fetch_one(
+        conn,
+        """
+        SELECT id, org_id, patient_id, order_id, fax_number, patient_name, patient_dob, patient_mrn
+        FROM fax_log
+        WHERE direction = 'outbound'
+          AND org_id IS NOT NULL
+          AND regexp_replace(coalesce(fax_number, ''), '[^0-9]+', '', 'g') = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        digits,
+    )
+    return dict(row) if row else None
+
+
+def _inbound_review_state(
+    fax_number: str,
+    org_id: str | None,
+    patient_id: str | None,
+    matched_outbound: dict[str, Any] | None,
+) -> tuple[str, str]:
+    if patient_id:
+        return (
+            "pending_chart_review",
+            f"Return fax from {fax_number} matched a patient chart. Review the received documents before filing them to the chart.",
+        )
+    if org_id or matched_outbound:
+        return (
+            "pending_patient_match",
+            f"Return fax from {fax_number} needs review. Link it to an existing patient chart or create a new patient.",
+        )
+    return (
+        "unmatched",
+        f"Return fax from {fax_number} was received but could not be matched to a patient or outbound request.",
+    )
 
 def _safe_slug(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
@@ -1572,6 +1764,8 @@ class FaxLogEntryPayload(BaseModel):
     patient_name: str | None = None
     patient_dob: str | None = None
     patient_mrn: str | None = None
+    patient_id: str | None = None
+    order_id: str | None = None
     record_types: list[str] = []
     urgency: str | None = None
     status: str = "queued"
@@ -1581,8 +1775,18 @@ class FaxLogEntryPayload(BaseModel):
     sent_by: str | None = None
     file_url: str | None = None
     received_at: str | None = None
+    related_fax_id: str | None = None
+    review_status: str | None = None
+    review_reason: str | None = None
     release_metadata: dict[str, Any] = {}
     raw_webhook: dict[str, Any] = {}
+
+
+class FaxReviewPayload(BaseModel):
+    patient_id: str | None = None
+    order_id: str | None = None
+    review_status: str = "reviewed"
+    review_reason: str | None = None
 
 
 class PatientCreate(BaseModel):
@@ -1788,6 +1992,50 @@ class PatientNoteCreate(BaseModel):
 
 class PatientAssignRepRequest(BaseModel):
     rep_id: str
+
+
+class CodingRecommendationRequest(BaseModel):
+    payer_id: str
+    icd10_codes: list[str]
+    physician_npi: str | None = None
+    limit: int = 5
+
+    @field_validator("payer_id")
+    @classmethod
+    def validate_payer_id(cls, value: str) -> str:
+        normalized = _normalize_text(value).upper()
+        if not normalized:
+            raise ValueError("payer_id is required")
+        return normalized
+
+    @field_validator("icd10_codes")
+    @classmethod
+    def validate_icd10_codes(cls, values: list[str]) -> list[str]:
+        out: list[str] = []
+        for value in values:
+            code = _normalize_text(value).upper()
+            if code:
+                out.append(code)
+        if not out:
+            raise ValueError("At least one ICD-10 code is required")
+        return out
+
+    @field_validator("physician_npi")
+    @classmethod
+    def validate_npi(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = _normalize_text(value)
+        if not normalized:
+            return None
+        if not re.fullmatch(r"\d{10}", normalized):
+            raise ValueError("physician_npi must be 10 digits")
+        return normalized
+
+    @field_validator("limit")
+    @classmethod
+    def validate_limit(cls, value: int) -> int:
+        return max(1, min(value, 10))
 
 
 def _import_stable_insurance_id(
@@ -2435,6 +2683,7 @@ async def get_fax_log(
             conn,
             f"""
             SELECT id, direction, fax_number, facility, patient_name, patient_dob, patient_mrn,
+                   patient_id, order_id, related_fax_id, review_status, review_reason,
                    record_types, urgency, status, pages, service, sinch_fax_id, sent_by, file_url,
                    received_at, release_metadata, raw_webhook, created_at
             FROM fax_log
@@ -2462,24 +2711,31 @@ async def create_fax_log(
     fax_id = str(uuid.uuid4())
     async with db.connection() as conn:
         await _ensure_fax_tables(conn)
+        context = await _resolve_fax_patient_context(conn, str(user["org_id"]), payload)
         await exec_write(
             conn,
             """
             INSERT INTO fax_log (
                 id, org_id, direction, fax_number, facility, patient_name, patient_dob, patient_mrn,
+                patient_id, order_id, related_fax_id, review_status, review_reason,
                 record_types, urgency, status, pages, service, sinch_fax_id, sent_by, file_url,
                 received_at, release_metadata, raw_webhook
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19::jsonb)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24::jsonb)
             """,
             fax_id,
             user["org_id"],
             payload.direction,
             payload.fax_number,
             payload.facility,
-            payload.patient_name,
-            payload.patient_dob,
-            payload.patient_mrn,
+            context["patient_name"],
+            context["patient_dob"],
+            context["patient_mrn"],
+            context["patient_id"],
+            context["order_id"],
+            payload.related_fax_id,
+            payload.review_status or ("linked_to_chart" if context["patient_id"] else "not_required"),
+            payload.review_reason,
             json.dumps(payload.record_types or []),
             payload.urgency,
             payload.status,
@@ -2504,26 +2760,55 @@ async def create_inbound_fax(
     _: bool = Depends(require_internal_api_key()),
 ):
     db = request.app.state.db_pool
+    redis = get_redis(request)
     fax_id = str(uuid.uuid4())
     async with db.connection() as conn:
         await _ensure_fax_tables(conn)
+        matched_outbound = await _find_recent_outbound_fax(conn, payload.fax_number)
+        org_id = str(matched_outbound["org_id"]) if matched_outbound and matched_outbound.get("org_id") else None
+        if matched_outbound:
+            if not payload.patient_name:
+                payload.patient_name = _normalize_text(matched_outbound.get("patient_name")) or None
+            if not payload.patient_dob:
+                payload.patient_dob = _normalize_text(matched_outbound.get("patient_dob")) or None
+            if not payload.patient_mrn:
+                payload.patient_mrn = _normalize_text(matched_outbound.get("patient_mrn")) or None
+            if not payload.patient_id:
+                payload.patient_id = _normalize_text(matched_outbound.get("patient_id")) or None
+            if not payload.order_id:
+                payload.order_id = _normalize_text(matched_outbound.get("order_id")) or None
+
+        context = await _resolve_fax_patient_context(conn, org_id, payload)
+        review_status, review_reason = _inbound_review_state(
+            payload.fax_number,
+            org_id,
+            context.get("patient_id"),
+            matched_outbound,
+        )
         await exec_write(
             conn,
             """
             INSERT INTO fax_log (
                 id, org_id, direction, fax_number, facility, patient_name, patient_dob, patient_mrn,
+                patient_id, order_id, related_fax_id, review_status, review_reason,
                 record_types, urgency, status, pages, service, sinch_fax_id, sent_by, file_url,
                 received_at, release_metadata, raw_webhook
             )
-            VALUES ($1,NULL,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::jsonb)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24::jsonb)
             """,
             fax_id,
+            org_id,
             payload.direction or "inbound",
             payload.fax_number,
             payload.facility,
-            payload.patient_name,
-            payload.patient_dob,
-            payload.patient_mrn,
+            context["patient_name"],
+            context["patient_dob"],
+            context["patient_mrn"],
+            context["patient_id"],
+            context["order_id"],
+            str(matched_outbound["id"]) if matched_outbound and matched_outbound.get("id") else None,
+            payload.review_status or review_status,
+            payload.review_reason or review_reason,
             json.dumps(payload.record_types or []),
             payload.urgency,
             payload.status or "received",
@@ -2536,8 +2821,102 @@ async def create_inbound_fax(
             json.dumps(payload.release_metadata or {}),
             json.dumps(payload.raw_webhook or {}),
         )
+        if org_id:
+            if context.get("order_id"):
+                await _record_workflow_event(
+                    conn,
+                    org_id,
+                    "fax.received",
+                    {
+                        "fax_id": fax_id,
+                        "fax_number": payload.fax_number,
+                        "review_status": payload.review_status or review_status,
+                    },
+                    order_id=str(context["order_id"]),
+                )
+            await _create_notification(
+                conn,
+                org_id,
+                "fax_review_required",
+                "Inbound fax requires review",
+                payload.review_reason or review_reason,
+                {
+                    "fax_id": fax_id,
+                    "fax_number": payload.fax_number,
+                    "patient_id": context.get("patient_id"),
+                    "order_id": context.get("order_id"),
+                    "review_status": payload.review_status or review_status,
+                    "related_fax_id": str(matched_outbound["id"]) if matched_outbound and matched_outbound.get("id") else None,
+                },
+                order_id=str(context["order_id"]) if context.get("order_id") else None,
+            )
         row = await fetch_one(conn, "SELECT * FROM fax_log WHERE id = $1", fax_id)
+    if org_id:
+        await redis.publish(
+            "notifications.created",
+            json.dumps(
+                {
+                    "fax_id": fax_id,
+                    "patient_id": context.get("patient_id"),
+                    "order_id": context.get("order_id"),
+                    "type": "fax_review_required",
+                }
+            ),
+        )
     return _serialize(dict(row or {"id": fax_id, "status": "received"}))
+
+
+@app.patch("/fax/log/{fax_id}")
+async def review_fax_log_entry(
+    fax_id: str,
+    payload: FaxReviewPayload,
+    request: Request,
+    user: dict = Depends(require_permissions("update_patients")),
+):
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        await _ensure_fax_tables(conn)
+        existing = await fetch_one(
+            conn,
+            """
+            SELECT id, org_id, patient_id, order_id
+            FROM fax_log
+            WHERE id = $1 AND org_id = $2
+            """,
+            fax_id,
+            user["org_id"],
+        )
+        if not existing:
+            raise HTTPException(status_code=404, detail="Fax log entry not found")
+
+        patient_context = await _resolve_fax_patient_context(
+            conn,
+            str(user["org_id"]),
+            FaxLogEntryPayload(
+                fax_number="",
+                patient_id=payload.patient_id,
+                order_id=payload.order_id,
+            ),
+        )
+        await exec_write(
+            conn,
+            """
+            UPDATE fax_log
+            SET patient_id = $1,
+                order_id = $2,
+                review_status = $3,
+                review_reason = $4
+            WHERE id = $5 AND org_id = $6
+            """,
+            patient_context.get("patient_id"),
+            patient_context.get("order_id"),
+            payload.review_status,
+            payload.review_reason,
+            fax_id,
+            user["org_id"],
+        )
+        row = await fetch_one(conn, "SELECT * FROM fax_log WHERE id = $1", fax_id)
+    return _serialize(dict(row or {"id": fax_id, "review_status": payload.review_status}))
 
 @app.post("/patients", status_code=201)
 async def create_patient(
@@ -2739,6 +3118,21 @@ async def get_patient_chart(
             """,
             order_ids or [None],
         )] if order_ids else []
+        fax_rows = [dict(row) for row in await fetch_all(
+            conn,
+            """
+            SELECT id, direction, fax_number, facility, patient_name, patient_dob, patient_mrn,
+                   patient_id, order_id, related_fax_id, review_status, review_reason,
+                   record_types, urgency, status, pages, service, sinch_fax_id, sent_by, file_url,
+                   received_at, release_metadata, raw_webhook, created_at
+            FROM fax_log
+            WHERE org_id = $1 AND patient_id = $2
+            ORDER BY COALESCE(received_at, created_at) DESC
+            LIMIT 25
+            """,
+            user["org_id"],
+            patient_id,
+        )]
 
         denial_row_by_order: dict[str, dict[str, Any]] = {}
         for d in denials:
@@ -2787,6 +3181,7 @@ async def get_patient_chart(
         "denials": _serialize(denials),
         "appeals": _serialize(appeals),
         "eobs": _serialize(eobs),
+        "faxes": _serialize(fax_rows),
         "pod_delivery_guidance": pod_delivery_guidance_payload(example_oid or None),
     }
 
@@ -3104,6 +3499,229 @@ async def _score_order_with_trident(request: Request, org_id: str, order_id: str
             )
     except Exception:
         logger.exception("Non-blocking Trident scoring failed for order %s", order_id)
+
+
+@app.get("/reference/physicians/lookup")
+async def lookup_physician_by_npi(
+    npi: str,
+    request: Request,
+    user: dict = Depends(require_permissions("view_patients")),
+):
+    normalized_npi = _normalize_text(npi)
+    if not re.fullmatch(r"\d{10}", normalized_npi):
+        raise HTTPException(status_code=400, detail="NPI must be exactly 10 digits.")
+
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        local_match = await fetch_one(
+            conn,
+            """
+            SELECT id, npi, first_name, last_name, specialty, phone, fax, facility_name, address
+            FROM physicians
+            WHERE npi = $1
+              AND (org_id::text = $2 OR org_id IS NULL)
+            ORDER BY CASE WHEN org_id::text = $2 THEN 0 ELSE 1 END, created_at DESC
+            LIMIT 1
+            """,
+            normalized_npi,
+            user["org_id"],
+        )
+    if local_match:
+        return {
+            "source": "local",
+            "physician": {
+                "npi": _normalize_text(local_match.get("npi")),
+                "first_name": local_match.get("first_name"),
+                "last_name": local_match.get("last_name"),
+                "full_name": " ".join(
+                    [str(local_match.get("first_name") or "").strip(), str(local_match.get("last_name") or "").strip()]
+                ).strip(),
+                "specialty": local_match.get("specialty"),
+                "phone": local_match.get("phone"),
+                "fax": local_match.get("fax"),
+                "facility_name": local_match.get("facility_name"),
+                "address": local_match.get("address") or {},
+            },
+        }
+
+    registry_base = _normalize_text(os.getenv("NPI_REGISTRY_BASE_URL")) or "https://npiregistry.cms.hhs.gov/api"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(
+                registry_base,
+                params={"version": "2.1", "number": normalized_npi},
+            )
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="Unable to reach NPI registry.")
+    if not response.is_success:
+        raise HTTPException(status_code=502, detail="NPI registry lookup failed.")
+    payload = response.json()
+    results = payload.get("results") if isinstance(payload, dict) else []
+    if not isinstance(results, list) or not results:
+        raise HTTPException(status_code=404, detail="Physician NPI not found.")
+    first = results[0] if isinstance(results[0], dict) else {}
+    basic = first.get("basic") if isinstance(first.get("basic"), dict) else {}
+    addresses = first.get("addresses") if isinstance(first.get("addresses"), list) else []
+    practice_address = next((a for a in addresses if isinstance(a, dict) and str(a.get("address_purpose", "")).upper() == "LOCATION"), None)
+    if practice_address is None:
+        practice_address = next((a for a in addresses if isinstance(a, dict)), {})
+    taxonomies = first.get("taxonomies") if isinstance(first.get("taxonomies"), list) else []
+    primary_taxonomy = next((t for t in taxonomies if isinstance(t, dict) and t.get("primary")), None)
+    if primary_taxonomy is None:
+        primary_taxonomy = next((t for t in taxonomies if isinstance(t, dict)), {})
+    phone = _normalize_text(practice_address.get("telephone_number")) if isinstance(practice_address, dict) else ""
+    fax = _normalize_text(practice_address.get("fax_number")) if isinstance(practice_address, dict) else ""
+    full_name = " ".join(
+        [
+            _normalize_text(basic.get("first_name")),
+            _normalize_text(basic.get("last_name")),
+        ]
+    ).strip()
+    return {
+        "source": "npi_registry",
+        "physician": {
+            "npi": normalized_npi,
+            "first_name": _normalize_text(basic.get("first_name")) or None,
+            "last_name": _normalize_text(basic.get("last_name")) or None,
+            "full_name": full_name or None,
+            "specialty": _normalize_text(primary_taxonomy.get("desc")) or None,
+            "phone": phone or None,
+            "fax": fax or None,
+            "facility_name": _normalize_text(practice_address.get("organization_name")) if isinstance(practice_address, dict) else None,
+            "address": practice_address if isinstance(practice_address, dict) else {},
+        },
+    }
+
+
+@app.post("/intake/coding-recommendations")
+async def intake_coding_recommendations(
+    payload: CodingRecommendationRequest,
+    request: Request,
+    user: dict = Depends(require_permissions("create_orders")),
+):
+    icd10_codes = payload.icd10_codes
+    inferred_codes, inferred_source = _infer_hcpcs_from_diagnosis(icd10_codes)
+
+    trident_rows: list[dict[str, Any]] = []
+    candidate_bases: list[str] = []
+    for base in [settings.trident_url, "http://poseidon_trident:8002", "http://trident:8002"]:
+        normalized = _normalize_text(base).rstrip("/")
+        if normalized and normalized not in candidate_bases:
+            candidate_bases.append(normalized)
+    if candidate_bases:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                trident_base_used = ""
+                for candidate in candidate_bases:
+                    try:
+                        health = await client.get(f"{candidate}/health")
+                    except httpx.HTTPError:
+                        continue
+                    if health.is_success:
+                        trident_base_used = candidate
+                        break
+                if trident_base_used:
+                    for icd10 in icd10_codes:
+                        try:
+                            cm = await client.get(f"{trident_base_used}/api/v1/trident/code-map", params={"icd10": icd10})
+                        except httpx.HTTPError:
+                            continue
+                        if not cm.is_success:
+                            continue
+                        parsed = cm.json()
+                        matches = parsed.get("matches") if isinstance(parsed, dict) else []
+                        if not isinstance(matches, list):
+                            continue
+                        for row in matches:
+                            if not isinstance(row, dict):
+                                continue
+                            code = _normalize_text(row.get("hcpcs_code")).upper()
+                            if not code:
+                                continue
+                            trident_rows.append(
+                                {
+                                    "hcpcs_code": code,
+                                    "icd10": icd10,
+                                    "avg_reimbursement": float(row.get("avg_reimbursement") or 0),
+                                    "denial_probability": float(row.get("denial_probability") or 0),
+                                    "sample_count": int(row.get("sample_count") or 0),
+                                }
+                            )
+        except Exception:
+            logger.exception("Non-blocking coding recommendation lookup failed")
+
+    trident_codes = [str(r.get("hcpcs_code")) for r in trident_rows if r.get("hcpcs_code")]
+    candidate_codes = sorted({*(c.upper() for c in inferred_codes if c), *(c.upper() for c in trident_codes if c)})
+    if not candidate_codes:
+        raise HTTPException(status_code=422, detail="No candidate HCPCS codes found for given ICD-10 inputs.")
+
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        auth_requirements = await fetch_all(
+            conn,
+            """
+            SELECT DISTINCT ON (hcpcs_code)
+                hcpcs_code, requires_auth, required_documents, notes, effective_date
+            FROM payer_auth_requirements
+            WHERE payer_id = $1
+              AND hcpcs_code = ANY($2::text[])
+            ORDER BY hcpcs_code, effective_date DESC
+            """,
+            payload.payer_id,
+            candidate_codes,
+        )
+        learned_rates = await _fetch_learned_rates_map(
+            conn,
+            user["org_id"],
+            payload.payer_id,
+            candidate_codes,
+        )
+
+    auth_by_code = {str(row["hcpcs_code"]).upper(): row for row in auth_requirements}
+    trident_by_code: dict[str, dict[str, Any]] = {}
+    for row in trident_rows:
+        code = str(row.get("hcpcs_code") or "").upper()
+        if not code:
+            continue
+        existing = trident_by_code.get(code)
+        if not existing or float(row.get("sample_count") or 0) > float(existing.get("sample_count") or 0):
+            trident_by_code[code] = row
+
+    recommendations: list[dict[str, Any]] = []
+    for code in candidate_codes:
+        lr = learned_rates.get(code)
+        tr = trident_by_code.get(code)
+        auth = auth_by_code.get(code)
+        denial_probability = float(tr.get("denial_probability") or 0.0) if tr else float(lr.get("denial_rate") or 0.0) if lr else 0.0
+        avg_paid = float(lr.get("median_paid") or lr.get("avg_paid") or 0.0) if lr else float(tr.get("avg_reimbursement") or 0.0) if tr else 0.0
+        score = (avg_paid * max(0.05, 1.0 - denial_probability)) + (15.0 if auth and not auth.get("requires_auth") else 0.0)
+        recommendations.append(
+            {
+                "hcpcs_code": code,
+                "score": round(score, 4),
+                "requires_auth": bool(auth.get("requires_auth")) if auth else None,
+                "required_documents": auth.get("required_documents") if auth else [],
+                "payer_notes": auth.get("notes") if auth else None,
+                "avg_reimbursement": round(avg_paid, 2) if avg_paid else None,
+                "denial_probability": round(denial_probability, 4) if denial_probability else None,
+                "sample_count": int((lr or {}).get("sample_count") or (tr or {}).get("sample_count") or 0),
+                "source": {
+                    "icd10_inferred": code in {c.upper() for c in inferred_codes},
+                    "trident_mapped": code in trident_by_code,
+                    "learned_rates": bool(lr),
+                    "payer_rules": bool(auth),
+                },
+            }
+        )
+
+    ordered = sorted(recommendations, key=lambda item: float(item.get("score") or 0), reverse=True)[: payload.limit]
+    return {
+        "payer_id": payload.payer_id,
+        "physician_npi": payload.physician_npi,
+        "input_icd10_codes": icd10_codes,
+        "inferred_from_icd10": {"hcpcs_codes": inferred_codes, "source": inferred_source},
+        "recommendations": ordered,
+    }
 
 @app.post("/orders", status_code=201)
 async def create_order(

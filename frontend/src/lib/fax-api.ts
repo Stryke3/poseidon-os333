@@ -3,6 +3,8 @@
 export interface FaxSendPayload {
   recipientFax: string;
   senderFax?: string;
+  patientId?: string;
+  orderId?: string;
   recipientName?: string;
   recipientFacility?: string;
   senderName?: string;
@@ -44,6 +46,11 @@ export interface FaxLogEntry {
   patient_name?: string;
   patient_dob?: string;
   patient_mrn?: string;
+  patient_id?: string;
+  order_id?: string;
+  related_fax_id?: string;
+  review_status?: string;
+  review_reason?: string;
   record_types?: string[];
   urgency?: string;
   status: string;
