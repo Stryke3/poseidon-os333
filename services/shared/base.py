@@ -244,7 +244,8 @@ async def _check_dependencies(request: Request) -> dict[str, str]:
                 async with conn.cursor() as cur:
                     await cur.execute("SELECT 1")
                     await cur.fetchone()
-        except Exception:
+        except Exception as exc:
+            logger.exception("Database readiness check failed: %s", exc)
             db_status = "error"
 
     if redis is None:
@@ -252,7 +253,8 @@ async def _check_dependencies(request: Request) -> dict[str, str]:
     else:
         try:
             await redis.ping()
-        except Exception:
+        except Exception as exc:
+            logger.exception("Redis readiness check failed: %s", exc)
             redis_status = "error"
 
     minio_scheme = "https" if settings.minio_secure else "http"
@@ -261,7 +263,8 @@ async def _check_dependencies(request: Request) -> dict[str, str]:
         with urllib_request.urlopen(minio_url, timeout=5) as response:
             if response.status >= 400:
                 minio_status = "error"
-    except (urllib_error.URLError, TimeoutError, ValueError):
+    except (urllib_error.URLError, TimeoutError, ValueError) as exc:
+        logger.exception("MinIO readiness check failed for %s: %s", minio_url, exc)
         minio_status = "error"
 
     return {"database": db_status, "redis": redis_status, "minio": minio_status}
