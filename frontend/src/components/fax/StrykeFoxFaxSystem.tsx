@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useSession } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import {
   sendFax,
   fetchFaxLog,
@@ -468,6 +468,11 @@ export default function StrykeFoxFaxSystem() {
       const msg =
         err instanceof Error ? err.message : "Unknown error sending fax";
       setSendResult({ type: "error", message: msg });
+      if (/session expired|sign in again/i.test(msg)) {
+        setTimeout(() => {
+          signOut({ callbackUrl: "/login" }).catch(() => {});
+        }, 1200);
+      }
 
       // Store failed attempt in log
       const failEntry: FaxLogEntry = {

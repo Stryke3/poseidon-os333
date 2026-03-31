@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getToken } from "next-auth/jwt";
 import { getServiceBaseUrl } from "@/lib/runtime-config";
-
-const CORE_API_URL = getServiceBaseUrl("POSEIDON_API_URL");
+import { getSafeServerSession } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
-  const token = await getToken({ req });
-  if (!token?.accessToken) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const session = await getSafeServerSession();
+  if (!session?.user?.accessToken) {
+    return NextResponse.json(
+      { error: "Your session expired. Please sign in again." },
+      { status: 401 },
+    );
   }
 
   const { searchParams } = new URL(req.url);
@@ -19,8 +20,9 @@ export async function GET(req: NextRequest) {
   if (direction) qs.set("direction", direction);
 
   try {
-    const res = await fetch(`${CORE_API_URL}/fax/log?${qs}`, {
-      headers: { Authorization: `Bearer ${token.accessToken}` },
+    const coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL");
+    const res = await fetch(`${coreApiUrl}/fax/log?${qs}`, {
+      headers: { Authorization: `Bearer ${session.user.accessToken}` },
       cache: "no-store",
     });
 
@@ -45,19 +47,23 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const token = await getToken({ req });
-  if (!token?.accessToken) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const session = await getSafeServerSession();
+  if (!session?.user?.accessToken) {
+    return NextResponse.json(
+      { error: "Your session expired. Please sign in again." },
+      { status: 401 },
+    );
   }
 
   const body = await req.json();
 
   try {
-    const res = await fetch(`${CORE_API_URL}/fax/log`, {
+    const coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL");
+    const res = await fetch(`${coreApiUrl}/fax/log`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token.accessToken}`,
+        Authorization: `Bearer ${session.user.accessToken}`,
       },
       body: JSON.stringify(body),
       cache: "no-store",

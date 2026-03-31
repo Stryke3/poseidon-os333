@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { getRequiredEnv, getServiceBaseUrl } from "@/lib/runtime-config";
-import { authOptions } from "@/lib/auth";
+import { getSafeServerSession } from "@/lib/auth";
 
 const SINCH_FAX_BASE = "https://fax.api.sinch.com/v3";
 
@@ -213,23 +212,30 @@ function normalizeFaxNumber(num: string): string {
   return `+${digits}`;
 }
 
+function tryNormalizeFaxNumber(num: string | undefined): string | null {
+  const digits = String(num || "").replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  return normalizeFaxNumber(digits);
+}
+
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions);
+  const session = await getSafeServerSession();
   if (!session?.user?.accessToken) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Your session expired. Please sign in again and resend the fax." },
+      { status: 401 },
+    );
   }
 
   // Sinch credentials
   let SINCH_PROJECT_ID = "";
   let SINCH_KEY_ID = "";
   let SINCH_KEY_SECRET = "";
-  let callbackBase = "";
   let coreApiUrl = "";
   try {
     SINCH_PROJECT_ID = getRequiredEnv("SINCH_PROJECT_ID");
     SINCH_KEY_ID = getRequiredEnv("SINCH_KEY_ID");
     SINCH_KEY_SECRET = getRequiredEnv("SINCH_KEY_SECRET");
-    callbackBase = getServiceBaseUrl("NEXTAUTH_URL");
     coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL");
   } catch {
     return NextResponse.json(
@@ -296,9 +302,11 @@ export async function POST(req: NextRequest) {
   const sinchBody = new FormData();
   sinchBody.append("to", toNumber);
 
-  const configuredFromNumber = process.env.SINCH_FROM_NUMBER?.trim() || "";
-  if (configuredFromNumber) {
-    sinchBody.append("from", normalizeFaxNumber(configuredFromNumber));
+  const fromNumber =
+    tryNormalizeFaxNumber(process.env.SINCH_FROM_NUMBER) ||
+    tryNormalizeFaxNumber(payload.senderFax);
+  if (fromNumber) {
+    sinchBody.append("from", fromNumber);
   }
 
   // Header text appears at the top of each fax page
@@ -307,9 +315,17 @@ export async function POST(req: NextRequest) {
     `StrykeFox Medical | ${payload.urgency === "stat" ? "STAT" : payload.urgency === "urgent" ? "URGENT" : "Routine"} | ${payload.patientName}`
   );
 
-  // Callback URL for fax completion webhook
-  sinchBody.append("callbackUrl", `${callbackBase}/api/fax/inbound`);
-  sinchBody.append("callbackUrlContentType", "application/json");
+  // Only register a callback if the webhook side is configured to accept it.
+  const callbackBase = process.env.NEXTAUTH_URL?.trim().replace(/\/$/, "") || "";
+  const hasWebhookConfig = Boolean(
+    callbackBase &&
+    process.env.SINCH_WEBHOOK_SECRET?.trim() &&
+    process.env.INTERNAL_API_KEY?.trim(),
+  );
+  if (hasWebhookConfig) {
+    sinchBody.append("callbackUrl", `${callbackBase}/api/fax/inbound`);
+    sinchBody.append("callbackUrlContentType", "application/json");
+  }
 
   // Attach cover page as HTML file
   const coverBlob = new Blob([coverHtml], { type: "text/html" });
@@ -367,6 +383,14 @@ export async function POST(req: NextRequest) {
           : typeof faxData?.message === "string"
             ? faxData.message
             : undefined;
+
+      console.error("Sinch fax send failed", {
+        status: faxRes.status,
+        detail: sinchDetail,
+        toNumber,
+        fromNumber,
+        patientName: payload.patientName,
+      });
 
       return NextResponse.json(
         {
@@ -426,7 +450,12 @@ export async function POST(req: NextRequest) {
       timestamp: new Date().toISOString(),
       ...logPayload,
     });
-  } catch {
+  } catch (error) {
+    console.error("Sinch fax transport error", {
+      toNumber,
+      patientName: payload.patientName,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json(
       { error: "Unable to reach Sinch fax service" },
       { status: 502 }
