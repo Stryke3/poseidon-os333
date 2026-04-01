@@ -31,6 +31,21 @@ type AggregatedImportRecord = {
   orderCount: number
 }
 
+type CorePatientCreateResponse = {
+  patient_id?: string
+  status?: string
+  detail?: string
+  error?: string
+}
+
+type CoreOrderCreateResponse = {
+  order_id?: string
+  status?: string
+  assigned_to?: string
+  detail?: string
+  error?: string
+}
+
 function normalizeKey(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")
 }
@@ -284,6 +299,16 @@ function aggregateImportedOrders(orders: ImportOrderPayload[]) {
   return Array.from(grouped.values())
 }
 
+async function safeJson<T>(res: Response) {
+  const raw = await res.text().catch(() => "")
+  if (!raw) return {} as T
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return ({ error: raw.slice(0, 500) } as unknown) as T
+  }
+}
+
 async function getCoreAuth(req: NextRequest) {
   const coreBase = getServiceBaseUrl("POSEIDON_API_URL")
   const nextAuthSecret = getRequiredEnv("NEXTAUTH_SECRET")
@@ -329,6 +354,148 @@ async function parsePdfDocument(file: File, token: string) {
   return (data || {}) as ParsedPdfDocument
 }
 
+function normalizeDiagnosisCodes(order: ImportOrderPayload) {
+  const codes = (order.diagnosis_codes || [])
+    .map((code) => String(code || "").trim().toUpperCase().replace(/\./g, ""))
+    .filter(Boolean)
+  if (codes.length > 0) return codes
+  if (order.icd?.trim()) return [order.icd.trim().toUpperCase().replace(/\./g, "")]
+  return ["Z00.00"]
+}
+
+function normalizeHcpcsCodes(order: ImportOrderPayload) {
+  const codes = (order.hcpcs_codes || [])
+    .map((code) => String(code || "").trim().toUpperCase())
+    .filter(Boolean)
+  if (codes.length > 0) return codes
+  if (order.hcpcs?.trim()) return [order.hcpcs.trim().toUpperCase()]
+  return []
+}
+
+async function createPatientsAndOrdersDirectly(coreBase: string, token: string, orders: ImportOrderPayload[]) {
+  const patientIds = new Map<string, string>()
+  const results: Array<{ patient_id?: string; order_id?: string; patient_name: string; payer: string }> = []
+
+  for (const order of orders) {
+    const firstName = (order.first_name || "").trim() || splitName(order.patient_name).first_name
+    const lastName = (order.last_name || "").trim() || splitName(order.patient_name).last_name
+    const dob = normalizeDob(order.dob || "")
+    const payerId = (order.payer_id || order.payer || "").trim()
+    const diagnosisCodes = normalizeDiagnosisCodes(order)
+    const hcpcsCodes = normalizeHcpcsCodes(order)
+
+    if (!payerId) {
+      throw new Error(`Live ingest row for ${order.patient_name} is missing payer.`)
+    }
+    if (!hcpcsCodes.length) {
+      throw new Error(`Live ingest row for ${order.patient_name} is missing HCPCS/device codes.`)
+    }
+    if (!(order.referring_physician_npi || order.npi || "").trim()) {
+      throw new Error(`Live ingest row for ${order.patient_name} is missing referring physician NPI.`)
+    }
+
+    const patientKey = [
+      firstName.toLowerCase(),
+      lastName.toLowerCase(),
+      dob,
+      (order.insurance_id || "").trim().toLowerCase(),
+      payerId.toLowerCase(),
+    ].join("::")
+
+    let patientId = patientIds.get(patientKey)
+    if (!patientId) {
+      const patientRes = await fetch(`${coreBase}/patients`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          first_name: firstName,
+          last_name: lastName,
+          dob,
+          email: order.email?.trim() || undefined,
+          phone: undefined,
+          insurance_id: (order.insurance_id || "").trim() || `AUTO-${Date.now()}`,
+          payer_id: payerId,
+          diagnosis_codes: diagnosisCodes,
+          address: {},
+        }),
+        cache: "no-store",
+      }).catch(() => null)
+
+      if (!patientRes) {
+        throw new Error(`Unable to create patient for ${order.patient_name}.`)
+      }
+      const patientJson = await safeJson<CorePatientCreateResponse>(patientRes)
+      if (!patientRes.ok || !patientJson.patient_id) {
+        throw new Error(patientJson.detail || patientJson.error || `Patient creation failed for ${order.patient_name}.`)
+      }
+      patientId = patientJson.patient_id
+      patientIds.set(patientKey, patientId)
+    }
+
+    const orderRes = await fetch(`${coreBase}/orders`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        patient_id: patientId,
+        hcpcs_codes: hcpcsCodes,
+        referring_physician_npi: (order.referring_physician_npi || order.npi || "").trim(),
+        payer_id: payerId,
+        notes: order.notes?.trim() || undefined,
+        priority: order.priority || "standard",
+        source_channel: "manual",
+        source_reference: "live-ingest-fallback",
+        intake_payload: {
+          patient_input: {
+            first_name: firstName,
+            last_name: lastName,
+            dob,
+            email: order.email?.trim() || null,
+          },
+          coding: {
+            icd10_codes: diagnosisCodes,
+            hcpcs_codes: hcpcsCodes,
+          },
+        },
+        vertical: "dme",
+        product_category: "live-ingest",
+        source: "manual",
+      }),
+      cache: "no-store",
+    }).catch(() => null)
+
+    if (!orderRes) {
+      throw new Error(`Unable to create order for ${order.patient_name}.`)
+    }
+    const orderJson = await safeJson<CoreOrderCreateResponse>(orderRes)
+    if (!orderRes.ok || !orderJson.order_id) {
+      throw new Error(orderJson.detail || orderJson.error || `Order creation failed for ${order.patient_name}.`)
+    }
+
+    results.push({
+      patient_id: patientId,
+      order_id: orderJson.order_id,
+      patient_name: order.patient_name,
+      payer: order.payer || payerId,
+    })
+  }
+
+  return {
+    created: results.length,
+    failed: 0,
+    skipped_duplicate: 0,
+    patients_created: patientIds.size,
+    orders_created: results.length,
+    results,
+    mode: "direct_fallback",
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
@@ -365,29 +532,39 @@ export async function POST(req: NextRequest) {
     }
 
     const internalKey = process.env.INTERNAL_API_KEY?.trim() ?? ""
-    const importHeaders: Record<string, string> = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    }
-    if (internalKey) {
-      importHeaders["X-Internal-API-Key"] = internalKey
-    }
-    const importRes = await fetch(`${coreBase}/orders/import`, {
-      method: "POST",
-      headers: importHeaders,
-      body: JSON.stringify({ orders }),
-      cache: "no-store",
-    })
+    let importJson: unknown
 
-    const importJson = await importRes.json()
-    if (!importRes.ok) {
-      return NextResponse.json(
-        {
-          error:
-            importJson?.detail || `Core import failed: ${importRes.status}`,
-        },
-        { status: importRes.status },
-      )
+    if (internalKey) {
+      const importHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "X-Internal-API-Key": internalKey,
+      }
+      const importRes = await fetch(`${coreBase}/orders/import`, {
+        method: "POST",
+        headers: importHeaders,
+        body: JSON.stringify({ orders }),
+        cache: "no-store",
+      }).catch(() => null)
+
+      if (!importRes) {
+        return NextResponse.json({ error: "Unable to reach Core import service." }, { status: 502 })
+      }
+
+      importJson = await safeJson<Record<string, unknown>>(importRes)
+      if (!importRes.ok) {
+        return NextResponse.json(
+          {
+            error:
+              (importJson as { detail?: string; error?: string })?.detail ||
+              (importJson as { error?: string })?.error ||
+              `Core import failed: ${importRes.status}`,
+          },
+          { status: importRes.status },
+        )
+      }
+    } else {
+      importJson = await createPatientsAndOrdersDirectly(coreBase, token, orders)
     }
 
     const aggregatedImports = aggregateImportedOrders(orders)
@@ -419,7 +596,10 @@ export async function POST(req: NextRequest) {
         orderCount: patient.orderCount,
       })),
     })
-  } catch {
-    return NextResponse.json({ error: "Live ingest failed." }, { status: 500 })
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Live ingest failed." },
+      { status: 500 },
+    )
   }
 }
