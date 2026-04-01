@@ -1,7 +1,7 @@
 "use client"
 
 import { Suspense, useState, useEffect } from "react"
-import { signIn } from "next-auth/react"
+import { signIn, useSession } from "next-auth/react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { PageShell } from "@/components/dashboard/DashboardPrimitives"
@@ -15,6 +15,13 @@ type View = "login" | "forgot" | "reset" | "reset-success"
 type CoreStatusBody = {
   reachable?: boolean
   databaseOk?: boolean
+}
+
+function sanitizeCallbackUrl(value: string | null | undefined) {
+  if (!value) return "/"
+  if (!value.startsWith("/") || value.startsWith("//")) return "/"
+  if (value === "/login" || value.startsWith("/login?")) return "/"
+  return value
 }
 
 function buildAuthErrorMessage(coreStatus?: CoreStatusBody) {
@@ -39,7 +46,9 @@ function LoginContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const pathname = usePathname()
-  const callbackUrl = searchParams.get("callbackUrl") || "/"
+  const { status } = useSession()
+  const callbackUrl = sanitizeCallbackUrl(searchParams.get("callbackUrl"))
+  const authError = searchParams.get("error")
 
   // Detect reset token in URL
   const resetTokenParam = searchParams.get("reset_token")
@@ -71,35 +80,61 @@ function LoginContent() {
     }
   }, [effectiveResetToken])
 
+  useEffect(() => {
+    if (status === "authenticated" && view === "login") {
+      router.replace(callbackUrl)
+      router.refresh()
+    }
+  }, [callbackUrl, router, status, view])
+
+  useEffect(() => {
+    if (!authError || effectiveResetToken) return
+    if (authError === "CredentialsSignin") {
+      setError(buildAuthErrorMessage())
+      return
+    }
+    if (authError === "SessionRequired") {
+      setMessage("Sign in to continue.")
+      return
+    }
+    setError("Authentication failed. Try again or reset your password.")
+  }, [authError, effectiveResetToken])
+
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setLoading(true)
     setError("")
+    setMessage("")
 
-    const result = await signIn("credentials", {
-      email: email.trim().toLowerCase(),
-      password,
-      callbackUrl,
-      redirect: false,
-    })
+    try {
+      const result = await signIn("credentials", {
+        email: email.trim().toLowerCase(),
+        password,
+        callbackUrl,
+        redirect: false,
+      })
 
-    if (result?.error) {
-      let message = "Invalid credentials. Contact your administrator."
-      try {
-        const st = await fetch("/api/core-status", { cache: "no-store" })
-        const body = (await st.json()) as CoreStatusBody
-        message = buildAuthErrorMessage(body)
-      } catch {
-        message = buildAuthErrorMessage()
+      if (result?.error) {
+        let message = "Invalid credentials. Contact your administrator."
+        try {
+          const st = await fetch("/api/core-status", { cache: "no-store" })
+          const body = (await st.json()) as CoreStatusBody
+          message = buildAuthErrorMessage(body)
+        } catch {
+          message = buildAuthErrorMessage()
+        }
+        setError(message)
+        return
       }
-      setError(message)
-      setLoading(false)
-      return
-    }
 
-    const destination = result?.url || callbackUrl
-    router.replace(destination)
-    router.refresh()
+      const destination = sanitizeCallbackUrl(result?.url) || callbackUrl
+      router.replace(destination)
+      router.refresh()
+    } catch {
+      setError("Authentication failed. Try again in a moment.")
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handleForgotPassword(event: React.FormEvent<HTMLFormElement>) {
