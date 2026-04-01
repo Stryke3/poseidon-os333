@@ -469,7 +469,7 @@ export default function PatientIntakeForm() {
         })
 
         const patientData = await patientRes.json().catch(() => ({}))
-        if (!patientRes.ok) {
+        if (!patientRes.ok && patientRes.status !== 409) {
           throw new Error(
             (patientData as { detail?: string; error?: string }).detail ||
               (patientData as { error?: string }).error ||

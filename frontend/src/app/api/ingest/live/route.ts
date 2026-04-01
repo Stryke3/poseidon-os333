@@ -428,7 +428,10 @@ async function createPatientsAndOrdersDirectly(coreBase: string, token: string, 
         throw new Error(`Unable to create patient for ${order.patient_name}.`)
       }
       const patientJson = await safeJson<CorePatientCreateResponse>(patientRes)
-      if (!patientRes.ok || !patientJson.patient_id) {
+      if (!patientJson.patient_id) {
+        throw new Error(patientJson.detail || patientJson.error || `Patient creation failed for ${order.patient_name}.`)
+      }
+      if (!patientRes.ok && patientRes.status !== 409) {
         throw new Error(patientJson.detail || patientJson.error || `Patient creation failed for ${order.patient_name}.`)
       }
       patientId = patientJson.patient_id

@@ -1224,7 +1224,10 @@ async def _run_eligibility_workflow(
         "hcpcs_codes": _coerce_json_list(context.get("hcpcs_codes")),
     }
     service_date = datetime.now(timezone.utc).strftime("%Y%m%d")
-    edi_270 = _build_270_from_records(patient, order, payer_id, service_date)
+    edi_name, edi_pi = await _fetch_availity_payer_edi(conn, str(payer_id))
+    edi_270 = _build_270_from_records(
+        patient, order, payer_id, service_date, edi_payer_name=edi_name, edi_payer_pi=edi_pi
+    )
 
     try:
         result = await submit_eligibility_270(edi_270, correlation_id=order_id)
@@ -1487,6 +1490,32 @@ async def _resolve_payer_id(conn, payer_id: str | None, payer_name: str | None) 
         if mapped:
             return mapped
     return "UHC"
+
+
+async def _fetch_availity_payer_edi(conn, internal_payer_id: str) -> tuple[str, str]:
+    """
+    Resolve X12 NM1*PR fields: payer name (NM103) and PI identifier (NM109) for Availity / clearinghouse.
+    Falls back to internal payer id when no row or columns are unset.
+    """
+    raw = _normalize_text(internal_payer_id)
+    if not raw:
+        return "", ""
+    row = await fetch_one(
+        conn,
+        """
+        SELECT
+            COALESCE(NULLIF(btrim(availity_payer_name), ''), name) AS edi_name,
+            COALESCE(NULLIF(btrim(availity_payer_id), ''), id) AS edi_pi
+        FROM payers
+        WHERE id = $1 AND active = true
+        """,
+        raw,
+    )
+    if not row:
+        return raw, raw
+    edi_name = _normalize_text(row.get("edi_name")) or raw
+    edi_pi = _normalize_text(row.get("edi_pi")) or raw
+    return edi_name, edi_pi
 
 
 def _split_patient_name(patient_name: str, first_name: str | None, last_name: str | None) -> tuple[str, str]:
@@ -2927,6 +2956,30 @@ async def create_patient(
     patient_id = str(uuid.uuid4())
     db = request.app.state.db_pool
     async with db.connection() as conn:
+        existing = await fetch_one(
+            conn,
+            """
+            SELECT id
+            FROM patients
+            WHERE org_id = $1
+              AND lower(trim(last_name)) = lower(trim($2))
+              AND dob = $3
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            user["org_id"],
+            payload.last_name,
+            payload.dob,
+        )
+        if existing:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "Patient with the same last name and date of birth already exists.",
+                    "patient_id": str(existing["id"]),
+                    "status": "exists",
+                },
+            )
         await exec_write(
             conn,
             """
@@ -2945,6 +2998,109 @@ async def create_patient(
         )
     logger.info("Patient created: %s org=%s", patient_id, user["org_id"])
     return {"patient_id": patient_id, "status": "created"}
+
+
+async def _delete_patient_dependencies(conn, org_id: str, patient_id: str) -> int:
+    order_rows = await fetch_all(
+        conn,
+        "SELECT id FROM orders WHERE patient_id = $1 AND org_id = $2",
+        patient_id,
+        org_id,
+    )
+    order_ids = [str(row["id"]) for row in order_rows if row.get("id")]
+
+    if order_ids:
+        claim_rows = await fetch_all(
+            conn,
+            "SELECT id FROM eob_claims WHERE order_id = ANY($1::uuid[])",
+            order_ids,
+        )
+        claim_ids = [str(row["id"]) for row in claim_rows if row.get("id")]
+
+        denial_rows = await fetch_all(
+            conn,
+            """
+            SELECT id FROM denials
+            WHERE order_id = ANY($1::uuid[])
+               OR ($2::uuid[] IS NOT NULL AND claim_id = ANY($2::uuid[]))
+            """,
+            order_ids,
+            claim_ids or None,
+        )
+        denial_ids = [str(row["id"]) for row in denial_rows if row.get("id")]
+
+        if denial_ids:
+            await exec_write(conn, "DELETE FROM appeals WHERE denial_id = ANY($1::uuid[])", denial_ids)
+        if claim_ids:
+            await exec_write(conn, "DELETE FROM eob_worklist WHERE claim_id = ANY($1::uuid[])", claim_ids)
+
+        await exec_write(conn, "DELETE FROM communications_messages WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM notifications WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM workflow_events WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM shipments WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM cmn_tracker WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM claim_submissions WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM auth_requests WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM payment_outcomes WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM eligibility_checks WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM denials WHERE order_id = ANY($1::uuid[])", order_ids)
+        if claim_ids:
+            await exec_write(conn, "DELETE FROM denials WHERE claim_id = ANY($1::uuid[])", claim_ids)
+            await exec_write(conn, "DELETE FROM eob_claims WHERE id = ANY($1::uuid[])", claim_ids)
+        await exec_write(conn, "DELETE FROM orders WHERE id = ANY($1::uuid[]) AND org_id = $2", order_ids, org_id)
+
+    await exec_write(conn, "DELETE FROM patient_notes WHERE patient_id = $1 AND org_id = $2", patient_id, org_id)
+    await exec_write(conn, "DELETE FROM eligibility_checks WHERE patient_id = $1", patient_id)
+    await exec_write(conn, "DELETE FROM cmn_tracker WHERE patient_id = $1", patient_id)
+    await exec_write(
+        conn,
+        """
+        UPDATE fax_log
+        SET patient_id = NULL,
+            order_id = NULL,
+            review_status = CASE
+                WHEN review_status = 'linked_to_chart' THEN 'pending_patient_match'
+                ELSE review_status
+            END
+        WHERE org_id = $1 AND patient_id = $2::uuid
+        """,
+        org_id,
+        patient_id,
+    )
+    await exec_write(conn, "DELETE FROM patient_insurances WHERE patient_id = $1", patient_id)
+    await exec_write(conn, "DELETE FROM patients WHERE id = $1 AND org_id = $2", patient_id, org_id)
+    return len(order_ids)
+
+
+@app.delete("/patients/{patient_id}")
+async def delete_patient(
+    patient_id: str,
+    request: Request,
+    user: dict = Depends(require_permissions("update_patients")),
+):
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        patient = await fetch_one(
+            conn,
+            "SELECT id, first_name, last_name FROM patients WHERE id = $1 AND org_id = $2",
+            patient_id,
+            user["org_id"],
+        )
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+
+        deleted_orders = await _delete_patient_dependencies(conn, str(user["org_id"]), patient_id)
+        await audit_log(
+            conn,
+            str(user["org_id"]),
+            str(user["sub"]),
+            "delete",
+            "patients",
+            resource_id=patient_id,
+            ip_address=_client_ip(request),
+        )
+
+    return {"patient_id": patient_id, "deleted_orders": deleted_orders, "status": "deleted"}
 
 
 @app.get("/patients")
@@ -3591,6 +3747,60 @@ async def lookup_physician_by_npi(
             "address": practice_address if isinstance(practice_address, dict) else {},
         },
     }
+
+
+@app.get("/reference/payers")
+async def list_reference_payers(
+    request: Request,
+    user: dict = Depends(require_permissions("view_patients")),
+    q: str | None = None,
+):
+    """Active payers from the canonical directory (Availity-aligned payer IDs for 270/837)."""
+    db = request.app.state.db_pool
+    needle = _normalize_text(q).strip()
+    async with db.connection() as conn:
+        if needle:
+            pattern = f"%{needle}%"
+            rows = await fetch_all(
+                conn,
+                """
+                SELECT id, name, availity_payer_id, availity_payer_name
+                FROM payers
+                WHERE active = true
+                  AND (
+                    id ILIKE $1
+                    OR name ILIKE $1
+                    OR COALESCE(availity_payer_id, '') ILIKE $1
+                  )
+                ORDER BY name ASC
+                LIMIT 100
+                """,
+                pattern,
+            )
+        else:
+            rows = await fetch_all(
+                conn,
+                """
+                SELECT id, name, availity_payer_id, availity_payer_name
+                FROM payers
+                WHERE active = true
+                ORDER BY name ASC
+                LIMIT 500
+                """,
+            )
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        edi_pi = r.get("availity_payer_id")
+        edi_nm = r.get("availity_payer_name")
+        out.append(
+            {
+                "id": str(r["id"]),
+                "name": str(r["name"]),
+                "availity_payer_id": str(edi_pi) if edi_pi else None,
+                "availity_payer_name": str(edi_nm) if edi_nm else None,
+            }
+        )
+    return {"payers": out}
 
 
 @app.post("/intake/coding-recommendations")
@@ -5361,6 +5571,9 @@ def _build_270_from_records(
     order: dict | None,
     org_payer_id: str,
     service_date: str,
+    *,
+    edi_payer_name: str | None = None,
+    edi_payer_pi: str | None = None,
 ) -> str:
     """Very basic X12 270 envelope using patient/order data."""
     now = datetime.now(timezone.utc)
@@ -5394,8 +5607,10 @@ def _build_270_from_records(
     )
     segments.append("ST*270*0001*005010X279A1")
     segments.append(f"BHT*0022*13*{trx_id}*{gs_date}*{gs_time}")
+    nm_payer = (edi_payer_name or org_payer_id).strip() or org_payer_id
+    pi_payer = (edi_payer_pi or org_payer_id).strip() or org_payer_id
     segments.append("HL*1**20*1")
-    segments.append(f"NM1*PR*2*{org_payer_id[:35]}*****PI*{org_payer_id}")
+    segments.append(f"NM1*PR*2*{nm_payer[:60]}*****PI*{pi_payer[:80]}")
     segments.append("HL*2*1*21*1")
     if provider_npi:
         segments.append(f"NM1*1P*2*PROVIDER*****XX*{provider_npi}")
@@ -5415,8 +5630,13 @@ def _build_270_from_records(
     return "~".join(segments) + "~"
 
 
-def _build_270_simple(req: EligibilitySimpleRequest) -> str:
-    """Build a 270 directly from UI fields (no DB lookups)."""
+def _build_270_simple(
+    req: EligibilitySimpleRequest,
+    *,
+    edi_payer_name: str | None = None,
+    edi_payer_pi: str | None = None,
+) -> str:
+    """Build a 270 directly from UI fields; optional mapped Availity NM1*PR name / PI."""
     now = datetime.now(timezone.utc)
     isa_date = now.strftime("%y%m%d")
     isa_time = now.strftime("%H%M")
@@ -5445,8 +5665,10 @@ def _build_270_simple(req: EligibilitySimpleRequest) -> str:
     )
     segments.append("ST*270*0001*005010X279A1")
     segments.append(f"BHT*0022*13*{trx_id}*{gs_date}*{gs_time}")
+    nm_payer = (edi_payer_name or req.payer_id).strip() or req.payer_id
+    pi_payer = (edi_payer_pi or req.payer_id).strip() or req.payer_id
     segments.append("HL*1**20*1")
-    segments.append(f"NM1*PR*2*{req.payer_id[:35]}*****PI*{req.payer_id}")
+    segments.append(f"NM1*PR*2*{nm_payer[:60]}*****PI*{pi_payer[:80]}")
     segments.append("HL*2*1*21*1")
     segments.append(f"NM1*1P*2*PROVIDER*****XX*{provider_npi}")
     segments.append("HL*3*2*22*0")
@@ -5474,6 +5696,9 @@ async def check_eligibility_from_order(
     Returns the raw 271 plus the generated 270 for debugging.
     """
     db = request.app.state.db_pool
+    order: dict | None = None
+    edi_payer_name: str | None = None
+    edi_payer_pi: str | None = None
     async with db.connection() as conn:
         patient = await fetch_one(
             conn,
@@ -5484,7 +5709,6 @@ async def check_eligibility_from_order(
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
 
-        order: dict | None = None
         payer_id = patient.get("payer_id") or ""
         if payload.order_id:
             order = await fetch_one(
@@ -5498,6 +5722,9 @@ async def check_eligibility_from_order(
             if order.get("payer_id"):
                 payer_id = order["payer_id"]
 
+        if payer_id:
+            edi_payer_name, edi_payer_pi = await _fetch_availity_payer_edi(conn, str(payer_id))
+
     if not payer_id:
         raise HTTPException(status_code=400, detail="Missing payer_id on patient/order")
 
@@ -5506,7 +5733,14 @@ async def check_eligibility_from_order(
     else:
         service_date = datetime.now(timezone.utc).strftime("%Y%m%d")
 
-    edi_270 = _build_270_from_records(patient, order, payer_id, service_date)
+    edi_270 = _build_270_from_records(
+        patient,
+        order,
+        payer_id,
+        service_date,
+        edi_payer_name=edi_payer_name,
+        edi_payer_pi=edi_payer_pi,
+    )
 
     try:
         result = await submit_eligibility_270(edi_270, correlation_id=payload.order_id or payload.patient_id)
@@ -5527,6 +5761,7 @@ async def check_eligibility_from_order(
 @app.post("/eligibility/check-simple")
 async def check_eligibility_simple(
     payload: EligibilitySimpleRequest,
+    request: Request,
     user: dict = Depends(require_permissions("run_eligibility")),
 ):
     """
@@ -5535,7 +5770,16 @@ async def check_eligibility_simple(
     - Submits to Availity
     - Returns a structured summary parsed from the 271
     """
-    edi_270 = _build_270_simple(payload)
+    edi_name: str | None = None
+    edi_pi: str | None = None
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        edi_name, edi_pi = await _fetch_availity_payer_edi(conn, payload.payer_id)
+    edi_270 = _build_270_simple(
+        payload,
+        edi_payer_name=edi_name,
+        edi_payer_pi=edi_pi,
+    )
 
     try:
         result = await submit_eligibility_270(
@@ -5573,6 +5817,9 @@ def _build_837_p_minimal(
     service_date: str,
     billing_npi: str,
     billing_tin: str,
+    *,
+    edi_payer_name: str | None = None,
+    edi_payer_pi: str | None = None,
 ) -> str:
     """Build a minimal X12 837 P (005010X222A1) from patient/order for Availity."""
     now = datetime.now(timezone.utc)
@@ -5590,7 +5837,9 @@ def _build_837_p_minimal(
     first = (patient.get("first_name") or "PATIENT")[:25]
     member_id = (patient.get("insurance_id") or "")[:20]
     dob = (patient.get("dob") or "").replace("-", "")
-    payer_id = (order.get("payer_id") or patient.get("payer_id") or "")[:80]
+    internal_payer = (order.get("payer_id") or patient.get("payer_id") or "").strip()
+    payer_pi = ((edi_payer_pi or internal_payer).strip() or internal_payer)[:80]
+    payer_nm = ((edi_payer_name or internal_payer).strip() or internal_payer)[:60]
     provider_npi = (order.get("referring_physician_npi") or billing_npi or "0000000000").strip()[:10]
     hcpcs_list = order.get("hcpcs_codes") or []
     if isinstance(hcpcs_list, str):
@@ -5624,7 +5873,7 @@ def _build_837_p_minimal(
     segments.append("ST*837*0001*005010X222A1")
     segments.append(f"BHT*0019*00*{trx_ref}*{gs_date}*{gs_time}*CH")
     segments.append("NM1*41*2*POSEIDON*****46*" + (billing_tin or "000000000").ljust(9)[:9])
-    segments.append(f"NM1*40*2*{payer_id[:35]}*****46*{payer_id[:20]}")
+    segments.append(f"NM1*40*2*{payer_nm[:35]}*****46*{payer_pi[:20]}")
     segments.append("HL*1**20*1")
     segments.append(f"NM1*85*2*BILLING PROVIDER*****XX*{provider_npi}")
     segments.append(f"N3*{street}")
@@ -5729,6 +5978,8 @@ async def billing_submit_claim_from_order(
     Uses AVAILITY_DEFAULT_PROVIDER_NPI and org settings for billing NPI/TIN if needed.
     """
     db = request.app.state.db_pool
+    edi_payer_name: str | None = None
+    edi_payer_pi: str | None = None
     async with db.connection() as conn:
         order = await fetch_one(
             conn,
@@ -5749,6 +6000,10 @@ async def billing_submit_claim_from_order(
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
 
+        internal_pid = order.get("payer_id") or patient.get("payer_id")
+        if internal_pid:
+            edi_payer_name, edi_payer_pi = await _fetch_availity_payer_edi(conn, str(internal_pid))
+
     service_date = payload.service_date or datetime.now(timezone.utc).strftime("%Y%m%d")
     billing_npi = settings.availity_default_provider_npi or (order.get("referring_physician_npi") or "0000000000")
     billing_tin = settings.availity_billing_tin or ""
@@ -5759,6 +6014,8 @@ async def billing_submit_claim_from_order(
         service_date,
         billing_npi,
         billing_tin,
+        edi_payer_name=edi_payer_name,
+        edi_payer_pi=edi_payer_pi,
     )
 
     try:

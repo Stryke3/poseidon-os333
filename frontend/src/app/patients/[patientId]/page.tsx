@@ -10,6 +10,7 @@ import {
 } from "@/components/dashboard/DashboardPrimitives"
 import ClaimActions from "@/components/patient/ClaimActions"
 import { DocumentManager, type DocSlot } from "@/components/patient/DocumentManager"
+import PatientDangerZone from "@/components/patient/PatientDangerZone"
 import { formatHcpcsList, getHcpcsShortDescription } from "@/lib/hcpcs"
 import { getServiceBaseUrl } from "@/lib/runtime-config"
 
@@ -327,7 +328,7 @@ export default async function PatientFilePage({
 
   return (
     <PageShell contentClassName="max-w-[1820px]">
-      <HeroPanel
+	      <HeroPanel
         eyebrow="Patient Lifecycle"
         title={patientName}
         description={
@@ -391,10 +392,14 @@ export default async function PatientFilePage({
             </div>
           </div>
         }
-        className="mb-6"
-      />
+	        className="mb-6"
+	      />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,1fr)]">
+        <div className="mb-6">
+          <PatientDangerZone patientId={patientId} patientName={patientName} />
+        </div>
+
+	      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,1fr)]">
         <div className="space-y-6">
           {/* ── Orders ── */}
           <SectionCard>
