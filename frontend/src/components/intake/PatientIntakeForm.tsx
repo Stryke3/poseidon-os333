@@ -93,6 +93,7 @@ type PayerOption = {
   availity_payer_name?: string | null
 }
 type Icd10Option = { code: string; description: string }
+type HcpcsOption = { code: string; description: string; long_description?: string }
 type PhysicianOption = {
   npi: string
   full_name: string
@@ -121,6 +122,9 @@ export default function PatientIntakeForm() {
   const [icd10Options, setIcd10Options] = useState<Icd10Option[]>([])
   const [icd10Status, setIcd10Status] = useState<string | null>(null)
   const [icd10Filter, setIcd10Filter] = useState("")
+  const [hcpcsOptions, setHcpcsOptions] = useState<HcpcsOption[]>([])
+  const [hcpcsStatus, setHcpcsStatus] = useState<string | null>(null)
+  const [hcpcsFilter, setHcpcsFilter] = useState("")
   const [physicianOptions, setPhysicianOptions] = useState<PhysicianOption[]>([])
   const [physicianStatus, setPhysicianStatus] = useState<string | null>(null)
   const [physicianFilter, setPhysicianFilter] = useState("")
@@ -135,6 +139,10 @@ export default function PatientIntakeForm() {
     const segments = form.icd10_codes.split(",")
     return (segments[segments.length - 1] || "").trim()
   }, [form.icd10_codes])
+  const currentHcpcsToken = useMemo(() => {
+    const segments = form.hcpcs_codes.split(",")
+    return (segments[segments.length - 1] || "").trim()
+  }, [form.hcpcs_codes])
 
   const filteredPayers = useMemo(() => {
     const f = payerFilter.trim().toLowerCase()
@@ -159,6 +167,17 @@ export default function PatientIntakeForm() {
       (item) => item.code.toLowerCase().includes(f) || item.description.toLowerCase().includes(f),
     )
   }, [icd10Filter, icd10Options])
+
+  const hcpcsForSelect = useMemo(() => {
+    const f = hcpcsFilter.trim().toLowerCase()
+    if (!f) return hcpcsOptions
+    return hcpcsOptions.filter(
+      (item) =>
+        item.code.toLowerCase().includes(f) ||
+        item.description.toLowerCase().includes(f) ||
+        (item.long_description || "").toLowerCase().includes(f),
+    )
+  }, [hcpcsFilter, hcpcsOptions])
 
   const physiciansForSelect = useMemo(() => {
     const f = physicianFilter.trim().toLowerCase()
@@ -247,6 +266,45 @@ export default function PatientIntakeForm() {
 
   useEffect(() => {
     let cancelled = false
+    const query = (currentHcpcsToken || hcpcsFilter).trim()
+    if (query.length < 2) {
+      setHcpcsOptions([])
+      setHcpcsStatus("Type 2+ characters to search HCPCS.")
+      return
+    }
+    setHcpcsStatus("Loading HCPCS suggestions…")
+    const timer = setTimeout(() => {
+      fetch(`/api/reference/hcpcs?query=${encodeURIComponent(query)}`, { cache: "no-store" })
+        .then(async (res) => {
+          const data = (await res.json().catch(() => ({}))) as {
+            items?: HcpcsOption[]
+            error?: string
+            detail?: string
+          }
+          if (!res.ok) {
+            throw new Error(data.detail || data.error || "Failed to load HCPCS suggestions")
+          }
+          if (!cancelled) {
+            const list = Array.isArray(data.items) ? data.items : []
+            setHcpcsOptions(list)
+            setHcpcsStatus(list.length ? null : "No HCPCS matches found.")
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setHcpcsOptions([])
+            setHcpcsStatus("Could not load HCPCS suggestions.")
+          }
+        })
+    }, 180)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [currentHcpcsToken, hcpcsFilter])
+
+  useEffect(() => {
+    let cancelled = false
     const query = (physicianFilter || form.doctor_name || form.referring_npi).trim()
     if (query.length < 2) {
       setPhysicianOptions([])
@@ -294,6 +352,21 @@ export default function PatientIntakeForm() {
     updateField("icd10_codes", nextSegments.join(", "))
     setIcd10Filter("")
   }, [form.icd10_codes, updateField])
+
+  const applyHcpcsOption = useCallback((item: HcpcsOption) => {
+    const segments = form.hcpcs_codes.split(",")
+    const nextSegments = segments
+      .slice(0, Math.max(0, segments.length - 1))
+      .map((part) => part.trim())
+      .filter(Boolean)
+    nextSegments.push(item.code)
+    setForm((prev) => ({
+      ...prev,
+      hcpcs_codes: nextSegments.join(", "),
+      device_description: prev.device_description.trim() || item.description || prev.device_description,
+    }))
+    setHcpcsFilter("")
+  }, [form.hcpcs_codes])
 
   const applyPhysicianOption = useCallback((physician: PhysicianOption) => {
     setForm((prev) => ({
@@ -720,7 +793,26 @@ export default function PatientIntakeForm() {
               onChange={(v) => updateField("hcpcs_codes", v)}
               placeholder="L1833, L1686, K0823"
             />
-            <p className="mt-1 text-[10px] text-slate-600">Comma-separated</p>
+            {hcpcsForSelect.length > 0 ? (
+              <select
+                value=""
+                onChange={(e) => {
+                  const selected = hcpcsForSelect.find((item) => item.code === e.target.value)
+                  if (selected) applyHcpcsOption(selected)
+                }}
+                className="mt-2 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none focus:border-accent-blue/40"
+              >
+                <option value="">Add HCPCS code from dropdown…</option>
+                {hcpcsForSelect.map((item) => (
+                  <option key={item.code} value={item.code}>
+                    {item.code} - {item.description}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <p className="mt-1 text-[10px] text-slate-600">
+              {hcpcsStatus || "Comma-separated. Use the dropdown to add the current HCPCS code."}
+            </p>
           </div>
           <div>
             <FieldLabel label="Device Description" />

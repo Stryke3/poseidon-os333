@@ -1,3 +1,6 @@
+import icd10Catalog from "@/generated/icd10-catalog.json"
+import hcpcsCatalog from "@/generated/hcpcs-catalog.json"
+
 export type IntakePayerOption = {
   id: string
   name: string
@@ -6,6 +9,12 @@ export type IntakePayerOption = {
 export type IntakeIcd10Option = {
   code: string
   description: string
+}
+
+export type IntakeHcpcsOption = {
+  code: string
+  description: string
+  long_description?: string
 }
 
 export const PAYER_OPTIONS: IntakePayerOption[] = [
@@ -30,31 +39,8 @@ export const PAYER_OPTIONS: IntakePayerOption[] = [
   { id: "CHAMP_VA", name: "ChampVA" },
 ]
 
-export const ICD10_OPTIONS: IntakeIcd10Option[] = [
-  { code: "Z33.1", description: "Pregnant state, incidental" },
-  { code: "M54.50", description: "Low back pain, unspecified" },
-  { code: "M54.16", description: "Radiculopathy, lumbar region" },
-  { code: "M17.11", description: "Unilateral primary osteoarthritis, right knee" },
-  { code: "M17.12", description: "Unilateral primary osteoarthritis, left knee" },
-  { code: "M17.0", description: "Bilateral primary osteoarthritis of knee" },
-  { code: "M25.561", description: "Pain in right knee" },
-  { code: "M25.562", description: "Pain in left knee" },
-  { code: "M48.06", description: "Spinal stenosis, lumbar region" },
-  { code: "M47.816", description: "Spondylosis without myelopathy or radiculopathy, lumbar region" },
-  { code: "G89.4", description: "Chronic pain syndrome" },
-  { code: "G47.33", description: "Obstructive sleep apnea" },
-  { code: "J44.9", description: "Chronic obstructive pulmonary disease, unspecified" },
-  { code: "J96.11", description: "Chronic respiratory failure with hypoxia" },
-  { code: "R09.02", description: "Hypoxemia" },
-  { code: "I50.9", description: "Heart failure, unspecified" },
-  { code: "I89.0", description: "Lymphedema, not elsewhere classified" },
-  { code: "R26.2", description: "Difficulty in walking, not elsewhere classified" },
-  { code: "R26.81", description: "Unsteadiness on feet" },
-  { code: "R53.1", description: "Weakness" },
-  { code: "Z74.09", description: "Other reduced mobility" },
-  { code: "Z99.3", description: "Dependence on wheelchair" },
-  { code: "Z99.81", description: "Dependence on supplemental oxygen" },
-]
+export const ICD10_OPTIONS = icd10Catalog as IntakeIcd10Option[]
+export const HCPCS_OPTIONS = hcpcsCatalog as IntakeHcpcsOption[]
 
 function normalize(value: string) {
   return value.trim().toLowerCase()
@@ -77,5 +63,16 @@ export function searchIcd10(query: string, limit = 8) {
     const code = item.code.toLowerCase()
     const description = item.description.toLowerCase()
     return code.includes(q) || description.includes(q)
+  }).slice(0, limit)
+}
+
+export function searchHcpcs(query: string, limit = 8) {
+  const q = normalize(query)
+  if (!q) return HCPCS_OPTIONS.slice(0, limit)
+  return HCPCS_OPTIONS.filter((item) => {
+    const code = item.code.toLowerCase()
+    const description = item.description.toLowerCase()
+    const longDescription = (item.long_description || "").toLowerCase()
+    return code.includes(q) || description.includes(q) || longDescription.includes(q)
   }).slice(0, limit)
 }
