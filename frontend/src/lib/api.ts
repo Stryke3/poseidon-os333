@@ -6,7 +6,7 @@
  * (score, forecast, etc.) — not `/v1/worklist/kanban`. Do not call those from the browser with secrets.
  *
  * `queryTrident` uses the Next.js route `/api/trident`, which enriches prompts with a Core snapshot
- * and calls Anthropic when `ANTHROPIC_API_KEY` is set (assistant / “chat Trident”, not the ML service).
+ * and returns an internal Trident summary from live Poseidon data without relying on Anthropic.
  */
 
 export async function moveKanbanCard(

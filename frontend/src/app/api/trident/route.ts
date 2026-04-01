@@ -108,6 +108,105 @@ async function fetchHistoricalHcpcsSummary(): Promise<HistoricalHcpcsSummary | n
   }
 }
 
+function formatMoney(value: number): string {
+  return `$${Math.round(value).toLocaleString()}`
+}
+
+function buildInternalTridentResponse({
+  prompt,
+  orders,
+  patients,
+  kpisData,
+  historicalSummary,
+  context,
+}: {
+  prompt: string
+  orders: Array<Record<string, unknown>>
+  patients: Array<Record<string, unknown>>
+  kpisData: Record<string, any> | null
+  historicalSummary: HistoricalHcpcsSummary | null
+  context: unknown
+}): string {
+  if (!orders.length && !patients.length && !kpisData) {
+    return "Finding: live Poseidon data is unavailable right now. Risk: Trident cannot produce a grounded recommendation without a current Core snapshot. Recommended action: verify Core connectivity, then rerun the analysis."
+  }
+
+  const deniedOrders = orders.filter((o) => String(o.status || "").toLowerCase() === "denied").length
+  const intakeOrders = orders.filter((o) => String(o.status || "").toLowerCase() === "intake").length
+  const pendingAuthOrders = orders.filter((o) => String(o.status || "").toLowerCase().includes("auth")).length
+  const totalBilled = orders.reduce(
+    (sum, o) => sum + (Number.parseFloat(String(o.total_billed ?? 0)) || 0),
+    0,
+  )
+  const totalPaid = orders.reduce(
+    (sum, o) => sum + (Number.parseFloat(String(o.paid_amount ?? o.total_paid ?? 0)) || 0),
+    0,
+  )
+  const totalDeniedAmount = orders.reduce(
+    (sum, o) => sum + (Number.parseFloat(String(o.denied_amount ?? 0)) || 0),
+    0,
+  )
+
+  const payerCounts = new Map<string, number>()
+  const hcpcsCounts = new Map<string, number>()
+  for (const order of orders) {
+    const payer = String(order.payer_name || order.payer_id || "unknown").trim() || "unknown"
+    payerCounts.set(payer, (payerCounts.get(payer) || 0) + 1)
+    const codes = Array.isArray(order.hcpcs_codes) ? order.hcpcs_codes : [order.hcpcs_codes || "unknown"]
+    for (const rawCode of codes) {
+      const code = String(rawCode || "unknown").trim().toUpperCase() || "UNKNOWN"
+      hcpcsCounts.set(code, (hcpcsCounts.get(code) || 0) + 1)
+    }
+  }
+
+  const topPayerEntry = Array.from(payerCounts.entries()).sort((a, b) => b[1] - a[1])[0]
+  const topHcpcsEntry = Array.from(hcpcsCounts.entries()).sort((a, b) => b[1] - a[1])[0]
+  const denialRate = Number.parseFloat(String(kpisData?.orders?.denial_rate_pct ?? "")) || 0
+  const revenueDenied = Number(kpisData?.revenue?.denied || totalDeniedAmount || 0)
+  const revenueCollected = Number(kpisData?.revenue?.collected || totalPaid || 0)
+
+  const lowerPrompt = prompt.toLowerCase()
+  const focusPayer = Array.from(payerCounts.keys()).find((payer) => lowerPrompt.includes(payer.toLowerCase()))
+  const focusHcpcs = Array.from(hcpcsCounts.keys()).find((code) => lowerPrompt.includes(code.toLowerCase()))
+  const hasUiContext = Boolean(context && typeof context === "object")
+
+  const findingParts = [
+    `${orders.length} active orders and ${patients.length} patients are in the live snapshot`,
+    denialRate > 0
+      ? `denial rate is ${denialRate.toFixed(1)}%`
+      : `${deniedOrders} orders are already sitting in denied status`,
+    topPayerEntry ? `${topPayerEntry[0]} is the heaviest payer at ${topPayerEntry[1]} orders` : null,
+    topHcpcsEntry ? `${topHcpcsEntry[0]} is the most common HCPCS at ${topHcpcsEntry[1]} orders` : null,
+  ].filter(Boolean)
+
+  const riskParts = [
+    deniedOrders > 0 ? `${deniedOrders} denied orders need intervention` : null,
+    pendingAuthOrders > 0 ? `${pendingAuthOrders} orders are still sitting in prior auth flow` : null,
+    intakeOrders > 0 ? `${intakeOrders} orders remain at intake and can stall conversion` : null,
+    revenueDenied > 0 ? `${formatMoney(revenueDenied)} is currently marked denied` : null,
+    focusPayer ? `the prompt is focused on ${focusPayer}, so payer-specific rules should be reviewed first` : null,
+    focusHcpcs ? `${focusHcpcs} appears in the current book and should be checked for documentation quality` : null,
+    hasUiContext ? "dashboard context was included, so pipeline mix should be considered in prioritization" : null,
+  ].filter(Boolean)
+
+  const actionParts = [
+    deniedOrders > 0 ? "work the denied queue first and attach the top CARC patterns to each appeal" : null,
+    pendingAuthOrders > 0 ? "clear pending auth orders before they age into preventable denials" : null,
+    topPayerEntry ? `review ${topPayerEntry[0]} documentation requirements because it is driving the largest current volume` : null,
+    topHcpcsEntry ? `audit ${topHcpcsEntry[0]} orders for diagnosis linkage, physician documentation, and intake completeness` : null,
+    historicalSummary?.topCodes?.length
+      ? `compare live reimbursement against the historical baseline led by ${historicalSummary.topCodes[0]?.hcpcs || "top HCPCS"}`
+      : null,
+    revenueCollected > 0 ? `use ${formatMoney(revenueCollected)} collected as the baseline when prioritizing high-yield follow-up` : null,
+  ].filter(Boolean)
+
+  return [
+    `Finding: ${findingParts.join("; ")}.`,
+    `Risk: ${riskParts.join("; ") || "live data is thin, so recommendations should be treated as directional only"}.`,
+    `Recommended action: ${actionParts.join("; ") || "refresh the snapshot and re-run after more live order activity is available"}.`,
+  ].join(" ")
+}
+
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions).catch(() => null)
   if (!session?.user?.accessToken) {
@@ -136,17 +235,7 @@ export async function POST(req: NextRequest) {
 
   const context = body.context
 
-  const apiKey = process.env.ANTHROPIC_API_KEY || ""
-
-  if (!apiKey) {
-    return NextResponse.json({
-      response:
-        "Trident analysis unavailable. Configure ANTHROPIC_API_KEY in the environment to enable live intelligence.",
-    })
-  }
-
   const token = session.user.accessToken
-  let liveContext = ""
 
   const [ordersData, kpisData, patientsData] = await Promise.all([
     fetchCore("/orders?limit=200", token),
@@ -164,158 +253,14 @@ export async function POST(req: NextRequest) {
   const hasLiveReimbursement = livePaidTotal > 0
   const historicalSummary = hasLiveReimbursement ? null : await fetchHistoricalHcpcsSummary()
 
-  if (ordersData === null && kpisData === null && patientsData === null) {
-    liveContext =
-      "WARNING: Could not reach Core API or requests failed. No live snapshot available."
-  } else {
-    const byStatus: Record<
-      string,
-      { count: number; totalBilled: number; totalPaid: number; totalDenied: number; items: string[] }
-    > = {}
-    for (const o of orders) {
-      const s = o.status || "unknown"
-      if (!byStatus[s])
-        byStatus[s] = { count: 0, totalBilled: 0, totalPaid: 0, totalDenied: 0, items: [] }
-      byStatus[s].count++
-      byStatus[s].totalBilled += parseFloat(o.total_billed || 0)
-      byStatus[s].totalPaid += parseFloat(o.paid_amount || o.total_paid || 0)
-      byStatus[s].totalDenied += parseFloat(o.denied_amount || 0)
-      if (byStatus[s].items.length < 10) {
-        const hcpcs = Array.isArray(o.hcpcs_codes) ? o.hcpcs_codes.join(",") : o.hcpcs_codes || ""
-        byStatus[s].items.push(
-          `  ${o.patient_name || "Unknown"} | ${o.payer_name || o.payer_id || "unknown"} | HCPCS:${hcpcs} | billed:$${o.total_billed || 0} | paid:${o.paid_amount || o.total_paid || 0} | denied:${o.denied_amount || 0}`,
-        )
-      }
-    }
-
-    const orderSummary = Object.entries(byStatus)
-      .map(([status, data]) => {
-        const header = `${status.toUpperCase()} (${data.count} orders, billed:$${data.totalBilled.toFixed(0)}, paid:$${data.totalPaid.toFixed(0)}, denied:$${data.totalDenied.toFixed(0)})`
-        return `${header}\n${data.items.join("\n")}${data.count > 10 ? `\n  ... and ${data.count - 10} more` : ""}`
-      })
-      .join("\n\n")
-
-    const byPayer: Record<string, { count: number; billed: number; paid: number }> = {}
-    for (const o of orders) {
-      const payer = o.payer_name || o.payer_id || "unknown"
-      if (!byPayer[payer]) byPayer[payer] = { count: 0, billed: 0, paid: 0 }
-      byPayer[payer].count++
-      byPayer[payer].billed += parseFloat(o.total_billed || 0)
-      byPayer[payer].paid += parseFloat(o.paid_amount || o.total_paid || 0)
-    }
-    const payerSummary = Object.entries(byPayer)
-      .sort((a, b) => b[1].count - a[1].count)
-      .map(([payer, d]) => `  ${payer}: ${d.count} orders, billed:$${d.billed.toFixed(0)}, paid:$${d.paid.toFixed(0)}`)
-      .join("\n")
-
-    const byHcpcs: Record<string, { count: number; billed: number; paid: number }> = {}
-    for (const o of orders) {
-      const codes = Array.isArray(o.hcpcs_codes) ? o.hcpcs_codes : [o.hcpcs_codes || "unknown"]
-      for (const code of codes) {
-        if (!byHcpcs[code]) byHcpcs[code] = { count: 0, billed: 0, paid: 0 }
-        byHcpcs[code].count++
-        byHcpcs[code].billed += parseFloat(o.total_billed || 0)
-        byHcpcs[code].paid += parseFloat(o.paid_amount || o.total_paid || 0)
-      }
-    }
-    const hcpcsSummary = Object.entries(byHcpcs)
-      .sort((a, b) => b[1].count - a[1].count)
-      .map(
-        ([code, d]) =>
-          `  ${code}: ${d.count} orders, billed:$${d.billed.toFixed(0)}, paid:$${d.paid.toFixed(0)}, avg reimbursement:$${d.count > 0 ? (d.paid / d.count).toFixed(0) : 0}`,
-      )
-      .join("\n")
-
-    const patientSummary = patients
-      .slice(0, 30)
-      .map(
-        (p: Record<string, string>) =>
-          `  ${p.first_name || ""} ${p.last_name || ""} | ${p.id} | ${p.primary_payer || "unknown"}`,
-      )
-      .join("\n")
-
-    const kpiBlock = kpisData
-      ? `KPIs (last 90 days):
-- Total orders: ${kpisData.orders?.total || 0}
-- Denied: ${kpisData.orders?.denied || 0} (${kpisData.orders?.denial_rate_pct || "N/A"})
-- Revenue collected: $${kpisData.revenue?.collected?.toFixed(0) || 0}
-- Revenue denied: $${kpisData.revenue?.denied?.toFixed(0) || 0}
-- Denial breakdown: ${JSON.stringify(kpisData.denial_breakdown || [])}
-- Top CARC codes: ${JSON.stringify(kpisData.top_carc_codes || [])}`
-      : "KPIs: unavailable"
-
-    const historicalBlock = historicalSummary
-      ? `
-HISTORICAL REIMBURSEMENT BASELINE (Trident Historical_Model_Data):
-- Source asset: ${historicalSummary.sourceAsset}
-- Historical rows: ${historicalSummary.rowCount}
-- Top HCPCS by avg paid:
-${historicalSummary.topCodes
-  .map(
-    (r) =>
-      `  ${r.hcpcs}: n=${r.count}, avg paid:$${r.avgPaid.toFixed(0)}, avg allowable:$${r.avgAllowable.toFixed(0)}, avg billed:$${r.avgBilled.toFixed(0)}`,
-  )
-  .join("\n")}
-`
-      : ""
-
-    liveContext = `POSEIDON CORE SNAPSHOT (${new Date().toISOString()}) — point-in-time API data, may be incomplete:
-
-${kpiBlock}
-
-ORDERS BY STATUS:
-${orderSummary}
-
-ORDERS BY PAYER:
-${payerSummary}
-
-ORDERS BY HCPCS CODE:
-${hcpcsSummary}
-
-PATIENTS (${patients.length} total, showing first 30):
-${patientSummary}
-
-Total orders in snapshot: ${orders.length}
-${historicalBlock}`
-  }
-
-  if (context && typeof context === "object") {
-    liveContext += `\n\nADDITIONAL CONTEXT FROM DASHBOARD UI:\n${JSON.stringify(context)}`
-  }
-
-  const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1024,
-      system: `You are Trident, the assistant for Poseidon OS at StrykeFox Medical.
-You receive a structured snapshot from the Poseidon Core API (not direct database access). Use only what appears in the snapshot; if data is missing, say so.
-Respond with clinical precision. Lead with the key finding. Be specific about dollar amounts, percentages, and action items when the snapshot supports it.
-Format: finding → risk → recommended action. Keep responses under 200 words.
-
-${liveContext}`,
-      messages: [{ role: "user", content: prompt }],
-    }),
+  const text = buildInternalTridentResponse({
+    prompt,
+    orders,
+    patients,
+    kpisData,
+    historicalSummary,
+    context,
   })
-
-  const anthropicJson = await anthropicRes.json().catch(() => null)
-
-  if (!anthropicRes.ok) {
-    const msg =
-      (anthropicJson as { error?: { message?: string } })?.error?.message ||
-      (anthropicJson as { error?: string })?.error ||
-      `Anthropic request failed (${anthropicRes.status})`
-    return NextResponse.json({ error: msg }, { status: 502 })
-  }
-
-  const text =
-    (anthropicJson as { content?: Array<{ text?: string }> })?.content?.[0]?.text ||
-    "Trident analysis unavailable."
 
   return NextResponse.json({ response: text })
 }
