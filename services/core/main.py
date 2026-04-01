@@ -95,6 +95,20 @@ async def _table_columns(conn, table_name: str, schema: str = "public") -> set[s
     return {str(row["column_name"]) for row in rows}
 
 
+async def _safe_fetch_all(
+    conn,
+    query: str,
+    *params,
+    label: str,
+) -> list[dict[str, Any]]:
+    try:
+        rows = await fetch_all(conn, query, *params)
+    except Exception as exc:
+        logger.warning("Patient chart skipped %s due to query failure: %s", label, exc)
+        return []
+    return [dict(row) for row in rows]
+
+
 async def _ensure_fax_tables(conn) -> None:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -3246,7 +3260,7 @@ async def get_patient_chart(
             bundle["primary_documents"] = primary_docs
             order_bundles.append(_serialize(bundle))
 
-        denials = [dict(row) for row in await fetch_all(
+        denials = await _safe_fetch_all(
             conn,
             """
             SELECT *
@@ -3255,9 +3269,10 @@ async def get_patient_chart(
             ORDER BY denial_date DESC NULLS LAST, created_at DESC
             """,
             order_ids or [None],
-        )] if order_ids else []
+            label="denials",
+        ) if order_ids else []
         denial_ids = [str(row["id"]) for row in denials]
-        appeals = [dict(row) for row in await fetch_all(
+        appeals = await _safe_fetch_all(
             conn,
             """
             SELECT *
@@ -3267,8 +3282,9 @@ async def get_patient_chart(
             """,
             denial_ids or [None],
             order_ids or [None],
-        )] if order_ids else []
-        eobs = [dict(row) for row in await fetch_all(
+            label="appeals",
+        ) if order_ids else []
+        eobs = await _safe_fetch_all(
             conn,
             """
             SELECT *
@@ -3277,8 +3293,9 @@ async def get_patient_chart(
             ORDER BY COALESCE(date_of_remittance, date_of_service) DESC NULLS LAST, created_at DESC
             """,
             order_ids or [None],
-        )] if order_ids else []
-        payments = [dict(row) for row in await fetch_all(
+            label="eobs",
+        ) if order_ids else []
+        payments = await _safe_fetch_all(
             conn,
             """
             SELECT *
@@ -3287,7 +3304,8 @@ async def get_patient_chart(
             ORDER BY COALESCE(payment_date, date_of_service) DESC NULLS LAST, created_at DESC
             """,
             order_ids or [None],
-        )] if order_ids else []
+            label="payments",
+        ) if order_ids else []
         fax_rows: list[dict[str, Any]] = []
         fax_columns = await _table_columns(conn, "fax_log")
         if "patient_id" in fax_columns:
@@ -3320,7 +3338,7 @@ async def get_patient_chart(
                 "review_reason",
             ]
             fax_select.extend([column for column in optional_fax_columns if column in fax_columns])
-            fax_rows = [dict(row) for row in await fetch_all(
+            fax_rows = await _safe_fetch_all(
                 conn,
                 f"""
                 SELECT {", ".join(fax_select)}
@@ -3331,7 +3349,8 @@ async def get_patient_chart(
                 """,
                 user["org_id"],
                 patient_id,
-            )]
+                label="fax_log",
+            )
 
         denial_row_by_order: dict[str, dict[str, Any]] = {}
         for d in denials:
@@ -3341,9 +3360,32 @@ async def get_patient_chart(
 
         for bundle in order_bundles:
             oid = str(bundle.get("id") or "")
-            await _enrich_chart_order_bundle(
-                conn, str(user["org_id"]), bundle, denial_row_by_order.get(oid)
-            )
+            try:
+                await _enrich_chart_order_bundle(
+                    conn, str(user["org_id"]), bundle, denial_row_by_order.get(oid)
+                )
+            except Exception as exc:
+                logger.warning("Patient chart skipped enrichment for order %s: %s", oid, exc)
+                bundle["predictive_modeling"] = _serialize(
+                    _build_outstanding_protocol(
+                        {
+                            "id": bundle.get("id"),
+                            "patient_id": bundle.get("patient_id"),
+                            "first_name": bundle.get("patient_first_name"),
+                            "last_name": bundle.get("patient_last_name"),
+                            "status": bundle.get("status"),
+                            "payer_id": bundle.get("payer_id"),
+                            "payer_name": bundle.get("payer_name") or bundle.get("payer_id"),
+                            "hcpcs_codes": bundle.get("hcpcs_codes"),
+                            "baseline_denial_rate": bundle.get("payer_baseline_denial_rate") or 0.35,
+                            "updated_at": bundle.get("updated_at"),
+                            "created_at": bundle.get("created_at"),
+                            "denied_amount": bundle.get("denied_amount"),
+                            "paid_amount": bundle.get("paid_amount"),
+                            "denial_category": bundle.get("denial_category"),
+                        }
+                    )
+                )
 
     summary = {
         "total_orders": len(order_bundles),
