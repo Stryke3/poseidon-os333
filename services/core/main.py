@@ -81,6 +81,20 @@ async def exec_write(conn, query: str, *params) -> int:
         return cur.rowcount
 
 
+async def _table_columns(conn, table_name: str, schema: str = "public") -> set[str]:
+    rows = await fetch_all(
+        conn,
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = $2
+        """,
+        schema,
+        table_name,
+    )
+    return {str(row["column_name"]) for row in rows}
+
+
 async def _ensure_fax_tables(conn) -> None:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -3274,21 +3288,50 @@ async def get_patient_chart(
             """,
             order_ids or [None],
         )] if order_ids else []
-        fax_rows = [dict(row) for row in await fetch_all(
-            conn,
-            """
-            SELECT id, direction, fax_number, facility, patient_name, patient_dob, patient_mrn,
-                   patient_id, order_id, related_fax_id, review_status, review_reason,
-                   record_types, urgency, status, pages, service, sinch_fax_id, sent_by, file_url,
-                   received_at, release_metadata, raw_webhook, created_at
-            FROM fax_log
-            WHERE org_id = $1 AND patient_id = $2
-            ORDER BY COALESCE(received_at, created_at) DESC
-            LIMIT 25
-            """,
-            user["org_id"],
-            patient_id,
-        )]
+        fax_rows: list[dict[str, Any]] = []
+        fax_columns = await _table_columns(conn, "fax_log")
+        if "patient_id" in fax_columns:
+            fax_select = [
+                "id",
+                "direction",
+                "fax_number",
+                "facility",
+                "patient_name",
+                "patient_dob",
+                "patient_mrn",
+                "record_types",
+                "urgency",
+                "status",
+                "pages",
+                "service",
+                "sinch_fax_id",
+                "sent_by",
+                "file_url",
+                "received_at",
+                "release_metadata",
+                "raw_webhook",
+                "created_at",
+            ]
+            optional_fax_columns = [
+                "patient_id",
+                "order_id",
+                "related_fax_id",
+                "review_status",
+                "review_reason",
+            ]
+            fax_select.extend([column for column in optional_fax_columns if column in fax_columns])
+            fax_rows = [dict(row) for row in await fetch_all(
+                conn,
+                f"""
+                SELECT {", ".join(fax_select)}
+                FROM fax_log
+                WHERE org_id = $1 AND patient_id = $2
+                ORDER BY COALESCE(received_at, created_at) DESC
+                LIMIT 25
+                """,
+                user["org_id"],
+                patient_id,
+            )]
 
         denial_row_by_order: dict[str, dict[str, Any]] = {}
         for d in denials:
