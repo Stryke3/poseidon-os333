@@ -545,7 +545,7 @@ export default function PatientIntakeForm() {
           await uploadDocument(createdPatientId, orderId, "swo", swoFile)
         }
         for (const file of supportingFiles) {
-          await uploadDocument(createdPatientId, orderId, "referral", file)
+          await uploadDocument(createdPatientId, orderId, "other", file)
         }
 
         setSubmitSuccess(`Patient and intake order created (${orderId.slice(0, 8)})`)
