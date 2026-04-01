@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 
 type FormState = {
@@ -78,6 +78,31 @@ function parseCodes(value: string) {
     .filter(Boolean)
 }
 
+type CodingRecommendation = {
+  hcpcs_code: string
+  score?: number | null
+  requires_auth?: boolean | null
+  avg_reimbursement?: number | null
+  denial_probability?: number | null
+}
+
+type PayerOption = {
+  id: string
+  name: string
+  availity_payer_id?: string | null
+  availity_payer_name?: string | null
+}
+type Icd10Option = { code: string; description: string }
+type PhysicianOption = {
+  npi: string
+  full_name: string
+  first_name?: string
+  last_name?: string
+  specialty?: string
+  phone?: string
+  fax?: string
+}
+
 export default function PatientIntakeForm() {
   const router = useRouter()
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
@@ -86,6 +111,19 @@ export default function PatientIntakeForm() {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null)
+  const [doctorLookupStatus, setDoctorLookupStatus] = useState<string | null>(null)
+  const [recommendations, setRecommendations] = useState<CodingRecommendation[]>([])
+  const [recommendationStatus, setRecommendationStatus] = useState<string | null>(null)
+  const [payerOptions, setPayerOptions] = useState<PayerOption[]>([])
+  const [payersHydrated, setPayersHydrated] = useState(false)
+  const [payersStatus, setPayersStatus] = useState<string | null>(null)
+  const [payerFilter, setPayerFilter] = useState("")
+  const [icd10Options, setIcd10Options] = useState<Icd10Option[]>([])
+  const [icd10Status, setIcd10Status] = useState<string | null>(null)
+  const [icd10Filter, setIcd10Filter] = useState("")
+  const [physicianOptions, setPhysicianOptions] = useState<PhysicianOption[]>([])
+  const [physicianStatus, setPhysicianStatus] = useState<string | null>(null)
+  const [physicianFilter, setPhysicianFilter] = useState("")
 
   const updateField = useCallback((field: keyof FormState, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }))
@@ -93,6 +131,264 @@ export default function PatientIntakeForm() {
 
   const icd10Codes = useMemo(() => parseCodes(form.icd10_codes), [form.icd10_codes])
   const hcpcsCodes = useMemo(() => parseCodes(form.hcpcs_codes), [form.hcpcs_codes])
+  const currentIcdToken = useMemo(() => {
+    const segments = form.icd10_codes.split(",")
+    return (segments[segments.length - 1] || "").trim()
+  }, [form.icd10_codes])
+
+  const filteredPayers = useMemo(() => {
+    const f = payerFilter.trim().toLowerCase()
+    if (!f) return payerOptions
+    return payerOptions.filter(
+      (p) => p.id.toLowerCase().includes(f) || p.name.toLowerCase().includes(f),
+    )
+  }, [payerFilter, payerOptions])
+
+  const payersForSelect = useMemo(() => {
+    const selected = payerOptions.find((p) => p.id === form.payer_id)
+    if (!selected || filteredPayers.some((p) => p.id === selected.id)) {
+      return filteredPayers
+    }
+    return [selected, ...filteredPayers]
+  }, [filteredPayers, form.payer_id, payerOptions])
+
+  const icd10ForSelect = useMemo(() => {
+    const f = icd10Filter.trim().toLowerCase()
+    if (!f) return icd10Options
+    return icd10Options.filter(
+      (item) => item.code.toLowerCase().includes(f) || item.description.toLowerCase().includes(f),
+    )
+  }, [icd10Filter, icd10Options])
+
+  const physiciansForSelect = useMemo(() => {
+    const f = physicianFilter.trim().toLowerCase()
+    if (!f) return physicianOptions
+    return physicianOptions.filter(
+      (item) =>
+        item.full_name.toLowerCase().includes(f) ||
+        item.npi.toLowerCase().includes(f) ||
+        (item.specialty || "").toLowerCase().includes(f),
+    )
+  }, [physicianFilter, physicianOptions])
+
+  useEffect(() => {
+    let cancelled = false
+    setPayersStatus("Loading payer directory…")
+    fetch("/api/reference/payers", { cache: "no-store" })
+      .then(async (res) => {
+        const data = (await res.json().catch(() => ({}))) as {
+          payers?: PayerOption[]
+          error?: string
+          detail?: string
+        }
+        if (!res.ok) {
+          throw new Error(data.detail || data.error || "Failed to load payers")
+        }
+        const list = Array.isArray(data.payers) ? data.payers : []
+        if (!cancelled) {
+          setPayerOptions(list)
+          setPayersStatus(list.length ? null : "No payers in directory — enter payer ID manually.")
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPayerOptions([])
+          setPayersStatus("Could not load payer directory — enter payer ID manually.")
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPayersHydrated(true)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const query = (currentIcdToken || icd10Filter).trim()
+    if (query.length < 2) {
+      setIcd10Options([])
+      setIcd10Status("Type 2+ characters to search ICD-10.")
+      return
+    }
+    setIcd10Status("Loading ICD-10 suggestions…")
+    const timer = setTimeout(() => {
+      fetch(`/api/reference/icd10?query=${encodeURIComponent(query)}`, { cache: "no-store" })
+        .then(async (res) => {
+          const data = (await res.json().catch(() => ({}))) as {
+            items?: Icd10Option[]
+            error?: string
+            detail?: string
+          }
+          if (!res.ok) {
+            throw new Error(data.detail || data.error || "Failed to load ICD-10 suggestions")
+          }
+          if (!cancelled) {
+            const list = Array.isArray(data.items) ? data.items : []
+            setIcd10Options(list)
+            setIcd10Status(list.length ? null : "No ICD-10 matches found.")
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setIcd10Options([])
+            setIcd10Status("Could not load ICD-10 suggestions.")
+          }
+        })
+    }, 180)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [currentIcdToken, icd10Filter])
+
+  useEffect(() => {
+    let cancelled = false
+    const query = (physicianFilter || form.doctor_name || form.referring_npi).trim()
+    if (query.length < 2) {
+      setPhysicianOptions([])
+      setPhysicianStatus("Type doctor name or NPI to search.")
+      return
+    }
+    setPhysicianStatus("Searching physician directory…")
+    const timer = setTimeout(() => {
+      fetch(`/api/reference/physicians?query=${encodeURIComponent(query)}`, { cache: "no-store" })
+        .then(async (res) => {
+          const data = (await res.json().catch(() => ({}))) as {
+            items?: PhysicianOption[]
+            error?: string
+            detail?: string
+          }
+          if (!res.ok) {
+            throw new Error(data.detail || data.error || "Failed to load physician suggestions")
+          }
+          if (!cancelled) {
+            const list = Array.isArray(data.items) ? data.items : []
+            setPhysicianOptions(list)
+            setPhysicianStatus(list.length ? null : "No physician matches found.")
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setPhysicianOptions([])
+            setPhysicianStatus("Could not load physician suggestions.")
+          }
+        })
+    }, 220)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [form.doctor_name, form.referring_npi, physicianFilter])
+
+  const applyIcd10Option = useCallback((code: string) => {
+    const segments = form.icd10_codes.split(",")
+    const nextSegments = segments
+      .slice(0, Math.max(0, segments.length - 1))
+      .map((part) => part.trim())
+      .filter(Boolean)
+    nextSegments.push(code)
+    updateField("icd10_codes", nextSegments.join(", "))
+    setIcd10Filter("")
+  }, [form.icd10_codes, updateField])
+
+  const applyPhysicianOption = useCallback((physician: PhysicianOption) => {
+    setForm((prev) => ({
+      ...prev,
+      referring_npi: physician.npi || prev.referring_npi,
+      doctor_name: physician.full_name || prev.doctor_name,
+      doctor_phone: physician.phone || prev.doctor_phone,
+      doctor_fax: physician.fax || prev.doctor_fax,
+    }))
+    setPhysicianFilter(physician.full_name || "")
+    setDoctorLookupStatus(physician.full_name ? `Loaded ${physician.full_name}` : "Physician selected.")
+  }, [])
+
+  const lookupPhysicianByNpi = useCallback(async () => {
+    const npi = form.referring_npi.trim()
+    if (!/^\d{10}$/.test(npi)) {
+      setDoctorLookupStatus("Enter a valid 10-digit NPI.")
+      return
+    }
+    setDoctorLookupStatus("Looking up physician...")
+    const res = await fetch(`/api/physicians/lookup?npi=${encodeURIComponent(npi)}`, {
+      cache: "no-store",
+    }).catch(() => null)
+    if (!res) {
+      setDoctorLookupStatus("Unable to reach physician directory.")
+      return
+    }
+    const data = (await res.json().catch(() => ({}))) as {
+      physician?: { full_name?: string | null; phone?: string | null; fax?: string | null }
+      error?: string
+      detail?: string
+    }
+    if (!res.ok) {
+      setDoctorLookupStatus(data.detail || data.error || "NPI not found.")
+      return
+    }
+    const fullName = data.physician?.full_name?.trim() || ""
+    const phone = data.physician?.phone?.trim() || ""
+    const fax = data.physician?.fax?.trim() || ""
+    setForm((prev) => ({
+      ...prev,
+      doctor_name: prev.doctor_name.trim() || fullName,
+      doctor_phone: prev.doctor_phone.trim() || phone,
+      doctor_fax: prev.doctor_fax.trim() || fax,
+    }))
+    setDoctorLookupStatus(fullName ? `Loaded ${fullName}` : "Physician loaded from NPI.")
+  }, [form.referring_npi])
+
+  const fetchCodingRecommendations = useCallback(async () => {
+    const payerId = form.payer_id.trim()
+    if (!payerId || icd10Codes.length === 0) {
+      setRecommendations([])
+      return
+    }
+    setRecommendationStatus("Fetching coding recommendations...")
+    const res = await fetch("/api/intake/coding-recommendations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        payer_id: payerId,
+        icd10_codes: icd10Codes,
+        physician_npi: form.referring_npi.trim() || undefined,
+        limit: 5,
+      }),
+    }).catch(() => null)
+    if (!res) {
+      setRecommendationStatus("Unable to reach coding engine.")
+      return
+    }
+    const data = (await res.json().catch(() => ({}))) as {
+      recommendations?: CodingRecommendation[]
+      error?: string
+      detail?: string
+    }
+    if (!res.ok) {
+      setRecommendationStatus(data.detail || data.error || "Recommendation lookup failed.")
+      return
+    }
+    const next = Array.isArray(data.recommendations) ? data.recommendations : []
+    setRecommendations(next)
+    if (next.length > 0 && hcpcsCodes.length === 0) {
+      updateField("hcpcs_codes", next.map((row) => row.hcpcs_code).join(", "))
+    }
+    setRecommendationStatus(next.length > 0 ? "Recommendations ready." : "No recommendations found.")
+  }, [form.payer_id, form.referring_npi, hcpcsCodes.length, icd10Codes, updateField])
+
+  useEffect(() => {
+    if (!form.payer_id.trim() || icd10Codes.length === 0) return
+    const timer = setTimeout(() => {
+      fetchCodingRecommendations().catch(() => {
+        setRecommendationStatus("Recommendation lookup failed.")
+      })
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [fetchCodingRecommendations, form.payer_id, icd10Codes])
 
   const uploadDocument = useCallback(async (patientId: string, orderId: string, docType: string, file: File) => {
     const docForm = new FormData()
@@ -144,6 +440,7 @@ export default function PatientIntakeForm() {
       }
 
       setSubmitting(true)
+      let createdPatientId: string | null = null
       try {
         const patientPayload = {
           first_name: form.first_name.trim(),
@@ -180,13 +477,13 @@ export default function PatientIntakeForm() {
           )
         }
 
-        const patientId = (patientData as { patient_id?: string }).patient_id
-        if (!patientId) {
+        createdPatientId = (patientData as { patient_id?: string }).patient_id || null
+        if (!createdPatientId) {
           throw new Error("Patient created but ID was not returned")
         }
 
         const orderPayload = {
-          patient_id: patientId,
+          patient_id: createdPatientId,
           hcpcs_codes: hcpcsCodes,
           referring_physician_npi: form.referring_npi.trim(),
           payer_id: form.payer_id.trim(),
@@ -245,10 +542,10 @@ export default function PatientIntakeForm() {
         }
 
         if (swoFile) {
-          await uploadDocument(patientId, orderId, "swo", swoFile)
+          await uploadDocument(createdPatientId, orderId, "swo", swoFile)
         }
         for (const file of supportingFiles) {
-          await uploadDocument(patientId, orderId, "referral", file)
+          await uploadDocument(createdPatientId, orderId, "referral", file)
         }
 
         setSubmitSuccess(`Patient and intake order created (${orderId.slice(0, 8)})`)
@@ -257,7 +554,11 @@ export default function PatientIntakeForm() {
         setSupportingFiles([])
         setTimeout(() => router.push("/intake"), 1000)
       } catch (err) {
-        setSubmitError(err instanceof Error ? err.message : "Failed to submit intake")
+        const baseMessage = err instanceof Error ? err.message : "Failed to submit intake"
+        const message = createdPatientId
+          ? `${baseMessage} Patient record was created (${createdPatientId.slice(0, 8)}), but intake order creation did not finish.`
+          : baseMessage
+        setSubmitError(message)
       } finally {
         setSubmitting(false)
       }
@@ -300,9 +601,77 @@ export default function PatientIntakeForm() {
           Coverage
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <FieldLabel label="Payer" required />
-            <FieldInput value={form.payer_id} onChange={(v) => updateField("payer_id", v)} placeholder="Aetna, BCBS, Medicare..." />
+          <div className="sm:col-span-2">
+            <FieldLabel label="Insurance payer" required />
+            {!payersHydrated ? (
+              <p className="mt-1 text-sm text-slate-500">{payersStatus}</p>
+            ) : payerOptions.length > 0 ? (
+              <>
+                <FieldInput
+                  value={payerFilter}
+                  onChange={(v) => setPayerFilter(v)}
+                  placeholder="Type to filter (name or ID)…"
+                />
+                <select
+                  value={form.payer_id}
+                  onChange={(e) => updateField("payer_id", e.target.value)}
+                  className="mt-2 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none focus:border-accent-blue/40"
+                >
+                  <option value="">Select insurance payer…</option>
+                  {payersForSelect.map((p) => {
+                    const pi = p.availity_payer_id?.trim() || p.id
+                    return (
+                      <option key={p.id} value={p.id}>
+                        {p.name} — Availity PI {pi} · Poseidon {p.id}
+                      </option>
+                    )
+                  })}
+                </select>
+                {payersForSelect.length === 0 && payerFilter.trim() && (
+                  <p className="mt-1 text-[10px] text-slate-500">No matches — clear the filter or pick from the full list.</p>
+                )}
+              </>
+            ) : (
+              <FieldInput
+                value={form.payer_id}
+                onChange={(v) => updateField("payer_id", v)}
+                placeholder="e.g. UHC, AETNA, MEDICARE_DMERC"
+              />
+            )}
+            {payersHydrated && (
+              <p className="mt-1 text-[10px] text-slate-500">
+                {payersStatus ||
+                  "Poseidon payer is stored on the patient; X12 270/837 uses the Availity PI code from the directory (confirm against your Availity payer list)."}
+              </p>
+            )}
+          </div>
+          <div className="sm:col-span-2">
+            <FieldLabel label="Physician search" />
+            <FieldInput
+              value={physicianFilter}
+              onChange={setPhysicianFilter}
+              placeholder="Type doctor name or NPI…"
+            />
+            {physiciansForSelect.length > 0 ? (
+              <select
+                value=""
+                onChange={(e) => {
+                  const selected = physiciansForSelect.find((item) => item.npi === e.target.value)
+                  if (selected) applyPhysicianOption(selected)
+                }}
+                className="mt-2 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none focus:border-accent-blue/40"
+              >
+                <option value="">Select physician to auto-fill contact + NPI…</option>
+                {physiciansForSelect.map((item) => (
+                  <option key={item.npi} value={item.npi}>
+                    {item.full_name} ({item.npi}){item.specialty ? ` - ${item.specialty}` : ""}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <p className="mt-1 text-[10px] text-slate-500">
+              {physicianStatus || "Search the physician directory to auto-fill doctor contact and NPI."}
+            </p>
           </div>
           <div>
             <FieldLabel label="Insurance / Member ID" required />
@@ -323,7 +692,26 @@ export default function PatientIntakeForm() {
               onChange={(v) => updateField("icd10_codes", v)}
               placeholder="M54.5, G89.4"
             />
-            <p className="mt-1 text-[10px] text-slate-600">Comma-separated</p>
+            {icd10ForSelect.length > 0 ? (
+              <select
+                value=""
+                onChange={(e) => {
+                  const selected = icd10ForSelect.find((item) => item.code === e.target.value)
+                  if (selected) applyIcd10Option(selected.code)
+                }}
+                className="mt-2 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none focus:border-accent-blue/40"
+              >
+                <option value="">Add ICD-10 code from dropdown…</option>
+                {icd10ForSelect.map((item) => (
+                  <option key={item.code} value={item.code}>
+                    {item.code} - {item.description}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <p className="mt-1 text-[10px] text-slate-600">
+              {icd10Status || "Comma-separated. Use the dropdown to add the current ICD-10 code."}
+            </p>
           </div>
           <div>
             <FieldLabel label="HCPCS / Device Codes" required />
@@ -349,6 +737,20 @@ export default function PatientIntakeForm() {
               onChange={(v) => updateField("referring_npi", v)}
               placeholder="1234567890"
             />
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <p className="text-[10px] text-slate-500">{doctorLookupStatus || "Physician profile auto-fills from NPI directory."}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  lookupPhysicianByNpi().catch(() => {
+                    setDoctorLookupStatus("Unable to load physician details.")
+                  })
+                }}
+                className="rounded-md border border-white/15 px-2 py-1 text-[10px] font-semibold text-slate-300 transition hover:border-white/30 hover:text-white"
+              >
+                Pull NPI profile
+              </button>
+            </div>
           </div>
           <div>
             <FieldLabel label="Insurance Auth Number" />
@@ -372,6 +774,28 @@ export default function PatientIntakeForm() {
           </div>
         </div>
         <div className="mt-4">
+          {recommendationStatus && (
+            <p className="mb-2 text-[10px] text-slate-500">{recommendationStatus}</p>
+          )}
+          {recommendations.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {recommendations.map((row) => (
+                <button
+                  type="button"
+                  key={row.hcpcs_code}
+                  onClick={() => {
+                    const merged = Array.from(new Set([...hcpcsCodes, row.hcpcs_code]))
+                    updateField("hcpcs_codes", merged.join(", "))
+                  }}
+                  className="rounded-full border border-accent-blue/30 bg-accent-blue/10 px-3 py-1 text-[10px] font-semibold text-accent-blue"
+                >
+                  {row.hcpcs_code}
+                  {typeof row.denial_probability === "number" ? ` · ${(row.denial_probability * 100).toFixed(0)}% deny` : ""}
+                  {typeof row.avg_reimbursement === "number" ? ` · $${row.avg_reimbursement.toFixed(0)}` : ""}
+                </button>
+              ))}
+            </div>
+          )}
           <FieldLabel label="Notes" />
           <textarea
             value={form.notes}
@@ -471,6 +895,9 @@ export default function PatientIntakeForm() {
           type="button"
           onClick={() => {
             setForm(EMPTY_FORM)
+            setPayerFilter("")
+            setIcd10Filter("")
+            setPhysicianFilter("")
             setSwoFile(null)
             setSupportingFiles([])
             setSubmitError(null)

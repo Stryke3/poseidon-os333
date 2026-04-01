@@ -48,6 +48,14 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: "Unable to reach core service" }, { status: 502 })
   }
 
-  const payload = await res.json().catch(() => ({}))
+  const raw = await res.text().catch(() => "")
+  let payload: unknown = {}
+  if (raw) {
+    try {
+      payload = JSON.parse(raw)
+    } catch {
+      payload = { error: raw.slice(0, 500) }
+    }
+  }
   return Response.json(payload, { status: res.status })
 }
