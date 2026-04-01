@@ -12,6 +12,21 @@ function cn(...values: Array<string | false | undefined>) {
 
 type View = "login" | "forgot" | "reset" | "reset-success"
 
+type CoreStatusBody = {
+  reachable?: boolean
+  databaseOk?: boolean
+}
+
+function buildAuthErrorMessage(coreStatus?: CoreStatusBody) {
+  if (coreStatus?.reachable === false) {
+    return "This app cannot reach the Core API (login server). Check the Core service health and service URL in Render, then confirm the frontend is pointing at the correct Core base URL."
+  }
+  if (coreStatus?.databaseOk === false) {
+    return "Core is running but cannot reach the database. Check the Core service DATABASE_URL in Render and confirm the managed Postgres instance is healthy."
+  }
+  return "Invalid email or password. If the seeded admin account exists, use admin@strykefox.com. If the password was changed, use Reset Password to set a new one."
+}
+
 export default function LoginPage() {
   return (
     <Suspense>
@@ -24,6 +39,7 @@ function LoginContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const pathname = usePathname()
+  const callbackUrl = searchParams.get("callbackUrl") || "/"
 
   // Detect reset token in URL
   const resetTokenParam = searchParams.get("reset_token")
@@ -61,8 +77,9 @@ function LoginContent() {
     setError("")
 
     const result = await signIn("credentials", {
-      email,
+      email: email.trim().toLowerCase(),
       password,
+      callbackUrl,
       redirect: false,
     })
 
@@ -70,29 +87,19 @@ function LoginContent() {
       let message = "Invalid credentials. Contact your administrator."
       try {
         const st = await fetch("/api/core-status", { cache: "no-store" })
-        const body = (await st.json()) as {
-          reachable?: boolean
-          databaseOk?: boolean
-        }
-        if (body.reachable === false) {
-          message =
-            "This app cannot reach the Core API (login server). Check the Core service health and service URL in Render, then confirm the frontend is pointing at the correct Core base URL."
-        } else if (body.databaseOk === false) {
-          message =
-            "Core is running but cannot reach the database. Check the Core service DATABASE_URL in Render and confirm the managed Postgres instance is healthy."
-        } else {
-          message =
-            "Invalid email or password. Default admin is in scripts/seed_admin.sql (email + password in the file comments). Re-run that SQL against your DB to reset the hash if needed."
-        }
+        const body = (await st.json()) as CoreStatusBody
+        message = buildAuthErrorMessage(body)
       } catch {
-        /* keep default message */
+        message = buildAuthErrorMessage()
       }
       setError(message)
       setLoading(false)
       return
     }
 
-    router.push("/")
+    const destination = result?.url || callbackUrl
+    router.replace(destination)
+    router.refresh()
   }
 
   async function handleForgotPassword(event: React.FormEvent<HTMLFormElement>) {
