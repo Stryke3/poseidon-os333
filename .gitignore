@@ -26,3 +26,5 @@ matia_complete.zip
 *.jpeg
 *.JPEG
 .github/workflows/
+
+.pycache/
