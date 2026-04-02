@@ -8,6 +8,7 @@ Usage (repo root, .env loaded):
   python3 scripts/lvco_live_pipeline.py --skip-ingest --limit 300
 
 Requires admin-capable token (same login env vars as ingest) and INTERNAL_API_KEY for import.
+Set CORE_BASE_URL like ingest_lvco (e.g. https://dashboard.strykefox.com/api/core on Render).
 Materialize: TRIDENT_API_URL must be set on Core (or compose default).
 """
 
@@ -62,10 +63,8 @@ def http_json(
 
 
 def core_login_url(base: str) -> str:
-    b = base.rstrip("/")
-    if b.endswith("/api"):
-        return f"{b}/api/v1/auth/login"
-    return f"{b}/auth/login"
+    """Must match Core `POST /auth/login` (same as scripts/ingest_lvco.py)."""
+    return f"{base.rstrip('/')}/auth/login"
 
 
 def get_token(base: str) -> str:
@@ -131,7 +130,10 @@ def main() -> None:
     q = f"limit={args.limit}&skip_existing_trident=true"
     if not args.no_unlock_gates:
         q += "&unlock_lvco_intake_gates=true"
-    if cb.endswith("/api"):
+    # Direct Core: /api/v1/admin/...  Nginx with base .../api: /api/api/v1/...  Dashboard proxy: .../api/core/api/v1/...
+    if cb.endswith("/api/core"):
+        url = f"{cb}/api/v1/admin/materialize-order-packages?{q}"
+    elif cb.endswith("/api"):
         url = f"{cb}/api/v1/admin/materialize-order-packages?{q}"
     else:
         url = f"{cb}/api/v1/admin/materialize-order-packages?{q}"

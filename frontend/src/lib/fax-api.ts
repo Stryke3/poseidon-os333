@@ -51,6 +51,8 @@ export interface FaxLogEntry {
   related_fax_id?: string;
   review_status?: string;
   review_reason?: string;
+  /** Pipeline: received | intake_incomplete | processed | case_created | sent */
+  intake_status?: string;
   record_types?: string[];
   urgency?: string;
   status: string;
@@ -74,8 +76,12 @@ export interface OcrResult {
   dob?: string;
   mrn?: string;
   insuranceId?: string;
+  payerName?: string;
   phone?: string;
   address?: string;
+  physicianNpi?: string;
+  diagnosisCodes?: string[];
+  hcpcsCodes?: string[];
   rawText?: string;
   confidence?: number;
   error?: string;
@@ -113,10 +119,16 @@ export async function sendFax(
     body: formData,
   });
 
-  const data = await res.json().catch(() => ({}));
+  const data = (await res.json().catch(() => ({}))) as {
+    error?: string
+    detail?: string
+    faxId?: string
+  };
 
   if (!res.ok) {
-    throw new Error(data.error || data.detail || `Fax send failed (${res.status})`);
+    const base = data.error || data.detail || `Fax send failed (${res.status})`;
+    const idHint = data.faxId ? ` Fax ID (for support): ${data.faxId}.` : "";
+    throw new Error(`${base}${idHint}`);
   }
 
   return data as FaxSendResult;
@@ -181,7 +193,15 @@ export async function processOcr(file: File): Promise<OcrResult> {
     firstName: raw.firstName || raw.first_name || "",
     lastName: raw.lastName || raw.last_name || "",
     dob: raw.dob || raw.date_of_birth || "",
+    payerName: raw.payerName || raw.insurance_info?.payer_name || "",
     insuranceId: raw.insuranceId || raw.insurance_info?.member_id || "",
+    physicianNpi: (raw as { physician_npi?: string }).physician_npi || raw.physicianNpi || "",
+    diagnosisCodes:
+      raw.diagnosisCodes ||
+      ((raw as { diagnosis_codes?: string[] }).diagnosis_codes ?? []),
+    hcpcsCodes:
+      raw.hcpcsCodes ||
+      ((raw as { hcpcs_codes?: string[] }).hcpcs_codes ?? []),
     rawText: raw.rawText || raw.raw_text_preview || "",
   };
 }

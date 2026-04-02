@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, NamedTuple
 
 import bcrypt
 import httpx
@@ -25,7 +25,9 @@ from fastapi import Body, Depends, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from minio import Minio
+from minio.error import S3Error
 from pydantic import BaseModel, EmailStr, field_validator
+from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row  # type: ignore[import-untyped]
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -48,6 +50,17 @@ from availity_client import (
     submit_claim_837,
     parse_997_basic,
     parse_835_basic,
+)
+from intake_pipeline import (
+    INTAKE_CASE_CREATED,
+    INTAKE_INCOMPLETE,
+    INTAKE_PROCESSED,
+    INTAKE_RECEIVED,
+    MatchTier,
+    intake_transition_allowed,
+    match_form_patient_for_intake,
+    normalize_form_identity,
+    resolve_fax_patient_with_pipeline,
 )
 
 # ---------------------------------------------------------------------------
@@ -109,54 +122,16 @@ async def _safe_fetch_all(
     return [dict(row) for row in rows]
 
 
-async def _ensure_fax_tables(conn) -> None:
-    async with conn.cursor() as cur:
-        await cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS fax_log (
-                id UUID PRIMARY KEY,
-                org_id UUID,
-                direction VARCHAR(16) NOT NULL,
-                fax_number VARCHAR(64) NOT NULL,
-                facility VARCHAR(255),
-                patient_name VARCHAR(255),
-                patient_dob VARCHAR(32),
-                patient_mrn VARCHAR(128),
-                record_types JSONB DEFAULT '[]'::jsonb,
-                urgency VARCHAR(32),
-                status VARCHAR(32) NOT NULL,
-                pages INTEGER DEFAULT 0,
-                service VARCHAR(64),
-                sinch_fax_id VARCHAR(255),
-                sent_by VARCHAR(255),
-                file_url TEXT,
-                received_at TIMESTAMPTZ,
-                release_metadata JSONB DEFAULT '{}'::jsonb,
-                raw_webhook JSONB DEFAULT '{}'::jsonb,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-            """
-        )
-        await cur.execute("ALTER TABLE fax_log ADD COLUMN IF NOT EXISTS patient_id UUID")
-        await cur.execute("ALTER TABLE fax_log ADD COLUMN IF NOT EXISTS order_id UUID")
-        await cur.execute("ALTER TABLE fax_log ADD COLUMN IF NOT EXISTS related_fax_id UUID")
-        await cur.execute("ALTER TABLE fax_log ADD COLUMN IF NOT EXISTS review_status VARCHAR(64)")
-        await cur.execute("ALTER TABLE fax_log ADD COLUMN IF NOT EXISTS review_reason TEXT")
-        await cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_fax_log_org_created_at ON fax_log (org_id, created_at DESC)"
-        )
-        await cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_fax_log_direction_created_at ON fax_log (direction, created_at DESC)"
-        )
-        await cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_fax_log_patient_created_at ON fax_log (patient_id, created_at DESC)"
-        )
-        await cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_fax_log_order_created_at ON fax_log (order_id, created_at DESC)"
-        )
-        await cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_fax_log_related_fax_id ON fax_log (related_fax_id)"
-        )
+async def _require_fax_log(conn) -> None:
+    """fax_log must exist (see scripts/init.sql and migrations); no runtime DDL."""
+    try:
+        await fetch_one(conn, "SELECT 1 FROM fax_log LIMIT 1")
+    except Exception as exc:
+        logger.error("fax_log not available: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Fax storage is not available. Apply database migrations (fax_log).",
+        ) from exc
 
 
 async def audit_log(
@@ -637,6 +612,16 @@ def _normalize_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _normalize_document_hash(value: Any) -> str | None:
+    """SHA-256 hex (64 chars) for deduplication; invalid values ignored."""
+    raw = _normalize_text(value).lower()
+    if not raw:
+        return None
+    if re.fullmatch(r"[a-f0-9]{64}", raw):
+        return raw
+    return None
+
+
 def _normalize_phone_digits(value: Any) -> str:
     return re.sub(r"\D+", "", _normalize_text(value))
 
@@ -814,6 +799,56 @@ def _inbound_review_state(
         "unmatched",
         f"Return fax from {fax_number} was received but could not be matched to a patient or outbound request.",
     )
+
+
+def _parsed_intake_from_fax_payload(payload: "FaxLogEntryPayload") -> dict[str, Any]:
+    raw = payload.raw_webhook or {}
+    parsed = raw.get("parsed_intake") if isinstance(raw, dict) else None
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _extract_intake_confidence(
+    parsed_intake: dict[str, Any],
+    raw_webhook: dict[str, Any],
+) -> float | None:
+    """Return OCR/confidence score in 0..1, or None if not supplied."""
+    candidates: list[Any] = []
+    candidates.append(parsed_intake.get("confidence"))
+    candidates.append(parsed_intake.get("ocr_confidence"))
+    candidates.append(raw_webhook.get("confidence"))
+    pi = raw_webhook.get("parsed_intake")
+    if isinstance(pi, dict):
+        candidates.append(pi.get("confidence"))
+        candidates.append(pi.get("ocr_confidence"))
+    for c in candidates:
+        if c is None:
+            continue
+        try:
+            v = float(str(c).strip()) if not isinstance(c, (int, float)) else float(c)
+        except (TypeError, ValueError):
+            continue
+        if v > 1.0:
+            v = v / 100.0
+        if 0.0 <= v <= 1.0:
+            return v
+    return None
+
+
+def _split_codes(value: Any) -> list[str]:
+    if isinstance(value, list):
+        items = value
+    else:
+        items = re.split(r"[\s,]+", _normalize_text(value))
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        code = _normalize_text(item).upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        out.append(code)
+    return out
+
 
 def _safe_slug(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
@@ -1029,26 +1064,32 @@ async def _persist_claim_submission(
     status_value = "error" if status_code >= 500 else ("accepted" if accepted else "submitted")
     failure_reason = None if status_code < 400 else _normalize_text((acknowledgment_payload.get("body") or ""))[:500]
 
-    await exec_write(
-        conn,
-        """
-        INSERT INTO claim_submissions (
-            id, order_id, org_id, payer_id, submission_format, submission_payload, acknowledgment_payload,
-            status, failure_reason, submitted_at, acknowledged_at
+    try:
+        await exec_write(
+            conn,
+            """
+            INSERT INTO claim_submissions (
+                id, order_id, org_id, payer_id, submission_format, submission_payload, acknowledgment_payload,
+                status, failure_reason, submitted_at, acknowledged_at
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),CASE WHEN $10 < 500 THEN NOW() ELSE NULL END)
+            """,
+            str(uuid.uuid4()),
+            order_id,
+            org_id,
+            payer_id,
+            submission_format,
+            _json_dump(submission_payload),
+            _json_dump(acknowledgment_payload),
+            status_value,
+            failure_reason,
+            status_code,
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),CASE WHEN $10 < 500 THEN NOW() ELSE NULL END)
-        """,
-        str(uuid.uuid4()),
-        order_id,
-        org_id,
-        payer_id,
-        submission_format,
-        _json_dump(submission_payload),
-        _json_dump(acknowledgment_payload),
-        status_value,
-        failure_reason,
-        status_code,
-    )
+    except UniqueViolation as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Duplicate successful claim submission for this order (database enforced).",
+        ) from exc
     await exec_write(
         conn,
         """
@@ -1063,6 +1104,113 @@ async def _persist_claim_submission(
         order_id,
         org_id,
     )
+
+
+async def _precheck_order_for_claim_submission(conn, org_id: str, order_id: str) -> dict[str, Any]:
+    """Billing-ready + at-most-one successful claim row (application check; DB index also enforces)."""
+    row = await fetch_one(
+        conn,
+        """
+        SELECT id, billing_ready_at, billing_status, status, patient_id, payer_id, referring_physician_npi, hcpcs_codes
+        FROM orders
+        WHERE id = $1 AND org_id = $2
+        """,
+        order_id,
+        org_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if settings.billing_claim_require_billing_ready and not row.get("billing_ready_at"):
+        raise HTTPException(
+            status_code=409,
+            detail="Order is not billing-ready (billing_ready_at not set). Complete delivery/POD workflow before claim submission.",
+        )
+    if settings.billing_claim_block_duplicate_submission:
+        dup = await fetch_one(
+            conn,
+            """
+            SELECT id, status FROM claim_submissions
+            WHERE order_id = $1 AND org_id = $2::uuid
+              AND status IN ('submitted', 'accepted')
+            ORDER BY COALESCE(submitted_at, created_at) DESC NULLS LAST
+            LIMIT 1
+            """,
+            order_id,
+            org_id,
+        )
+        if dup:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "A claim submission already exists for this order",
+                    "claim_submission_id": str(dup["id"]),
+                    "status": dup.get("status"),
+                },
+            )
+    return dict(row)
+
+
+async def _load_order_patient_for_837_with_claim_lock(
+    conn,
+    org_id: str,
+    order_id: str,
+) -> tuple[dict[str, Any], dict[str, Any], tuple[str | None, str | None]]:
+    """FOR UPDATE order + same prechecks as _precheck (billing-ready, duplicate claim)."""
+    order = await fetch_one(
+        conn,
+        """
+        SELECT id, patient_id, payer_id, referring_physician_npi, hcpcs_codes, billing_ready_at, billing_status, status
+        FROM orders
+        WHERE id = $1 AND org_id = $2
+        FOR UPDATE
+        """,
+        order_id,
+        org_id,
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if settings.billing_claim_require_billing_ready and not order.get("billing_ready_at"):
+        raise HTTPException(
+            status_code=409,
+            detail="Order is not billing-ready (billing_ready_at not set). Complete delivery/POD workflow before claim submission.",
+        )
+    if settings.billing_claim_block_duplicate_submission:
+        dup = await fetch_one(
+            conn,
+            """
+            SELECT id FROM claim_submissions
+            WHERE order_id = $1 AND org_id = $2::uuid
+              AND status IN ('submitted', 'accepted')
+            LIMIT 1
+            """,
+            order_id,
+            org_id,
+        )
+        if dup:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "A claim submission already exists for this order",
+                    "claim_submission_id": str(dup["id"]),
+                },
+            )
+    patient = await fetch_one(
+        conn,
+        """
+        SELECT id, first_name, last_name, dob, insurance_id, payer_id, address, diagnosis_codes
+        FROM patients
+        WHERE id = $1 AND org_id = $2
+        """,
+        order["patient_id"],
+        org_id,
+    )
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    internal_pid = order.get("payer_id") or patient.get("payer_id")
+    edi_pair: tuple[str | None, str | None] = (None, None)
+    if internal_pid:
+        edi_pair = await _fetch_availity_payer_edi(conn, str(internal_pid))
+    return dict(order), dict(patient), edi_pair
 
 
 async def _resolve_assignee(
@@ -1759,6 +1907,20 @@ def require_permissions(*permissions: str):
     return _check
 
 
+def require_any_permission(*permissions: str):
+    """User must have at least one of the listed permissions (admin always allowed)."""
+
+    async def _check(user: dict = Depends(current_user)):
+        if user.get("role") == UserRole.ADMIN.value:
+            return user
+        granted = set(_coerce_json_list(user.get("permissions")))
+        if any(p in granted for p in permissions):
+            return user
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    return _check
+
+
 def require_internal_api_key():
     async def _check(request: Request):
         expected_key = settings.internal_api_key
@@ -1837,6 +1999,10 @@ class FaxLogEntryPayload(BaseModel):
     review_reason: str | None = None
     release_metadata: dict[str, Any] = {}
     raw_webhook: dict[str, Any] = {}
+    external_fax_id: str | None = None
+    document_hash: str | None = None
+    # Pipeline: received | intake_incomplete | processed | case_created (inbound); optional override
+    intake_status: str | None = None
 
 
 class FaxReviewPayload(BaseModel):
@@ -1851,9 +2017,9 @@ class PatientCreate(BaseModel):
     last_name: str
     dob: str  # ISO date
     email: EmailStr | None = None
-    insurance_id: str
-    payer_id: str
-    diagnosis_codes: list[str]
+    insurance_id: str | None = None
+    payer_id: str | None = None
+    diagnosis_codes: list[str] = []
     phone: str | None = None
     address: dict | None = None
 
@@ -1864,6 +2030,18 @@ class PatientCreate(BaseModel):
             if not (3 <= len(code) <= 7):
                 raise ValueError(f"Invalid ICD-10 format: {code}")
         return [c.upper() for c in v]
+
+
+class PatientUpdate(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    dob: str | None = None
+    email: EmailStr | None = None
+    insurance_id: str | None = None
+    payer_id: str | None = None
+    diagnosis_codes: list[str] | None = None
+    phone: str | None = None
+    address: dict | None = None
 
 
 class OrderCreate(BaseModel):
@@ -2729,7 +2907,7 @@ async def get_fax_log(
 ):
     db = request.app.state.db_pool
     async with db.connection() as conn:
-        await _ensure_fax_tables(conn)
+        await _require_fax_log(conn)
         params: list[Any] = [user["org_id"]]
         where = ["(org_id = $1 OR org_id IS NULL)"]
         if direction:
@@ -2741,7 +2919,7 @@ async def get_fax_log(
             f"""
             SELECT id, direction, fax_number, facility, patient_name, patient_dob, patient_mrn,
                    patient_id, order_id, related_fax_id, review_status, review_reason,
-                   record_types, urgency, status, pages, service, sinch_fax_id, sent_by, file_url,
+                   record_types, urgency, status, pages, service, sinch_fax_id, external_fax_id, document_hash, intake_status, sent_by, file_url,
                    received_at, release_metadata, raw_webhook, created_at
             FROM fax_log
             WHERE {' AND '.join(where)}
@@ -2767,7 +2945,7 @@ async def create_fax_log(
     db = request.app.state.db_pool
     fax_id = str(uuid.uuid4())
     async with db.connection() as conn:
-        await _ensure_fax_tables(conn)
+        await _require_fax_log(conn)
         context = await _resolve_fax_patient_context(conn, str(user["org_id"]), payload)
         await exec_write(
             conn,
@@ -2775,10 +2953,10 @@ async def create_fax_log(
             INSERT INTO fax_log (
                 id, org_id, direction, fax_number, facility, patient_name, patient_dob, patient_mrn,
                 patient_id, order_id, related_fax_id, review_status, review_reason,
-                record_types, urgency, status, pages, service, sinch_fax_id, sent_by, file_url,
+                record_types, urgency, status, pages, service, sinch_fax_id, intake_status, sent_by, file_url,
                 received_at, release_metadata, raw_webhook
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24::jsonb)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::jsonb,$25::jsonb)
             """,
             fax_id,
             user["org_id"],
@@ -2799,6 +2977,8 @@ async def create_fax_log(
             payload.pages,
             payload.service,
             payload.sinch_fax_id,
+            _normalize_text(payload.intake_status)
+            or ("received" if (payload.direction or "").lower() == "inbound" else "sent"),
             payload.sent_by or user.get("email") or user["sub"],
             payload.file_url,
             payload.received_at,
@@ -2808,6 +2988,428 @@ async def create_fax_log(
         await audit_log(conn, user["org_id"], user["sub"], "create", "fax_log", fax_id, _client_ip(request))
         row = await fetch_one(conn, "SELECT * FROM fax_log WHERE id = $1", fax_id)
     return _serialize(dict(row or {"id": fax_id}))
+
+
+class InboundIntakeWork(NamedTuple):
+    """State passed from create_intake_record() → process_intake() (context dict is mutated in process_intake)."""
+
+    fax_id: str
+    org_id: str | None
+    matched_outbound: dict[str, Any] | None
+    parsed_intake: dict[str, Any]
+    context: dict[str, Any]
+    ext_fax: str | None
+    doc_hash: str | None
+    intake_incomplete: bool
+    conf: float | None
+    review_status: str
+    review_reason: str
+
+
+async def create_intake_record(
+    conn: Any,
+    fax_id: str,
+    payload: FaxLogEntryPayload,
+) -> tuple[dict[str, Any] | None, InboundIntakeWork | None]:
+    """
+    Idempotency checks → enrich from outbound → OCR confidence → optional patient create →
+    resolve context → INSERT fax_log. Returns (idempotent_response, None) or (None, work).
+    """
+    await _require_fax_log(conn)
+    incoming_sinch_id = _normalize_text(payload.sinch_fax_id)
+    ext_fax = _normalize_text(payload.external_fax_id) or None
+    doc_hash = _normalize_document_hash(payload.document_hash)
+    if incoming_sinch_id:
+        existing = await fetch_one(
+            conn,
+            """
+            SELECT id, org_id, patient_id, order_id, status, review_status, sinch_fax_id
+            FROM fax_log
+            WHERE direction = 'inbound'
+              AND sinch_fax_id = $1
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            incoming_sinch_id,
+        )
+        if existing:
+            return {**dict(existing), "idempotent_replay": True}, None
+    if ext_fax:
+        existing = await fetch_one(
+            conn,
+            """
+            SELECT id, org_id, patient_id, order_id, status, review_status, sinch_fax_id
+            FROM fax_log
+            WHERE direction = 'inbound'
+              AND external_fax_id = $1
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            ext_fax,
+        )
+        if existing:
+            return {**dict(existing), "idempotent_replay": True}, None
+    if doc_hash:
+        existing = await fetch_one(
+            conn,
+            """
+            SELECT id, org_id, patient_id, order_id, status, review_status, sinch_fax_id
+            FROM fax_log
+            WHERE direction = 'inbound'
+              AND document_hash = $1
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            doc_hash,
+        )
+        if existing:
+            return {**dict(existing), "idempotent_replay": True}, None
+
+    matched_outbound = await _find_recent_outbound_fax(conn, payload.fax_number)
+    org_id = str(matched_outbound["org_id"]) if matched_outbound and matched_outbound.get("org_id") else None
+    if matched_outbound:
+        if not payload.patient_name:
+            payload.patient_name = _normalize_text(matched_outbound.get("patient_name")) or None
+        if not payload.patient_dob:
+            payload.patient_dob = _normalize_text(matched_outbound.get("patient_dob")) or None
+        if not payload.patient_mrn:
+            payload.patient_mrn = _normalize_text(matched_outbound.get("patient_mrn")) or None
+        if not payload.patient_id:
+            payload.patient_id = _normalize_text(matched_outbound.get("patient_id")) or None
+        if not payload.order_id:
+            payload.order_id = _normalize_text(matched_outbound.get("order_id")) or None
+
+    parsed_intake = _parsed_intake_from_fax_payload(payload)
+    raw_wh = payload.raw_webhook if isinstance(payload.raw_webhook, dict) else {}
+    conf = _extract_intake_confidence(parsed_intake, raw_wh)
+    ocr_threshold = min(1.0, max(0.0, float(settings.intake_ocr_confidence_threshold)))
+    intake_incomplete = conf is not None and conf < ocr_threshold
+    if intake_incomplete:
+        rw = dict(raw_wh)
+        rw["processing_state"] = "intake_incomplete"
+        rw["intake_status"] = "intake_incomplete"
+        rw["intake_confidence"] = conf
+        rw["intake_confidence_threshold"] = ocr_threshold
+        payload.raw_webhook = rw
+        payload.review_status = "intake_incomplete"
+        payload.review_reason = (
+            f"OCR confidence {conf:.2f} is below threshold {ocr_threshold:.2f}. "
+            "Patient was not auto-created. Review required."
+        )
+
+    fax_intake_status: str | None = None
+    hold_reason: str | None = None
+    if org_id and not payload.patient_id and not intake_incomplete:
+        inferred_patient_id, fax_intake_status, hold_reason = await resolve_fax_patient_with_pipeline(
+            conn,
+            org_id,
+            parsed_intake,
+            payload_patient_dob=payload.patient_dob,
+            payload_patient_name=payload.patient_name,
+            payload_patient_mrn=payload.patient_mrn,
+            intake_incomplete=intake_incomplete,
+            fetch_one=fetch_one,
+            fetch_all=fetch_all,
+            exec_write=exec_write,
+            record_workflow_event=_record_workflow_event,
+            fax_sinch_id=payload.sinch_fax_id,
+        )
+        if inferred_patient_id:
+            payload.patient_id = inferred_patient_id
+            if not payload.patient_name:
+                payload.patient_name = _normalize_text(parsed_intake.get("patient_name")) or None
+            if not payload.patient_dob:
+                payload.patient_dob = _normalize_text(parsed_intake.get("date_of_birth")) or None
+    if hold_reason:
+        payload.review_status = payload.review_status or "held_for_review"
+        payload.review_reason = payload.review_reason or hold_reason
+
+    context = await _resolve_fax_patient_context(conn, org_id, payload)
+    if intake_incomplete:
+        review_status = str(payload.review_status or "intake_incomplete")
+        review_reason = str(payload.review_reason or "")
+    else:
+        review_status, review_reason = _inbound_review_state(
+            payload.fax_number,
+            org_id,
+            context.get("patient_id"),
+            matched_outbound,
+        )
+
+    if intake_incomplete:
+        intake_status_value = INTAKE_INCOMPLETE
+    elif fax_intake_status:
+        intake_status_value = fax_intake_status
+    else:
+        intake_status_value = _normalize_text(payload.intake_status) or INTAKE_RECEIVED
+
+    insert_fax_sql = """
+        INSERT INTO fax_log (
+            id, org_id, direction, fax_number, facility, patient_name, patient_dob, patient_mrn,
+            patient_id, order_id, related_fax_id, review_status, review_reason,
+            record_types, urgency, status, pages, service, sinch_fax_id, external_fax_id, document_hash, intake_status, sent_by, file_url,
+            received_at, release_metadata, raw_webhook
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::jsonb,$27::jsonb)
+        """
+    insert_fax_args = (
+        fax_id,
+        org_id,
+        payload.direction or "inbound",
+        payload.fax_number,
+        payload.facility,
+        context["patient_name"],
+        context["patient_dob"],
+        context["patient_mrn"],
+        context["patient_id"],
+        context["order_id"],
+        str(matched_outbound["id"]) if matched_outbound and matched_outbound.get("id") else None,
+        payload.review_status or review_status,
+        payload.review_reason or review_reason,
+        json.dumps(payload.record_types or []),
+        payload.urgency,
+        payload.status or "received",
+        payload.pages,
+        payload.service or "sinch",
+        payload.sinch_fax_id,
+        ext_fax,
+        doc_hash,
+        intake_status_value,
+        payload.sent_by,
+        payload.file_url,
+        payload.received_at or datetime.now(timezone.utc).isoformat(),
+        json.dumps(payload.release_metadata or {}),
+        json.dumps(payload.raw_webhook or {}),
+    )
+    try:
+        await exec_write(conn, insert_fax_sql, *insert_fax_args)
+    except UniqueViolation:
+        dup = None
+        if ext_fax:
+            dup = await fetch_one(
+                conn,
+                """
+                SELECT id, org_id, patient_id, order_id, status, review_status, sinch_fax_id
+                FROM fax_log
+                WHERE direction = 'inbound' AND external_fax_id = $1
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                ext_fax,
+            )
+        if not dup and doc_hash:
+            dup = await fetch_one(
+                conn,
+                """
+                SELECT id, org_id, patient_id, order_id, status, review_status, sinch_fax_id
+                FROM fax_log
+                WHERE direction = 'inbound' AND document_hash = $1
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                doc_hash,
+            )
+        if dup:
+            return {**dict(dup), "idempotent_replay": True}, None
+        raise
+
+    work = InboundIntakeWork(
+        fax_id=fax_id,
+        org_id=org_id,
+        matched_outbound=matched_outbound,
+        parsed_intake=parsed_intake,
+        context=context,
+        ext_fax=ext_fax,
+        doc_hash=doc_hash,
+        intake_incomplete=intake_incomplete,
+        conf=conf,
+        review_status=review_status,
+        review_reason=review_reason,
+    )
+    return None, work
+
+
+async def process_intake(
+    conn: Any,
+    redis: Any,
+    work: InboundIntakeWork,
+    payload: FaxLogEntryPayload,
+) -> None:
+    """Post–fax_log: optional order/case, workflow events, notifications, Redis fan-out."""
+    org_id = work.org_id
+    if not org_id:
+        return
+    fax_id = work.fax_id
+    context = work.context
+    parsed_intake = work.parsed_intake
+    matched_outbound = work.matched_outbound
+    intake_incomplete = work.intake_incomplete
+    conf = work.conf
+    review_status = work.review_status
+    review_reason = work.review_reason
+
+    order_created_new = False
+    if not intake_incomplete and context.get("patient_id"):
+        payer_guess = _normalize_text(
+            ((parsed_intake.get("insurance_info") or {}).get("payer_name") if isinstance(parsed_intake.get("insurance_info"), dict) else None)
+        )
+        npi_guess = _normalize_text(parsed_intake.get("physician_npi"))
+        hcpcs_codes = _split_codes(parsed_intake.get("hcpcs_codes"))
+        if payer_guess and npi_guess and hcpcs_codes and not context.get("order_id"):
+            existing_case = await fetch_one(
+                conn,
+                """
+                SELECT id
+                FROM orders
+                WHERE org_id = $1
+                  AND patient_id = $2
+                  AND lower(coalesce(source_reference, '')) = lower($3)
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                org_id,
+                context["patient_id"],
+                f"fax:{payload.sinch_fax_id or fax_id}",
+            )
+            if existing_case:
+                context["order_id"] = str(existing_case["id"])
+            else:
+                order_created_new = True
+                created_order_id = str(uuid.uuid4())
+                await exec_write(
+                    conn,
+                    """
+                    INSERT INTO orders (
+                        id, org_id, patient_id, status, payer_id, hcpcs_codes, referring_physician_npi,
+                        source_channel, source_reference, source, intake_payload, created_by
+                    )
+                    VALUES ($1,$2,$3,'intake',$4,$5::jsonb,$6,'fax',$7,'fax_inbound',$8::jsonb,NULL)
+                    """,
+                    created_order_id,
+                    org_id,
+                    context["patient_id"],
+                    payer_guess,
+                    json.dumps(hcpcs_codes),
+                    npi_guess,
+                    f"fax:{payload.sinch_fax_id or fax_id}",
+                    json.dumps(
+                        {
+                            "source": "fax_inbound",
+                            "fax_id": fax_id,
+                            "sinch_fax_id": payload.sinch_fax_id,
+                            "ocr_payload": parsed_intake,
+                            "processing_state": "normalization_complete",
+                            "ingested_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    ),
+                )
+                context["order_id"] = created_order_id
+                await _record_workflow_event(
+                    conn,
+                    org_id,
+                    "case.created_from_fax",
+                    {"order_id": created_order_id, "patient_id": context["patient_id"], "fax_id": fax_id},
+                    order_id=created_order_id,
+                )
+    if context.get("order_id"):
+        await _record_workflow_event(
+            conn,
+            org_id,
+            "fax.received",
+            {
+                "fax_id": fax_id,
+                "fax_number": payload.fax_number,
+                "review_status": payload.review_status or review_status,
+            },
+            order_id=str(context["order_id"]),
+        )
+    await _record_workflow_event(
+        conn,
+        org_id,
+        "fax.intake_received",
+        {
+            "fax_id": fax_id,
+            "fax_number": payload.fax_number,
+            "review_status": payload.review_status or review_status,
+            "sinch_fax_id": payload.sinch_fax_id,
+            "file_url": payload.file_url,
+            "processing_state": "intake_incomplete" if intake_incomplete else None,
+        },
+        order_id=str(context["order_id"]) if context.get("order_id") else None,
+    )
+    await _create_notification(
+        conn,
+        org_id,
+        "fax_intake_incomplete" if intake_incomplete else "fax_review_required",
+        "Fax intake incomplete — review required" if intake_incomplete else "Inbound fax requires review",
+        payload.review_reason or review_reason,
+        {
+            "fax_id": fax_id,
+            "fax_number": payload.fax_number,
+            "patient_id": context.get("patient_id"),
+            "order_id": context.get("order_id"),
+            "review_status": payload.review_status or review_status,
+            "processing_state": "intake_incomplete" if intake_incomplete else None,
+            "intake_confidence": conf if intake_incomplete else None,
+            "intake_status": "case_created"
+            if (not intake_incomplete and order_created_new)
+            else ("intake_incomplete" if intake_incomplete else "processed"),
+            "related_fax_id": str(matched_outbound["id"]) if matched_outbound and matched_outbound.get("id") else None,
+        },
+        order_id=str(context["order_id"]) if context.get("order_id") else None,
+    )
+
+    if not intake_incomplete:
+        final_intake_status = INTAKE_CASE_CREATED if order_created_new else INTAKE_PROCESSED
+        prev_row = await fetch_one(conn, "SELECT intake_status FROM fax_log WHERE id = $1", fax_id)
+        prev = (prev_row or {}).get("intake_status")
+        if not intake_transition_allowed(str(prev) if prev else None, final_intake_status):
+            logger.warning(
+                "fax %s intake_status transition rejected %s -> %s",
+                fax_id,
+                prev,
+                final_intake_status,
+            )
+        else:
+            await exec_write(
+                conn,
+                "UPDATE fax_log SET intake_status = $1 WHERE id = $2",
+                final_intake_status,
+                fax_id,
+            )
+
+    await redis.publish(
+        "notifications.created",
+        json.dumps(
+            {
+                "fax_id": fax_id,
+                "patient_id": context.get("patient_id"),
+                "order_id": context.get("order_id"),
+                "type": "fax_intake_incomplete" if intake_incomplete else "fax_review_required",
+                "processing_state": "intake_incomplete" if intake_incomplete else None,
+                "intake_status": "intake_incomplete"
+                if intake_incomplete
+                else ("case_created" if order_created_new else "processed"),
+            }
+        ),
+    )
+    await redis.publish(
+        "fax.intake.received",
+        json.dumps(
+            {
+                "fax_id": fax_id,
+                "org_id": org_id,
+                "sinch_fax_id": payload.sinch_fax_id,
+                "file_url": payload.file_url,
+                "patient_id": context.get("patient_id"),
+                "order_id": context.get("order_id"),
+                "processing_state": "intake_incomplete" if intake_incomplete else None,
+                "intake_status": "intake_incomplete"
+                if intake_incomplete
+                else ("case_created" if order_created_new else "processed"),
+            }
+        ),
+    )
 
 
 @app.post("/fax/inbound", status_code=201)
@@ -2820,106 +3422,12 @@ async def create_inbound_fax(
     redis = get_redis(request)
     fax_id = str(uuid.uuid4())
     async with db.connection() as conn:
-        await _ensure_fax_tables(conn)
-        matched_outbound = await _find_recent_outbound_fax(conn, payload.fax_number)
-        org_id = str(matched_outbound["org_id"]) if matched_outbound and matched_outbound.get("org_id") else None
-        if matched_outbound:
-            if not payload.patient_name:
-                payload.patient_name = _normalize_text(matched_outbound.get("patient_name")) or None
-            if not payload.patient_dob:
-                payload.patient_dob = _normalize_text(matched_outbound.get("patient_dob")) or None
-            if not payload.patient_mrn:
-                payload.patient_mrn = _normalize_text(matched_outbound.get("patient_mrn")) or None
-            if not payload.patient_id:
-                payload.patient_id = _normalize_text(matched_outbound.get("patient_id")) or None
-            if not payload.order_id:
-                payload.order_id = _normalize_text(matched_outbound.get("order_id")) or None
-
-        context = await _resolve_fax_patient_context(conn, org_id, payload)
-        review_status, review_reason = _inbound_review_state(
-            payload.fax_number,
-            org_id,
-            context.get("patient_id"),
-            matched_outbound,
-        )
-        await exec_write(
-            conn,
-            """
-            INSERT INTO fax_log (
-                id, org_id, direction, fax_number, facility, patient_name, patient_dob, patient_mrn,
-                patient_id, order_id, related_fax_id, review_status, review_reason,
-                record_types, urgency, status, pages, service, sinch_fax_id, sent_by, file_url,
-                received_at, release_metadata, raw_webhook
-            )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24::jsonb)
-            """,
-            fax_id,
-            org_id,
-            payload.direction or "inbound",
-            payload.fax_number,
-            payload.facility,
-            context["patient_name"],
-            context["patient_dob"],
-            context["patient_mrn"],
-            context["patient_id"],
-            context["order_id"],
-            str(matched_outbound["id"]) if matched_outbound and matched_outbound.get("id") else None,
-            payload.review_status or review_status,
-            payload.review_reason or review_reason,
-            json.dumps(payload.record_types or []),
-            payload.urgency,
-            payload.status or "received",
-            payload.pages,
-            payload.service or "sinch",
-            payload.sinch_fax_id,
-            payload.sent_by,
-            payload.file_url,
-            payload.received_at or datetime.now(timezone.utc).isoformat(),
-            json.dumps(payload.release_metadata or {}),
-            json.dumps(payload.raw_webhook or {}),
-        )
-        if org_id:
-            if context.get("order_id"):
-                await _record_workflow_event(
-                    conn,
-                    org_id,
-                    "fax.received",
-                    {
-                        "fax_id": fax_id,
-                        "fax_number": payload.fax_number,
-                        "review_status": payload.review_status or review_status,
-                    },
-                    order_id=str(context["order_id"]),
-                )
-            await _create_notification(
-                conn,
-                org_id,
-                "fax_review_required",
-                "Inbound fax requires review",
-                payload.review_reason or review_reason,
-                {
-                    "fax_id": fax_id,
-                    "fax_number": payload.fax_number,
-                    "patient_id": context.get("patient_id"),
-                    "order_id": context.get("order_id"),
-                    "review_status": payload.review_status or review_status,
-                    "related_fax_id": str(matched_outbound["id"]) if matched_outbound and matched_outbound.get("id") else None,
-                },
-                order_id=str(context["order_id"]) if context.get("order_id") else None,
-            )
+        idempotent, work = await create_intake_record(conn, fax_id, payload)
+        if idempotent is not None:
+            return _serialize(idempotent)
+        assert work is not None
+        await process_intake(conn, redis, work, payload)
         row = await fetch_one(conn, "SELECT * FROM fax_log WHERE id = $1", fax_id)
-    if org_id:
-        await redis.publish(
-            "notifications.created",
-            json.dumps(
-                {
-                    "fax_id": fax_id,
-                    "patient_id": context.get("patient_id"),
-                    "order_id": context.get("order_id"),
-                    "type": "fax_review_required",
-                }
-            ),
-        )
     return _serialize(dict(row or {"id": fax_id, "status": "received"}))
 
 
@@ -2932,7 +3440,7 @@ async def review_fax_log_entry(
 ):
     db = request.app.state.db_pool
     async with db.connection() as conn:
-        await _ensure_fax_tables(conn)
+        await _require_fax_log(conn)
         existing = await fetch_one(
             conn,
             """
@@ -2981,50 +3489,216 @@ async def create_patient(
     request: Request,
     user: dict = Depends(require_permissions("create_patients")),
 ):
+    org_id = str(user["org_id"])
+    raw_idem = request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
+    idem = _normalize_text(raw_idem).strip()[:128] if raw_idem else ""
+    data_key = f"patient:create:{org_id}:{idem}" if idem else ""
+    lock_key = f"patient:create:lock:{org_id}:{idem}" if idem else ""
+    redis = get_redis(request) if idem else None
+
+    if idem and redis:
+        try:
+            existing_raw = await redis.get(data_key)
+            if existing_raw:
+                existing_id = (
+                    existing_raw.decode()
+                    if isinstance(existing_raw, (bytes, bytearray))
+                    else str(existing_raw)
+                )
+                db = request.app.state.db_pool
+                async with db.connection() as conn:
+                    row = await fetch_one(
+                        conn,
+                        "SELECT id FROM patients WHERE id = $1 AND org_id = $2",
+                        existing_id,
+                        org_id,
+                    )
+                if row:
+                    return {
+                        "patient_id": existing_id,
+                        "status": "created",
+                        "idempotent_replay": True,
+                    }
+        except Exception as exc:
+            logger.warning("Patient create idempotency read failed (continuing without): %s", exc)
+
+        try:
+            got_lock = await redis.set(lock_key, "1", nx=True, ex=45)
+        except Exception as exc:
+            got_lock = True
+            logger.warning("Patient create idempotency lock unavailable: %s", exc)
+        if not got_lock:
+            for _ in range(40):
+                await asyncio.sleep(0.05)
+                try:
+                    existing_raw = await redis.get(data_key)
+                    if existing_raw:
+                        existing_id = (
+                            existing_raw.decode()
+                            if isinstance(existing_raw, (bytes, bytearray))
+                            else str(existing_raw)
+                        )
+                        db = request.app.state.db_pool
+                        async with db.connection() as conn:
+                            row = await fetch_one(
+                                conn,
+                                "SELECT id FROM patients WHERE id = $1 AND org_id = $2",
+                                existing_id,
+                                org_id,
+                            )
+                        if row:
+                            return {
+                                "patient_id": existing_id,
+                                "status": "created",
+                                "idempotent_replay": True,
+                            }
+                except Exception:
+                    break
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Another request is creating a patient with this Idempotency-Key; retry shortly.",
+            )
+
     patient_id = str(uuid.uuid4())
     db = request.app.state.db_pool
-    async with db.connection() as conn:
-        existing = await fetch_one(
-            conn,
-            """
-            SELECT id
-            FROM patients
-            WHERE org_id = $1
-              AND lower(trim(last_name)) = lower(trim($2))
-              AND dob = $3
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            user["org_id"],
-            payload.last_name,
-            payload.dob,
-        )
-        if existing:
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "detail": "Patient with the same last name and date of birth already exists.",
-                    "patient_id": str(existing["id"]),
-                    "status": "exists",
-                },
+    try:
+        async with db.connection() as conn:
+            norm = normalize_form_identity(
+                payload.first_name,
+                payload.last_name,
+                payload.dob,
+                payload.phone,
             )
-        await exec_write(
-            conn,
-            """
-            INSERT INTO patients (id, org_id, first_name, last_name, dob, insurance_id,
-                payer_id, diagnosis_codes, phone, address, email, created_by)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-            """,
-            patient_id, user["org_id"], payload.first_name, payload.last_name,
-            payload.dob, payload.insurance_id, payload.payer_id,
-            json.dumps(payload.diagnosis_codes), payload.phone,
-            json.dumps(payload.address or {}), payload.email, user["sub"],
-        )
-        await audit_log(
-            conn, user["org_id"], user["sub"], "create", "patients",
-            resource_id=patient_id, ip_address=_client_ip(request),
-        )
-    logger.info("Patient created: %s org=%s", patient_id, user["org_id"])
+            if not norm.normalization_complete:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Valid first name, last name, and date of birth are required.",
+                )
+            outcome = await match_form_patient_for_intake(
+                conn, org_id, norm, fetch_one=fetch_one, fetch_all=fetch_all
+            )
+            if outcome.tier == MatchTier.UNCERTAIN:
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "detail": "Patient identity is ambiguous or conflicts with existing records.",
+                        "reason": outcome.reason,
+                        "status": "ambiguous_match",
+                    },
+                )
+            existing = None
+            if outcome.tier in (MatchTier.EXACT, MatchTier.STRONG) and outcome.patient_id:
+                existing = {"id": outcome.patient_id}
+            if existing:
+                await exec_write(
+                    conn,
+                    """
+                    UPDATE patients
+                    SET first_name = COALESCE(NULLIF(trim($1), ''), first_name),
+                        last_name = COALESCE(NULLIF(trim($2), ''), last_name),
+                        dob = COALESCE(NULLIF(trim($3), '')::date, dob),
+                        insurance_id = COALESCE(NULLIF(trim($4), ''), insurance_id),
+                        payer_id = COALESCE(NULLIF(trim($5), ''), payer_id),
+                        diagnosis_codes = CASE
+                            WHEN jsonb_array_length($6::jsonb) > 0 THEN $6::jsonb
+                            ELSE diagnosis_codes
+                        END,
+                        phone = COALESCE(NULLIF(trim($7), ''), phone),
+                        address = CASE
+                            WHEN $8::jsonb = '{}'::jsonb THEN address
+                            ELSE $8::jsonb
+                        END,
+                        email = COALESCE(NULLIF(trim($9), ''), email),
+                        updated_at = NOW()
+                    WHERE id = $10 AND org_id = $11
+                    """,
+                    payload.first_name,
+                    payload.last_name,
+                    payload.dob,
+                    payload.insurance_id,
+                    payload.payer_id,
+                    json.dumps(payload.diagnosis_codes),
+                    payload.phone,
+                    json.dumps(payload.address or {}),
+                    payload.email,
+                    str(existing["id"]),
+                    org_id,
+                )
+                await _record_workflow_event(
+                    conn,
+                    org_id,
+                    "patient.matched_existing",
+                    {
+                        "patient_id": str(existing["id"]),
+                        "match_rule": outcome.tier.value,
+                        "strong_rule": outcome.strong_rule,
+                        "idempotency_key": idem or None,
+                    },
+                    order_id=None,
+                )
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "detail": "Patient with the same identity already exists.",
+                        "patient_id": str(existing["id"]),
+                        "status": "exists_updated",
+                        "match_tier": outcome.tier.value,
+                    },
+                )
+            await exec_write(
+                conn,
+                """
+                INSERT INTO patients (id, org_id, first_name, last_name, dob, insurance_id,
+                    payer_id, diagnosis_codes, phone, address, email, created_by)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                """,
+                patient_id,
+                org_id,
+                payload.first_name,
+                payload.last_name,
+                payload.dob,
+                payload.insurance_id,
+                payload.payer_id,
+                json.dumps(payload.diagnosis_codes),
+                payload.phone,
+                json.dumps(payload.address or {}),
+                payload.email,
+                user["sub"],
+            )
+            await audit_log(
+                conn,
+                org_id,
+                user["sub"],
+                "create",
+                "patients",
+                resource_id=patient_id,
+                ip_address=_client_ip(request),
+            )
+            await _record_workflow_event(
+                conn,
+                org_id,
+                "patient.created",
+                {
+                    "patient_id": patient_id,
+                    "payer_id": payload.payer_id,
+                    "idempotency_key": idem or None,
+                },
+                order_id=None,
+            )
+    finally:
+        if idem and redis:
+            try:
+                await redis.delete(lock_key)
+            except Exception as exc:
+                logger.warning("Patient idempotency lock release failed: %s", exc)
+
+    if idem and redis:
+        try:
+            await redis.set(data_key, patient_id, ex=86400)
+        except Exception as exc:
+            logger.warning("Failed to store patient idempotency key (patient was created): %s", exc)
+
+    logger.info("Patient created: %s org=%s", patient_id, org_id)
     return {"patient_id": patient_id, "status": "created"}
 
 
@@ -3062,15 +3736,36 @@ async def _delete_patient_dependencies(conn, org_id: str, patient_id: str) -> in
         if claim_ids:
             await exec_write(conn, "DELETE FROM eob_worklist WHERE claim_id = ANY($1::uuid[])", claim_ids)
 
+        # Delete order-linked rows explicitly so patient cleanup still works against
+        # older databases that may not have the latest ON DELETE CASCADE constraints.
+        await exec_write(conn, "DELETE FROM workflow_events WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM appeals WHERE order_id = ANY($1::uuid[])", order_ids)
         await exec_write(conn, "DELETE FROM communications_messages WHERE order_id = ANY($1::uuid[])", order_ids)
         await exec_write(conn, "DELETE FROM notifications WHERE order_id = ANY($1::uuid[])", order_ids)
-        await exec_write(conn, "DELETE FROM workflow_events WHERE order_id = ANY($1::uuid[])", order_ids)
+        # Preserve workflow_events for audit (order_id may reference deleted orders; no FK — ledger stays append-only).
         await exec_write(conn, "DELETE FROM shipments WHERE order_id = ANY($1::uuid[])", order_ids)
         await exec_write(conn, "DELETE FROM cmn_tracker WHERE order_id = ANY($1::uuid[])", order_ids)
         await exec_write(conn, "DELETE FROM claim_submissions WHERE order_id = ANY($1::uuid[])", order_ids)
         await exec_write(conn, "DELETE FROM auth_requests WHERE order_id = ANY($1::uuid[])", order_ids)
         await exec_write(conn, "DELETE FROM payment_outcomes WHERE order_id = ANY($1::uuid[])", order_ids)
         await exec_write(conn, "DELETE FROM eligibility_checks WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM order_documents WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM order_line_items WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(conn, "DELETE FROM order_diagnoses WHERE order_id = ANY($1::uuid[])", order_ids)
+        await exec_write(
+            conn,
+            """
+            UPDATE fax_log
+            SET order_id = NULL,
+                review_status = CASE
+                    WHEN review_status = 'linked_to_chart' THEN 'pending_patient_match'
+                    ELSE review_status
+                END
+            WHERE org_id = $1 AND order_id = ANY($2::uuid[])
+            """,
+            org_id,
+            order_ids,
+        )
         await exec_write(conn, "DELETE FROM denials WHERE order_id = ANY($1::uuid[])", order_ids)
         if claim_ids:
             await exec_write(conn, "DELETE FROM denials WHERE claim_id = ANY($1::uuid[])", claim_ids)
@@ -3168,6 +3863,70 @@ async def get_patient(patient_id: str, request: Request, user: dict = Depends(re
     if not row:
         raise HTTPException(status_code=404, detail="Patient not found")
     return dict(row)
+
+
+@app.patch("/patients/{patient_id}")
+async def patch_patient(
+    patient_id: str,
+    payload: PatientUpdate,
+    request: Request,
+    user: dict = Depends(require_permissions("update_patients")),
+):
+    db = request.app.state.db_pool
+    updates: list[str] = []
+    params: list[Any] = []
+
+    if payload.first_name is not None:
+        updates.append(f"first_name = ${len(params) + 1}")
+        params.append(payload.first_name)
+    if payload.last_name is not None:
+        updates.append(f"last_name = ${len(params) + 1}")
+        params.append(payload.last_name)
+    if payload.dob is not None:
+        updates.append(f"dob = ${len(params) + 1}")
+        params.append(payload.dob)
+    if payload.email is not None:
+        updates.append(f"email = ${len(params) + 1}")
+        params.append(payload.email)
+    if payload.insurance_id is not None:
+        updates.append(f"insurance_id = ${len(params) + 1}")
+        params.append(payload.insurance_id)
+    if payload.payer_id is not None:
+        updates.append(f"payer_id = ${len(params) + 1}")
+        params.append(payload.payer_id)
+    if payload.diagnosis_codes is not None:
+        updates.append(f"diagnosis_codes = ${len(params) + 1}::jsonb")
+        params.append(json.dumps(payload.diagnosis_codes))
+    if payload.phone is not None:
+        updates.append(f"phone = ${len(params) + 1}")
+        params.append(payload.phone)
+    if payload.address is not None:
+        updates.append(f"address = ${len(params) + 1}::jsonb")
+        params.append(json.dumps(payload.address))
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No patch fields were provided")
+
+    updates.append("updated_at = NOW()")
+    params.extend([patient_id, user["org_id"]])
+
+    async with db.connection() as conn:
+        rowcount = await exec_write(
+            conn,
+            f"UPDATE patients SET {', '.join(updates)} WHERE id = ${len(params) - 1} AND org_id = ${len(params)}",
+            *params,
+        )
+        if rowcount == 0:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        await _record_workflow_event(
+            conn,
+            str(user["org_id"]),
+            "patient.updated",
+            {"patient_id": patient_id, "fields": [k for k, v in payload.model_dump().items() if v is not None]},
+            order_id=None,
+        )
+        row = await fetch_one(conn, "SELECT * FROM patients WHERE id = $1 AND org_id = $2", patient_id, user["org_id"])
+    return _serialize(dict(row or {"id": patient_id}))
 
 
 @app.get("/patients/{patient_id}/orders")
@@ -3336,6 +4095,9 @@ async def get_patient_chart(
                 "related_fax_id",
                 "review_status",
                 "review_reason",
+                "external_fax_id",
+                "document_hash",
+                "intake_status",
             ]
             fax_select.extend([column for column in optional_fax_columns if column in fax_columns])
             fax_rows = await _safe_fetch_all(
@@ -3351,6 +4113,20 @@ async def get_patient_chart(
                 patient_id,
                 label="fax_log",
             )
+
+        notes_rows = await _safe_fetch_all(
+            conn,
+            """
+            SELECT id, patient_id, author_id, author_name, content, created_at
+            FROM patient_notes
+            WHERE patient_id = $1 AND org_id = $2
+            ORDER BY created_at DESC
+            LIMIT 100
+            """,
+            patient_id,
+            user["org_id"],
+            label="patient_notes",
+        )
 
         denial_row_by_order: dict[str, dict[str, Any]] = {}
         for d in denials:
@@ -3414,10 +4190,32 @@ async def get_patient_chart(
             patient_out["drivers_license_download_url"] = None
 
     example_oid = str(order_ids[0]) if order_ids else ""
+    devices_flat: list[dict[str, Any]] = []
+    for ob in order_bundles:
+        oid = str(ob.get("id") or "")
+        for li in ob.get("line_items") or []:
+            if isinstance(li, dict):
+                row = dict(li)
+                row["order_id"] = oid
+                devices_flat.append(_serialize(row))
+
+    doc_count = sum(len(ob.get("documents") or []) for ob in order_bundles)
+    logger.info(
+        "patient_chart_loaded patient_id=%s org=%s orders=%s notes=%s order_documents=%s devices=%s",
+        patient_id,
+        user["org_id"],
+        len(order_bundles),
+        len(notes_rows),
+        doc_count,
+        len(devices_flat),
+    )
+
     return {
         "patient": _serialize(patient_out),
         "summary": summary,
         "orders": order_bundles,
+        "devices": devices_flat,
+        "notes": _serialize(notes_rows),
         "payments": _serialize(payments),
         "denials": _serialize(denials),
         "appeals": _serialize(appeals),
@@ -4024,55 +4822,170 @@ async def create_order(
     request: Request,
     user: dict = Depends(require_permissions("create_orders")),
 ):
+    org_id = str(user["org_id"])
+    raw_idem = request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
+    idem = _normalize_text(raw_idem).strip()[:128] if raw_idem else ""
+    data_key = f"order:create:{org_id}:{idem}" if idem else ""
+    lock_key = f"order:create:lock:{org_id}:{idem}" if idem else ""
+    redis = get_redis(request) if idem else None
+
+    if idem and redis:
+        try:
+            existing_raw = await redis.get(data_key)
+            if existing_raw:
+                existing_id = (
+                    existing_raw.decode()
+                    if isinstance(existing_raw, (bytes, bytearray))
+                    else str(existing_raw)
+                )
+                db = request.app.state.db_pool
+                async with db.connection() as conn:
+                    row = await fetch_one(
+                        conn,
+                        "SELECT assigned_to, status FROM orders WHERE id = $1 AND org_id = $2",
+                        existing_id,
+                        org_id,
+                    )
+                if row:
+                    return {
+                        "order_id": existing_id,
+                        "status": str(row.get("status") or "draft"),
+                        "assigned_to": row.get("assigned_to"),
+                        "idempotent_replay": True,
+                    }
+        except Exception as exc:
+            logger.warning("Order create idempotency read failed (continuing without): %s", exc)
+
+        try:
+            got_lock = await redis.set(lock_key, "1", nx=True, ex=45)
+        except Exception as exc:
+            got_lock = True
+            logger.warning("Order create idempotency lock unavailable: %s", exc)
+        if not got_lock:
+            for _ in range(40):
+                await asyncio.sleep(0.05)
+                try:
+                    existing_raw = await redis.get(data_key)
+                    if existing_raw:
+                        existing_id = (
+                            existing_raw.decode()
+                            if isinstance(existing_raw, (bytes, bytearray))
+                            else str(existing_raw)
+                        )
+                        db = request.app.state.db_pool
+                        async with db.connection() as conn:
+                            row = await fetch_one(
+                                conn,
+                                "SELECT assigned_to, status FROM orders WHERE id = $1 AND org_id = $2",
+                                existing_id,
+                                org_id,
+                            )
+                        if row:
+                            return {
+                                "order_id": existing_id,
+                                "status": str(row.get("status") or "draft"),
+                                "assigned_to": row.get("assigned_to"),
+                                "idempotent_replay": True,
+                            }
+                except Exception:
+                    break
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Another request is creating an order with this Idempotency-Key; retry shortly.",
+            )
+
     order_id = str(uuid.uuid4())
     db = request.app.state.db_pool
-    async with db.connection() as conn:
-        assigned_to = await _resolve_assignee(
-            conn,
-            user["org_id"],
-            preferred_user_id=payload.assigned_to,
-            role_hint="intake",
-            seed=f"{payload.patient_id}:{payload.payer_id}:{','.join(payload.hcpcs_codes)}",
-        )
-        iv, ipc, isrc = _infer_catalog_metadata(payload.hcpcs_codes)
-        vertical = _normalize_text(payload.vertical) or iv
-        product_category = _normalize_text(payload.product_category) or ipc
-        source_cat = _normalize_text(payload.source) or isrc
-        await exec_write(
-            conn,
-            """
-            INSERT INTO orders (id, org_id, patient_id, assigned_to, hcpcs_codes, referring_physician_npi,
-                payer_id, insurance_auth_number, notes, priority, status, source_channel, source_reference,
-                intake_payload, created_by, vertical, product_category, source)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12,$13,$14,$15,$16,$17)
-            """,
-            order_id, user["org_id"], payload.patient_id, assigned_to,
-            json.dumps(payload.hcpcs_codes), payload.referring_physician_npi,
-            payload.payer_id, payload.insurance_auth_number,
-            payload.notes, payload.priority,
-            _normalize_text(payload.source_channel) or "manual",
-            payload.source_reference,
-            json.dumps(payload.intake_payload or {}),
-            user["sub"],
-            vertical,
-            product_category,
-            source_cat,
-        )
-        await _seed_order_line_items_from_hcpcs(conn, order_id, payload.hcpcs_codes)
-        # Emit event for Trident to score
-        await audit_log(
-            conn, user["org_id"], user["sub"], "create", "orders",
-            resource_id=order_id, ip_address=_client_ip(request),
-        )
-        redis = get_redis(request)
-        await redis.publish("orders.created", json.dumps({
-            "order_id": order_id,
-            "org_id": user["org_id"],
-            "hcpcs_codes": payload.hcpcs_codes,
-            "payer_id": payload.payer_id,
-            "assigned_to": assigned_to,
-        }))
-    asyncio.create_task(_score_order_with_trident(request, str(user["org_id"]), order_id))
+    try:
+        async with db.connection() as conn:
+            assigned_to = await _resolve_assignee(
+                conn,
+                org_id,
+                preferred_user_id=payload.assigned_to,
+                role_hint="intake",
+                seed=f"{payload.patient_id}:{payload.payer_id}:{','.join(payload.hcpcs_codes)}",
+            )
+            iv, ipc, isrc = _infer_catalog_metadata(payload.hcpcs_codes)
+            vertical = _normalize_text(payload.vertical) or iv
+            product_category = _normalize_text(payload.product_category) or ipc
+            source_cat = _normalize_text(payload.source) or isrc
+            await exec_write(
+                conn,
+                """
+                INSERT INTO orders (id, org_id, patient_id, assigned_to, hcpcs_codes, referring_physician_npi,
+                    payer_id, insurance_auth_number, notes, priority, status, source_channel, source_reference,
+                    intake_payload, created_by, vertical, product_category, source)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12,$13,$14,$15,$16,$17)
+                """,
+                order_id,
+                org_id,
+                payload.patient_id,
+                assigned_to,
+                json.dumps(payload.hcpcs_codes),
+                payload.referring_physician_npi,
+                payload.payer_id,
+                payload.insurance_auth_number,
+                payload.notes,
+                payload.priority,
+                _normalize_text(payload.source_channel) or "manual",
+                payload.source_reference,
+                json.dumps(payload.intake_payload or {}),
+                user["sub"],
+                vertical,
+                product_category,
+                source_cat,
+            )
+            await _seed_order_line_items_from_hcpcs(conn, order_id, payload.hcpcs_codes)
+            await audit_log(
+                conn,
+                org_id,
+                user["sub"],
+                "create",
+                "orders",
+                resource_id=order_id,
+                ip_address=_client_ip(request),
+            )
+            await _record_workflow_event(
+                conn,
+                org_id,
+                "order.created",
+                {
+                    "order_id": order_id,
+                    "patient_id": payload.patient_id,
+                    "payer_id": payload.payer_id,
+                    "hcpcs_codes": payload.hcpcs_codes,
+                    "source_channel": _normalize_text(payload.source_channel) or "manual",
+                    "idempotency_key": idem or None,
+                },
+                order_id=order_id,
+            )
+            rpub = get_redis(request)
+            await rpub.publish(
+                "orders.created",
+                json.dumps(
+                    {
+                        "order_id": order_id,
+                        "org_id": org_id,
+                        "hcpcs_codes": payload.hcpcs_codes,
+                        "payer_id": payload.payer_id,
+                        "assigned_to": assigned_to,
+                    }
+                ),
+            )
+    finally:
+        if idem and redis:
+            try:
+                await redis.delete(lock_key)
+            except Exception as exc:
+                logger.warning("Idempotency lock release failed: %s", exc)
+
+    if idem and redis:
+        try:
+            await redis.set(data_key, order_id, ex=86400)
+        except Exception as exc:
+            logger.warning("Failed to store order idempotency key (order was created): %s", exc)
+
+    asyncio.create_task(_score_order_with_trident(request, org_id, order_id))
     return {"order_id": order_id, "status": "draft", "assigned_to": assigned_to}
 
 
@@ -4134,22 +5047,23 @@ async def import_orders(
         for index, row, ctx in canonical.values():
             first_name, last_name, dob, insurance_id, payer_id, hcpcs_codes, diagnosis_codes = ctx
             try:
-                patient = await fetch_one(
-                    conn,
-                    """
-                    SELECT id FROM patients
-                    WHERE org_id = $1
-                      AND lower(first_name) = lower($2)
-                      AND lower(last_name) = lower($3)
-                      AND dob = $4
-                      AND insurance_id = $5
-                    LIMIT 1
-                    """,
-                    user["org_id"], first_name, last_name, dob, insurance_id,
+                norm = normalize_form_identity(first_name, last_name, dob, None)
+                if not norm.normalization_complete:
+                    results.append(
+                        {"index": index, "status": "failed", "error": "invalid_patient_identity"},
+                    )
+                    continue
+                outcome = await match_form_patient_for_intake(
+                    conn, str(user["org_id"]), norm, fetch_one=fetch_one, fetch_all=fetch_all
                 )
+                if outcome.tier == MatchTier.UNCERTAIN:
+                    results.append(
+                        {"index": index, "status": "ambiguous_patient", "reason": outcome.reason},
+                    )
+                    continue
                 patient_created = False
-                if patient:
-                    patient_id = str(patient["id"])
+                if outcome.tier in (MatchTier.EXACT, MatchTier.STRONG) and outcome.patient_id:
+                    patient_id = outcome.patient_id
                     if row.email:
                         await exec_write(
                             conn,
@@ -5995,6 +6909,10 @@ async def billing_submit_claim(
     """
     Submit a raw X12 837 (P, I, or D) to Availity. Returns raw response (often 997).
     """
+    if payload.order_id:
+        db = request.app.state.db_pool
+        async with db.connection() as conn:
+            await _precheck_order_for_claim_submission(conn, str(user["org_id"]), payload.order_id)
     try:
         result = await submit_claim_837(
             payload.edi_837,
@@ -6066,28 +6984,11 @@ async def billing_submit_claim_from_order(
     edi_payer_name: str | None = None
     edi_payer_pi: str | None = None
     async with db.connection() as conn:
-        order = await fetch_one(
-            conn,
-            """SELECT id, patient_id, payer_id, referring_physician_npi, hcpcs_codes
-               FROM orders WHERE id = $1 AND org_id = $2""",
-            payload.order_id,
-            user["org_id"],
-        )
-        if not order:
-            raise HTTPException(status_code=404, detail="Order not found")
-        patient = await fetch_one(
-            conn,
-            """SELECT id, first_name, last_name, dob, insurance_id, payer_id, address, diagnosis_codes
-               FROM patients WHERE id = $1 AND org_id = $2""",
-            order["patient_id"],
-            user["org_id"],
-        )
-        if not patient:
-            raise HTTPException(status_code=404, detail="Patient not found")
-
-        internal_pid = order.get("payer_id") or patient.get("payer_id")
-        if internal_pid:
-            edi_payer_name, edi_payer_pi = await _fetch_availity_payer_edi(conn, str(internal_pid))
+        async with conn.transaction():
+            order, patient, edi_pair = await _load_order_patient_for_837_with_claim_lock(
+                conn, str(user["org_id"]), payload.order_id
+            )
+            edi_payer_name, edi_payer_pi = edi_pair
 
     service_date = payload.service_date or datetime.now(timezone.utc).strftime("%Y%m%d")
     billing_npi = settings.availity_default_provider_npi or (order.get("referring_physician_npi") or "0000000000")
@@ -6638,6 +7539,16 @@ PRIMARY_ORDER_DOC_COLUMNS: dict[str, str] = {
     "pod": "pod_document_id",
 }
 
+def _coerce_order_document_doc_type(raw: str) -> str:
+    """
+    Normalize upload doc_type for order_documents.doc_type (VARCHAR 50).
+    DB constraint allows any non-empty trimmed label up to 50 chars (see init.sql + migration 013).
+    """
+    t = _normalize_text(raw).lower()
+    if not t:
+        return "other"
+    return t[:50]
+
 
 async def _link_order_primary_document(conn, org_id: str, order_id: str, doc_type: str, document_id: str) -> None:
     col = PRIMARY_ORDER_DOC_COLUMNS.get((doc_type or "").lower())
@@ -6663,17 +7574,37 @@ async def _store_document(
     metadata: dict[str, Any] | None = None,
     status_value: str = "generated",
 ) -> dict[str, Any]:
-    await _ensure_bucket_exists()
+    try:
+        await _ensure_bucket_exists()
+    except S3Error as exc:
+        logger.warning("MinIO bucket ensure failed bucket=%s: %s", settings.minio_bucket, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Object storage is not available (bucket check failed).",
+        ) from exc
     client = _minio_client()
     document_id = str(uuid.uuid4())
     storage_key = f"{org_id}/{order_id}/{document_id}/{file_name}"
-    client.put_object(
-        settings.minio_bucket,
-        storage_key,
-        io.BytesIO(content),
-        length=len(content),
-        content_type=mime_type,
-    )
+    try:
+        client.put_object(
+            settings.minio_bucket,
+            storage_key,
+            io.BytesIO(content),
+            length=len(content),
+            content_type=mime_type,
+        )
+    except S3Error as exc:
+        logger.warning(
+            "MinIO put_object failed bucket=%s key=%s bytes=%s: %s",
+            settings.minio_bucket,
+            storage_key,
+            len(content),
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Object storage upload failed.",
+        ) from exc
     await exec_write(
         conn,
         """
@@ -6694,6 +7625,15 @@ async def _store_document(
         storage_key,
         status_value,
         json.dumps(metadata or {}),
+    )
+    logger.info(
+        "document_uploaded org=%s order_id=%s doc_id=%s doc_type=%s bytes=%s bucket=%s",
+        org_id,
+        order_id,
+        document_id,
+        doc_type,
+        len(content),
+        settings.minio_bucket,
     )
     return {
         "id": document_id,
@@ -7047,6 +7987,45 @@ async def v1_create_patient(
 ):
     db = request.app.state.db_pool
     async with db.connection() as conn:
+        norm = normalize_form_identity(
+            payload.first_name,
+            payload.last_name,
+            payload.date_of_birth,
+            payload.phone,
+        )
+        if not norm.normalization_complete:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Valid first name, last name, and date of birth are required.",
+            )
+        outcome = await match_form_patient_for_intake(
+            conn, str(user["org_id"]), norm, fetch_one=fetch_one, fetch_all=fetch_all
+        )
+        if outcome.tier == MatchTier.UNCERTAIN:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Patient identity is ambiguous relative to existing records",
+                    "reason": outcome.reason,
+                },
+            )
+        if outcome.tier in (MatchTier.EXACT, MatchTier.STRONG) and outcome.patient_id:
+            hit = await fetch_one(
+                conn,
+                "SELECT id, mrn FROM patients WHERE id = $1 AND org_id = $2",
+                outcome.patient_id,
+                user["org_id"],
+            )
+            if hit:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Matching patient already exists",
+                        "id": str(hit["id"]),
+                        "mrn": hit.get("mrn"),
+                        "match_tier": outcome.tier.value,
+                    },
+                )
         mrn = payload.mrn or await _generate_patient_mrn(conn, user["org_id"])
         existing = await fetch_one(
             conn,
@@ -7429,6 +8408,94 @@ async def v1_get_order(order_id: str, request: Request, user: dict = Depends(req
     return bundle
 
 
+@app.post("/api/v1/orders/{order_id}/line-items", status_code=201)
+async def v1_add_order_line_item(
+    order_id: str,
+    payload: V1LineItemPayload,
+    request: Request,
+    user: dict = Depends(require_any_permission("create_orders", "update_patients")),
+):
+    """Add a device / HCPCS line to an order; updates orders.hcpcs_codes when new code is introduced."""
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        order = await fetch_one(
+            conn,
+            "SELECT id, patient_id, hcpcs_codes FROM orders WHERE id = $1 AND org_id = $2",
+            order_id,
+            user["org_id"],
+        )
+        if not order:
+            logger.warning(
+                "device_add_failed reason=order_not_found order_id=%s org=%s user=%s",
+                order_id,
+                user.get("org_id"),
+                user.get("sub"),
+            )
+            raise HTTPException(status_code=404, detail="Order not found")
+        li_id = str(uuid.uuid4())
+        try:
+            await exec_write(
+                conn,
+                """
+                INSERT INTO order_line_items (
+                    id, order_id, hcpcs_code, modifier, description, quantity,
+                    unit_price, billed_amount, allowed_amount, paid_amount
+                )
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                """,
+                li_id,
+                order_id,
+                payload.hcpcs_code,
+                payload.modifier,
+                payload.description,
+                payload.quantity,
+                payload.unit_price,
+                payload.billed_amount,
+                payload.allowed_amount,
+                payload.paid_amount,
+            )
+        except Exception as exc:
+            logger.warning(
+                "device_add_failed order_id=%s org=%s user=%s err=%s",
+                order_id,
+                user.get("org_id"),
+                user.get("sub"),
+                exc,
+            )
+            raise
+        raw_hcpcs = order.get("hcpcs_codes")
+        hcpcs_list: list[str] = []
+        if raw_hcpcs is None:
+            hcpcs_list = []
+        elif isinstance(raw_hcpcs, str):
+            try:
+                parsed = json.loads(raw_hcpcs)
+                hcpcs_list = list(parsed) if isinstance(parsed, list) else []
+            except json.JSONDecodeError:
+                hcpcs_list = []
+        elif isinstance(raw_hcpcs, list):
+            hcpcs_list = [str(x) for x in raw_hcpcs]
+        code = _normalize_text(payload.hcpcs_code).upper()
+        if code and code not in {c.upper() for c in hcpcs_list}:
+            hcpcs_list.append(code)
+            await exec_write(
+                conn,
+                "UPDATE orders SET hcpcs_codes = $1::jsonb, updated_at = NOW() WHERE id = $2 AND org_id = $3",
+                json.dumps(hcpcs_list),
+                order_id,
+                user["org_id"],
+            )
+        await _record_workflow_event(
+            conn,
+            user["org_id"],
+            "device.added",
+            {"order_id": order_id, "patient_id": str(order["patient_id"]), "hcpcs_code": code, "line_item_id": li_id},
+            order_id=order_id,
+        )
+    logger.info("device_added order_id=%s patient_id=%s hcpcs=%s line_item_id=%s", order_id, order["patient_id"], code, li_id)
+    return {"id": li_id, "order_id": order_id, "patient_id": str(order["patient_id"])}
+
+
 @app.patch("/api/v1/orders/{order_id}")
 async def v1_patch_order(
     order_id: str,
@@ -7476,13 +8543,25 @@ async def v1_patch_order(
 
 
 @app.get("/api/v1/orders/{order_id}/documents")
-async def v1_list_order_documents(order_id: str, request: Request, user: dict = Depends(require_permissions("manage_documents"))):
+async def v1_list_order_documents(
+    order_id: str, request: Request, user: dict = Depends(require_any_permission("view_patients", "manage_documents"))
+):
     db = request.app.state.db_pool
     async with db.connection() as conn:
-        order = await fetch_one(conn, "SELECT id FROM orders WHERE id = $1 AND org_id = $2", order_id, user["org_id"])
+        order = await fetch_one(
+            conn, "SELECT id, patient_id FROM orders WHERE id = $1 AND org_id = $2", order_id, user["org_id"]
+        )
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")
         rows = await fetch_all(conn, "SELECT * FROM order_documents WHERE order_id = $1 ORDER BY created_at DESC", order_id)
+    logger.info(
+        "document_listed order_id=%s patient_id=%s org=%s user=%s count=%s",
+        order_id,
+        order.get("patient_id"),
+        user["org_id"],
+        user.get("sub"),
+        len(rows),
+    )
     docs = []
     for row in rows:
         item = dict(row)
@@ -7498,10 +8577,12 @@ async def v1_upload_order_document(
     request: Request,
     doc_type: str = Form(...),
     file: UploadFile = File(...),
-    user: dict = Depends(require_permissions("manage_documents")),
+    user: dict = Depends(require_any_permission("manage_documents", "update_patients", "create_orders")),
 ):
     db = request.app.state.db_pool
     content = await file.read()
+    normalized_type = _coerce_order_document_doc_type(doc_type)
+    upload_meta: dict[str, Any] = {"uploaded_by": user["sub"]}
     async with db.connection() as conn:
         order = await fetch_one(conn, "SELECT id FROM orders WHERE id = $1 AND org_id = $2", order_id, user["org_id"])
         if not order:
@@ -7510,11 +8591,11 @@ async def v1_upload_order_document(
             conn,
             user["org_id"],
             order_id,
-            doc_type,
-            file.filename or f"{doc_type}.bin",
+            normalized_type,
+            file.filename or f"{normalized_type}.bin",
             content,
             file.content_type or "application/octet-stream",
-            {"uploaded_by": user["sub"]},
+            upload_meta,
             "received",
         )
     doc["download_url"] = _presigned_download_url(doc["storage_bucket"], doc["storage_key"])
@@ -7522,13 +8603,18 @@ async def v1_upload_order_document(
 
 
 @app.get("/api/v1/orders/{order_id}/documents/{document_id}/download")
-async def v1_download_order_document(order_id: str, document_id: str, request: Request, user: dict = Depends(require_permissions("manage_documents"))):
+async def v1_download_order_document(
+    order_id: str,
+    document_id: str,
+    request: Request,
+    user: dict = Depends(require_any_permission("view_patients", "manage_documents")),
+):
     db = request.app.state.db_pool
     async with db.connection() as conn:
         row = await fetch_one(
             conn,
             """
-            SELECT d.*
+            SELECT d.*, o.patient_id AS order_patient_id
             FROM order_documents d
             JOIN orders o ON o.id = d.order_id
             WHERE d.id = $1 AND d.order_id = $2 AND o.org_id = $3
@@ -7538,8 +8624,24 @@ async def v1_download_order_document(order_id: str, document_id: str, request: R
             user["org_id"],
         )
     if not row:
+        logger.warning(
+            "document_download_failed reason=not_found order_id=%s document_id=%s org=%s user=%s",
+            order_id,
+            document_id,
+            user.get("org_id"),
+            user.get("sub"),
+        )
         raise HTTPException(status_code=404, detail="Document not found")
-    return {"download_url": _presigned_download_url(row["storage_bucket"], row["storage_key"])}
+    url = _presigned_download_url(row["storage_bucket"], row["storage_key"])
+    logger.info(
+        "document_downloaded order_id=%s patient_id=%s document_id=%s org=%s user=%s",
+        order_id,
+        row.get("order_patient_id"),
+        document_id,
+        user["org_id"],
+        user.get("sub"),
+    )
+    return {"download_url": url}
 
 
 @app.patch("/api/v1/orders/{order_id}/documents/{document_id}")

@@ -88,7 +88,12 @@ class Settings:
     minio_access_key: str = os.getenv("MINIO_ACCESS_KEY", "poseidon")
     minio_secret_key: str = os.getenv("MINIO_SECRET_KEY", "")
     minio_secure: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
-    minio_bucket: str = os.getenv("MINIO_BUCKET", "poseidon-docs")
+    # Prefer MINIO_BUCKET; MINIO_BUCKET_DOCUMENTS is a common alternate env name in multi-bucket setups.
+    minio_bucket: str = (
+        os.getenv("MINIO_BUCKET", "").strip()
+        or os.getenv("MINIO_BUCKET_DOCUMENTS", "").strip()
+        or "poseidon-docs"
+    )
 
     # Service URLs
     core_url: str = os.getenv("CORE_API_URL", "http://core:8001")
@@ -100,6 +105,12 @@ class Settings:
     phi_in_logs: bool = os.getenv("PHI_IN_LOGS", "false").lower() == "true"
     denial_threshold: float = float(os.getenv("DENIAL_THRESHOLD", "0.65"))
     write_off_threshold: float = float(os.getenv("WRITE_OFF_DOLLAR_THRESHOLD", "50.0"))
+    # Fax/OCR: if parsed confidence is below this (0–1), do not auto-create patient; intake_incomplete + review queue.
+    intake_ocr_confidence_threshold: float = float(os.getenv("INTAKE_OCR_CONFIDENCE_THRESHOLD", "0.55"))
+    # Billing: require orders.billing_ready_at before 837 submit-from-order / raw submit with order_id (set false only for break-glass).
+    billing_claim_require_billing_ready: bool = os.getenv("BILLING_CLAIM_REQUIRE_BILLING_READY", "true").lower() == "true"
+    # Block a second successful claim_submissions row per order (error status allows retry until DB unique index catches dup success).
+    billing_claim_block_duplicate_submission: bool = os.getenv("BILLING_CLAIM_BLOCK_DUPLICATE_SUBMISSION", "true").lower() == "true"
     appeal_window_days: int = int(os.getenv("APPEAL_WINDOW_DAYS", "60"))
     min_training_records: int = int(os.getenv("MIN_TRAINING_RECORDS", "25"))
     trident_learning_mode: str = os.getenv("TRIDENT_LEARNING_MODE", "continuous").lower()

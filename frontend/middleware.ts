@@ -1,7 +1,15 @@
-export { default } from "next-auth/middleware"
+import { withAuth } from "next-auth/middleware"
+
+export default withAuth({
+  callbacks: {
+    authorized: ({ token }) => Boolean(token?.accessToken),
+  },
+})
 
 export const config = {
   matcher: [
-    "/((?!login|founder|api/auth|api/health|api/public-inquiry|_next/static|_next/image|favicon.ico).*)",
+    // Leave Next internals and public auth/health routes alone so the login page can
+    // load its own chunks without being bounced through auth middleware.
+    "/((?!login|founder|api/auth|api/health|api/public-inquiry|api/core|_next|favicon.ico).*)",
   ],
 }

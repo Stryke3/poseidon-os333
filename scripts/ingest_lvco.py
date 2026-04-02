@@ -7,13 +7,20 @@ Requires:
   - A Core user with create_orders (e.g. admin) via login, or POSEIDON_ACCESS_TOKEN
 
 Environment (after optional .env load from repo root):
-  CORE_BASE_URL     default http://localhost/api   (nginx → Core; paths /auth/login, /orders/import)
+  CORE_BASE_URL     Base that maps to Core /auth/login and /orders/import (see below)
   INTERNAL_API_KEY  required
   POSEIDON_INGEST_EMAIL / POSEIDON_INGEST_PASSWORD  preferred for login
   CORE_API_EMAIL / CORE_API_PASSWORD                fallback (same names as dashboard dev fallback)
   POSEIDON_ACCESS_TOKEN                             if set, skip login
 
 Optional XLSX: pip install openpyxl
+
+CORE_BASE_URL (canonical):
+  - Docker / nginx in front of Core: http://localhost/api  → POST .../api/auth/login, .../api/orders/import
+  - Direct Core process: http://127.0.0.1:8001  → POST .../auth/login, .../orders/import
+  - Render (Core private, dashboard public): https://dashboard.strykefox.com/api/core
+      → POST .../api/core/auth/login and .../api/core/orders/import (Next.js proxies to Core; not NextAuth).
+  Do NOT set CORE_BASE_URL to https://.../api alone — that sends login to /api/auth/login (NextAuth) and fails.
 """
 
 from __future__ import annotations
@@ -356,12 +363,23 @@ def get_token(base: str) -> str:
     if host_header:
         login_headers["Host"] = host_header
 
-    _, payload = http_json(
-        "POST",
-        url,
-        login_headers,
-        {"email": email, "password": password},
-    )
+    try:
+        _, payload = http_json(
+            "POST",
+            url,
+            login_headers,
+            {"email": email, "password": password},
+        )
+    except RuntimeError as exc:
+        err_text = str(exc).lower()
+        if "nextauth" in err_text:
+            print(
+                "Login hit NextAuth instead of Core. Set CORE_BASE_URL to the Core API origin, or on Render use:\n"
+                "  CORE_BASE_URL=https://dashboard.strykefox.com/api/core\n"
+                "(see frontend /api/core/auth/login proxy).",
+                file=sys.stderr,
+            )
+        raise
     token = payload.get("access_token")
     if not token:
         print(f"Login response missing access_token: {payload}", file=sys.stderr)

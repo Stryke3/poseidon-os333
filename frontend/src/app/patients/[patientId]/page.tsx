@@ -9,6 +9,7 @@ import {
   SectionHeading,
 } from "@/components/dashboard/DashboardPrimitives"
 import ClaimActions from "@/components/patient/ClaimActions"
+import { ChartAddDevice } from "@/components/patient/ChartAddDevice"
 import { DocumentManager, type DocSlot } from "@/components/patient/DocumentManager"
 import PatientDangerZone from "@/components/patient/PatientDangerZone"
 import { formatHcpcsList, getHcpcsShortDescription } from "@/lib/hcpcs"
@@ -70,6 +71,15 @@ type PredictiveModelingRow = {
   notes?: string[]
 }
 
+type OrderLineItemRow = {
+  id?: string
+  order_id?: string
+  hcpcs_code?: string
+  modifier?: string | null
+  description?: string | null
+  quantity?: number
+}
+
 type OrderBundle = {
   id: string
   status?: string
@@ -88,6 +98,8 @@ type OrderBundle = {
   denied_amount?: number | string
   documents?: ChartDocument[]
   diagnoses?: OrderDiagnosisRow[]
+  /** HCPCS line items from Core (chart devices source when top-level devices[] is absent). */
+  line_items?: OrderLineItemRow[]
   billing_line_items?: BillingLineItemRow[]
   catalogue?: OrderCatalogue
   predictive_modeling?: PredictiveModelingRow
@@ -142,6 +154,22 @@ type PatientFaxEntry = {
   created_at?: string
 }
 
+type ChartNoteRow = {
+  id?: string
+  content?: string
+  author_name?: string | null
+  created_at?: string
+}
+
+type ChartDeviceRow = {
+  id?: string
+  order_id?: string
+  hcpcs_code?: string
+  modifier?: string | null
+  description?: string | null
+  quantity?: number
+}
+
 type PatientChartPayload = {
   patient: {
     id: string
@@ -170,6 +198,8 @@ type PatientChartPayload = {
     denied_amount_total: number
   }
   orders: OrderBundle[]
+  devices?: ChartDeviceRow[]
+  notes?: ChartNoteRow[]
   payments: FinancialItem[]
   denials: FinancialItem[]
   appeals: FinancialItem[]
@@ -270,6 +300,28 @@ function findDoc(docs: ChartDocument[] | undefined, docType: string): ChartDocum
   return docs.find((d) => d.doc_type === docType) || null
 }
 
+/** Older Core builds omit chart-level notes/devices; derive devices from order line_items. */
+function normalizePatientChartPayload(chart: PatientChartPayload): PatientChartPayload {
+  const notes = chart.notes ?? []
+  const existing = chart.devices
+  if (Array.isArray(existing) && existing.length > 0) {
+    return { ...chart, notes, devices: existing }
+  }
+  const devices: ChartDeviceRow[] = []
+  for (const o of chart.orders || []) {
+    const items = o.line_items
+    if (!items?.length) continue
+    for (const li of items) {
+      if (!li || typeof li !== "object") continue
+      devices.push({
+        ...li,
+        order_id: li.order_id ?? o.id,
+      })
+    }
+  }
+  return { ...chart, notes, devices }
+}
+
 function formatProbability(p: number | undefined) {
   if (p === undefined || Number.isNaN(p)) return "—"
   return `${Math.round(p * 100)}%`
@@ -315,7 +367,7 @@ export default async function PatientFilePage({
     )
   }
 
-  const chart = (await res.json()) as PatientChartPayload
+  const chart = normalizePatientChartPayload((await res.json()) as PatientChartPayload)
   const patient = chart.patient
   const patientName =
     [patient.first_name, patient.last_name].filter(Boolean).join(" ") || "Unknown Patient"
@@ -408,6 +460,9 @@ export default async function PatientFilePage({
               title="Integrated Patient Chart"
               description="Every order, signature packet, tracking artifact, and billing status attached to this patient."
             />
+            <div className="mb-6">
+              <ChartAddDevice patientId={patientId} orders={chart.orders.map((o) => ({ id: o.id }))} />
+            </div>
             <div className="grid gap-4">
               {chart.orders.length === 0 && (
                 <p className="text-sm text-slate-500">No orders found for this patient.</p>
@@ -681,6 +736,45 @@ export default async function PatientFilePage({
               )}
             </div>
           </SectionCard>
+
+          {(chart.notes && chart.notes.length > 0) || (chart.devices && chart.devices.length > 0) ? (
+            <SectionCard>
+              <SectionHeading
+                eyebrow="Chart"
+                title="Notes &amp; devices"
+                description="Patient contact notes and line-item devices (HCPCS) linked to orders."
+              />
+              {chart.notes && chart.notes.length > 0 ? (
+                <div className="mb-6 space-y-3">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Notes</p>
+                  {chart.notes.map((n) => (
+                    <div key={n.id} className="rounded-xl border border-white/10 bg-black/10 p-3 text-sm text-slate-200">
+                      <p className="text-xs text-slate-500">
+                        {n.author_name || "Staff"} · {formatDate(n.created_at)}
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap">{n.content}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {chart.devices && chart.devices.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Devices / line items</p>
+                  <ul className="space-y-2 text-sm text-slate-300">
+                    {chart.devices.map((d) => (
+                      <li key={`${d.order_id}-${d.id}`} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                        <span className="font-mono text-white">{d.hcpcs_code || "—"}</span>
+                        {d.description ? <span className="ml-2 text-slate-400">{d.description}</span> : null}
+                        <span className="ml-2 text-xs text-slate-500">
+                          Order {d.order_id?.slice(0, 8).toUpperCase()}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </SectionCard>
+          ) : null}
 
           {/* ── Document Management per Order ── */}
           {chart.orders.map((order) => (

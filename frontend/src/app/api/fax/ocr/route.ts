@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getToken } from "next-auth/jwt";
+import { getServerSession } from "next-auth";
 import { getServiceBaseUrl } from "@/lib/runtime-config";
+import { authOptions } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
-  const token = await getToken({ req });
-  if (!token?.accessToken) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.accessToken) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
     const INTAKE_API_URL = getServiceBaseUrl("INTAKE_API_URL");
     const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/parse-document`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token.accessToken}` },
+      headers: { Authorization: `Bearer ${session.user.accessToken}` },
       body: upstream,
     });
 

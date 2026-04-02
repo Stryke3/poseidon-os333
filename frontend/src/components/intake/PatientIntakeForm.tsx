@@ -513,6 +513,14 @@ export default function PatientIntakeForm() {
       }
 
       setSubmitting(true)
+      const patientIdempotencyKey =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `idem-p-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
+      const orderIdempotencyKey =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `idem-o-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
       let createdPatientId: string | null = null
       try {
         const patientPayload = {
@@ -537,7 +545,10 @@ export default function PatientIntakeForm() {
 
         const patientRes = await fetch("/api/patients", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": patientIdempotencyKey,
+          },
           body: JSON.stringify(patientPayload),
         })
 
@@ -598,7 +609,10 @@ export default function PatientIntakeForm() {
 
         const orderRes = await fetch("/api/orders", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": orderIdempotencyKey,
+          },
           body: JSON.stringify(orderPayload),
         })
         const orderData = await orderRes.json().catch(() => ({}))

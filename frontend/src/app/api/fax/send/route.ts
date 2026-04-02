@@ -3,6 +3,19 @@ import { getRequiredEnv, getServiceBaseUrl } from "@/lib/runtime-config";
 import { getSafeServerSession } from "@/lib/auth";
 
 const SINCH_FAX_BASE = "https://fax.api.sinch.com/v3";
+/** Sinch converts server-side; large or exotic files often yield DOCUMENT_CONVERSION_ERROR. */
+const MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024;
+
+const ALLOWED_ATTACHMENT_EXT = new Set([
+  ".pdf",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".tif",
+  ".tiff",
+  ".txt",
+  ".docx",
+]);
 
 interface FaxPayload {
   recipientFax: string;
@@ -40,6 +53,116 @@ function escapeHtml(value: string | undefined): string {
     .replace(/'/g, "&#39;");
 }
 
+function extensionLower(name: string): string {
+  const i = name.lastIndexOf(".");
+  return i >= 0 ? name.slice(i).toLowerCase() : "";
+}
+
+function mimeForFax(ext: string): string {
+  switch (ext) {
+    case ".pdf":
+      return "application/pdf";
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".tif":
+    case ".tiff":
+      return "image/tiff";
+    case ".txt":
+      return "text/plain";
+    case ".docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+/**
+ * Validate attachment bytes before Sinch sees them (avoids opaque DOCUMENT_CONVERSION_ERROR emails).
+ * @returns error message, or null if valid (ext is the normalized extension including dot).
+ */
+function validateFaxAttachment(
+  buffer: Buffer,
+  filename: string,
+): { error: string | null; ext: string } {
+  if (!buffer.length) {
+    return { error: `Attachment "${filename}" is empty.`, ext: "" };
+  }
+  if (buffer.length > MAX_ATTACHMENT_BYTES) {
+    return {
+      error: `Attachment "${filename}" exceeds ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB. Compress or split the file.`,
+      ext: "",
+    };
+  }
+
+  const ext = extensionLower(filename);
+  if (!ALLOWED_ATTACHMENT_EXT.has(ext)) {
+    return {
+      error: `Unsupported file type "${ext || "(no extension)"}" on "${filename}". Use PDF, PNG, JPG, TIFF, TXT, or DOCX (not HEIC/WebP).`,
+      ext: "",
+    };
+  }
+
+  const head = buffer.subarray(0, Math.min(16, buffer.length));
+
+  if (ext === ".pdf") {
+    if (!head.subarray(0, 5).equals(Buffer.from("%PDF-"))) {
+      return {
+        error: `"${filename}" is not a valid PDF (wrong file header). Re-export or print to PDF.`,
+        ext: "",
+      };
+    }
+    const asText = buffer.subarray(0, Math.min(2048, buffer.length)).toString("latin1");
+    if (/\/Encrypt\b/.test(asText)) {
+      return {
+        error: `"${filename}" appears password-protected. Remove encryption and resend.`,
+        ext: "",
+      };
+    }
+  }
+
+  if (ext === ".png") {
+    if (head[0] !== 0x89 || head[1] !== 0x50 || head[2] !== 0x4e || head[3] !== 0x47) {
+      return { error: `"${filename}" is not a valid PNG file.`, ext: "" };
+    }
+  }
+
+  if (ext === ".jpg" || ext === ".jpeg") {
+    if (head[0] !== 0xff || head[1] !== 0xd8 || head[2] !== 0xff) {
+      return { error: `"${filename}" is not a valid JPEG file.`, ext: "" };
+    }
+  }
+
+  if (ext === ".tif" || ext === ".tiff") {
+    const le = head[0] === 0x49 && head[1] === 0x49 && head[2] === 0x2a && head[3] === 0x00;
+    const be = head[0] === 0x4d && head[1] === 0x4d && head[2] === 0x00 && head[3] === 0x2a;
+    if (!le && !be) {
+      return { error: `"${filename}" is not a valid TIFF file.`, ext: "" };
+    }
+  }
+
+  if (ext === ".docx") {
+    if (head[0] !== 0x50 || head[1] !== 0x4b) {
+      return { error: `"${filename}" is not a valid DOCX (expected ZIP container).`, ext: "" };
+    }
+  }
+
+  if (ext === ".txt") {
+    const sample = buffer.subarray(0, Math.min(4096, buffer.length));
+    if (sample.includes(0)) {
+      return {
+        error: `"${filename}" looks binary. Save as plain UTF-8 text or use PDF.`,
+        ext: "",
+      };
+    }
+  }
+
+  return { error: null, ext };
+}
+
+/** Minimal table-based HTML — Sinch's HTML→fax rasterizer often fails on flex/grid and ::before. */
 function buildAuthorizationHtml(payload: FaxPayload): string {
   const signedBy = payload.releaseSignedBy || payload.patientName;
   const relationship = payload.releaseSignerRelationship || "Self";
@@ -53,30 +176,30 @@ function buildAuthorizationHtml(payload: FaxPayload): string {
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><style>
-  body { font-family: Arial, sans-serif; margin: 36px; color: #111827; line-height: 1.5; }
-  h1 { font-size: 20px; margin-bottom: 6px; }
-  h2 { font-size: 13px; margin: 20px 0 8px; text-transform: uppercase; letter-spacing: 1px; color: #0f766e; }
-  .meta { color: #475569; font-size: 12px; margin-bottom: 18px; }
-  .box { border: 1px solid #cbd5e1; border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .label { font-size: 10px; text-transform: uppercase; color: #64748b; }
-  .value { font-size: 13px; font-weight: 600; }
-  ul { margin: 8px 0 0 18px; }
-  .fine-print { font-size: 10px; color: #475569; margin-top: 18px; }
+  body { font-family: Arial, Helvetica, sans-serif; margin: 24px; color: #000000; font-size: 12px; line-height: 1.4; }
+  h1 { font-size: 16px; margin: 0 0 10px 0; }
+  .meta { color: #333333; font-size: 11px; margin-bottom: 14px; }
+  table.layout { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  td.box { border: 1px solid #000000; padding: 10px; vertical-align: top; }
+  .label { font-size: 9px; color: #333333; }
+  .value { font-size: 12px; font-weight: bold; }
+  ul { margin: 6px 0 0 20px; padding: 0; }
+  .fine-print { font-size: 9px; color: #333333; margin-top: 14px; }
 </style></head>
 <body>
   <h1>Authorization for Release of Protected Health Information</h1>
-  <p class="meta">Generated by StrykeFox Medical Platform for fax release documentation under 45 CFR 164.508.</p>
+  <p class="meta">StrykeFox Medical — fax release documentation (45 CFR 164.508).</p>
 
-  <div class="box grid">
-    <div><div class="label">Patient</div><div class="value">${escapeHtml(payload.patientName)}</div></div>
-    <div><div class="label">Date of Birth</div><div class="value">${escapeHtml(payload.patientDOB || "Not provided")}</div></div>
-    <div><div class="label">MRN / Account</div><div class="value">${escapeHtml(payload.patientMRN || "Not provided")}</div></div>
-    <div><div class="label">Recipient</div><div class="value">${escapeHtml(payload.recipientFacility || payload.recipientName || payload.recipientFax)}</div></div>
-  </div>
+  <table class="layout" cellpadding="0" cellspacing="0"><tr>
+    <td class="box" width="50%"><span class="label">Patient</span><br/><span class="value">${escapeHtml(payload.patientName)}</span></td>
+    <td class="box" width="50%"><span class="label">Date of Birth</span><br/><span class="value">${escapeHtml(payload.patientDOB || "Not provided")}</span></td>
+  </tr><tr>
+    <td class="box"><span class="label">MRN / Account</span><br/><span class="value">${escapeHtml(payload.patientMRN || "Not provided")}</span></td>
+    <td class="box"><span class="label">Recipient</span><br/><span class="value">${escapeHtml(payload.recipientFacility || payload.recipientName || payload.recipientFax)}</span></td>
+  </tr></table>
 
-  <div class="box">
-    <div class="label">Information Authorized for Release</div>
+  <table class="layout" cellpadding="0" cellspacing="0"><tr><td class="box">
+    <span class="label">Information Authorized for Release</span>
     <ul>${recordList}</ul>
     <p><strong>Date range:</strong> ${escapeHtml(
       payload.dateRange === "Custom Date Range"
@@ -85,14 +208,15 @@ function buildAuthorizationHtml(payload: FaxPayload): string {
     )}</p>
     <p><strong>Purpose:</strong> ${escapeHtml(purpose)}</p>
     <p><strong>Authorized by:</strong> ${escapeHtml(authorizedBy)}</p>
-  </div>
+  </td></tr></table>
 
-  <div class="box grid">
-    <div><div class="label">Signed By</div><div class="value">${escapeHtml(signedBy)}</div></div>
-    <div><div class="label">Relationship</div><div class="value">${escapeHtml(relationship)}</div></div>
-    <div><div class="label">Signed Date</div><div class="value">${escapeHtml(signedAt)}</div></div>
-    <div><div class="label">Authorization Confirmed</div><div class="value">${payload.authorizationOnFile ? "Yes" : "No"}</div></div>
-  </div>
+  <table class="layout" cellpadding="0" cellspacing="0"><tr>
+    <td class="box" width="50%"><span class="label">Signed By</span><br/><span class="value">${escapeHtml(signedBy)}</span></td>
+    <td class="box" width="50%"><span class="label">Relationship</span><br/><span class="value">${escapeHtml(relationship)}</span></td>
+  </tr><tr>
+    <td class="box"><span class="label">Signed Date</span><br/><span class="value">${escapeHtml(signedAt)}</span></td>
+    <td class="box"><span class="label">Authorization Confirmed</span><br/><span class="value">${payload.authorizationOnFile ? "Yes" : "No"}</span></td>
+  </tr></table>
 
   <p class="fine-print">
     This authorization may be revoked in writing except to the extent action has already been taken in reliance on it.
@@ -105,7 +229,7 @@ function buildAuthorizationHtml(payload: FaxPayload): string {
 
 function buildCoverPageHtml(payload: FaxPayload): string {
   const recordList = payload.recordTypes.length
-    ? payload.recordTypes.map((r) => `<li>${r}</li>`).join("")
+    ? payload.recordTypes.map((r) => `<li>${escapeHtml(r)}</li>`).join("")
     : "<li>All Available Records</li>";
 
   const dateInfo =
@@ -119,30 +243,32 @@ function buildCoverPageHtml(payload: FaxPayload): string {
     stat: "STAT - IMMEDIATE",
   };
 
+  const urgencyClass =
+    payload.urgency === "stat"
+      ? "urgency-stat"
+      : payload.urgency === "urgent"
+        ? "urgency-urgent"
+        : "";
+
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><style>
-  body { font-family: Arial, sans-serif; margin: 40px; color: #1e293b; }
-  .header { border-bottom: 3px solid #0f766e; padding-bottom: 16px; margin-bottom: 24px; }
-  .logo { font-size: 24px; font-weight: bold; color: #0f766e; }
-  .subtitle { font-size: 11px; color: #64748b; letter-spacing: 2px; }
-  .grid { display: flex; gap: 32px; margin-bottom: 24px; }
-  .col { flex: 1; }
-  .section { margin-bottom: 20px; }
-  .section-title { font-size: 11px; font-weight: bold; color: #0f766e; text-transform: uppercase;
-    letter-spacing: 1px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-bottom: 8px; }
-  .field { margin-bottom: 6px; }
-  .label { font-size: 10px; color: #94a3b8; text-transform: uppercase; }
-  .value { font-size: 13px; font-weight: 600; }
-  .urgency-stat { color: #dc2626; font-weight: bold; font-size: 14px; }
-  .urgency-urgent { color: #d97706; font-weight: bold; }
-  .records-list { list-style: none; padding: 0; }
-  .records-list li { padding: 4px 0; font-size: 12px; }
-  .records-list li::before { content: "\\2713  "; color: #0f766e; font-weight: bold; }
-  .hipaa { margin-top: 32px; padding: 16px; background: #fffbeb; border: 1px solid #fbbf24;
-    font-size: 9px; line-height: 1.5; color: #92400e; }
-  .hipaa-title { font-weight: bold; font-size: 10px; margin-bottom: 4px; }
-  .footer { margin-top: 24px; text-align: center; font-size: 10px; color: #94a3b8; }
+  body { font-family: Arial, Helvetica, sans-serif; margin: 24px; color: #000000; font-size: 12px; line-height: 1.35; }
+  .header { border-bottom: 2px solid #000000; padding-bottom: 10px; margin-bottom: 16px; }
+  .logo { font-size: 18px; font-weight: bold; }
+  .subtitle { font-size: 10px; color: #333333; }
+  table.layout { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+  td.col { border: 1px solid #000000; padding: 10px; width: 50%; vertical-align: top; }
+  .section-title { font-size: 10px; font-weight: bold; margin: 0 0 6px 0; text-transform: uppercase; }
+  .field { margin-bottom: 5px; }
+  .label { font-size: 9px; color: #333333; }
+  .value { font-size: 12px; font-weight: bold; }
+  .urgency-stat { color: #000000; font-weight: bold; }
+  .urgency-urgent { color: #000000; font-weight: bold; }
+  ul.records-list { margin: 4px 0 0 18px; padding: 0; }
+  .hipaa { margin-top: 16px; padding: 10px; border: 1px solid #000000; font-size: 8px; line-height: 1.4; color: #000000; }
+  .hipaa-title { font-weight: bold; font-size: 9px; margin-bottom: 4px; }
+  .footer { margin-top: 14px; text-align: center; font-size: 9px; color: #333333; }
 </style></head>
 <body>
   <div class="header">
@@ -150,56 +276,44 @@ function buildCoverPageHtml(payload: FaxPayload): string {
     <div class="subtitle">MEDICAL RECORDS REQUEST</div>
   </div>
 
-  <div class="grid">
-    <div class="col">
-      <div class="section">
-        <div class="section-title">From</div>
-        <div class="field"><span class="label">Name: </span><span class="value">${escapeHtml(payload.senderName || "N/A")}</span></div>
-        <div class="field"><span class="label">Facility: </span><span class="value">${escapeHtml(payload.senderFacility || "N/A")}</span></div>
-        <div class="field"><span class="label">Fax: </span><span class="value">${escapeHtml(payload.senderFax || "N/A")}</span></div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="section">
-        <div class="section-title">To</div>
-        <div class="field"><span class="label">Name: </span><span class="value">${escapeHtml(payload.recipientName || "N/A")}</span></div>
-        <div class="field"><span class="label">Facility: </span><span class="value">${escapeHtml(payload.recipientFacility || "N/A")}</span></div>
-        <div class="field"><span class="label">Fax: </span><span class="value">${escapeHtml(payload.recipientFax)}</span></div>
-      </div>
-    </div>
-  </div>
+  <table class="layout" cellpadding="0" cellspacing="0"><tr>
+    <td class="col">
+      <p class="section-title">From</p>
+      <div class="field"><span class="label">Name: </span><span class="value">${escapeHtml(payload.senderName || "N/A")}</span></div>
+      <div class="field"><span class="label">Facility: </span><span class="value">${escapeHtml(payload.senderFacility || "N/A")}</span></div>
+      <div class="field"><span class="label">Fax: </span><span class="value">${escapeHtml(payload.senderFax || "N/A")}</span></div>
+    </td>
+    <td class="col">
+      <p class="section-title">To</p>
+      <div class="field"><span class="label">Name: </span><span class="value">${escapeHtml(payload.recipientName || "N/A")}</span></div>
+      <div class="field"><span class="label">Facility: </span><span class="value">${escapeHtml(payload.recipientFacility || "N/A")}</span></div>
+      <div class="field"><span class="label">Fax: </span><span class="value">${escapeHtml(payload.recipientFax)}</span></div>
+    </td>
+  </tr></table>
 
-  <div class="section">
-    <div class="section-title">Patient Information</div>
-    <div class="field"><span class="label">Patient Name: </span><span class="value">${escapeHtml(payload.patientName)}</span></div>
-    <div class="field"><span class="label">Date of Birth: </span><span class="value">${escapeHtml(payload.patientDOB || "N/A")}</span></div>
-    <div class="field"><span class="label">MRN / Account #: </span><span class="value">${escapeHtml(payload.patientMRN || "N/A")}</span></div>
-  </div>
+  <p class="section-title">Patient Information</p>
+  <div class="field"><span class="label">Patient Name: </span><span class="value">${escapeHtml(payload.patientName)}</span></div>
+  <div class="field"><span class="label">Date of Birth: </span><span class="value">${escapeHtml(payload.patientDOB || "N/A")}</span></div>
+  <div class="field"><span class="label">MRN / Account #: </span><span class="value">${escapeHtml(payload.patientMRN || "N/A")}</span></div>
 
-  <div class="section">
-    <div class="section-title">Records Requested</div>
-    <ul class="records-list">${recordList}</ul>
-    <div class="field" style="margin-top:8px"><span class="label">Date Range: </span><span class="value">${escapeHtml(dateInfo)}</span></div>
-    <div class="field"><span class="label">Urgency: </span><span class="value ${payload.urgency === "stat" ? "urgency-stat" : payload.urgency === "urgent" ? "urgency-urgent" : ""}">${escapeHtml(urgencyLabel[payload.urgency] || payload.urgency)}</span></div>
-    ${payload.notes ? `<div class="field" style="margin-top:8px"><span class="label">Notes: </span><span class="value">${escapeHtml(payload.notes)}</span></div>` : ""}
-    <div class="field" style="margin-top:8px"><span class="label">Release Signed By: </span><span class="value">${escapeHtml(payload.releaseSignedBy || payload.patientName)}</span></div>
-    <div class="field"><span class="label">Signed Date: </span><span class="value">${escapeHtml(payload.releaseSignedAt || "Not provided")}</span></div>
-  </div>
+  <p class="section-title" style="margin-top:12px">Records Requested</p>
+  <ul class="records-list">${recordList}</ul>
+  <div class="field" style="margin-top:8px"><span class="label">Date Range: </span><span class="value">${escapeHtml(dateInfo)}</span></div>
+  <div class="field"><span class="label">Urgency: </span><span class="value ${urgencyClass}">${escapeHtml(urgencyLabel[payload.urgency] || payload.urgency)}</span></div>
+  ${payload.notes ? `<div class="field" style="margin-top:8px"><span class="label">Notes: </span><span class="value">${escapeHtml(payload.notes)}</span></div>` : ""}
+  <div class="field" style="margin-top:8px"><span class="label">Release Signed By: </span><span class="value">${escapeHtml(payload.releaseSignedBy || payload.patientName)}</span></div>
+  <div class="field"><span class="label">Signed Date: </span><span class="value">${escapeHtml(payload.releaseSignedAt || "Not provided")}</span></div>
 
   <div class="hipaa">
     <div class="hipaa-title">CONFIDENTIALITY NOTICE</div>
     This facsimile transmission contains confidential information that is legally privileged.
     This information is intended only for the use of the individual or entity named above.
-    The authorized recipient of this information is prohibited from disclosing this information
-    to any other party unless required to do so by law or regulation and is required to destroy
-    the information after its stated need has been fulfilled. If you are not the intended recipient,
-    you are hereby notified that any disclosure, copying, distribution, or action taken in reliance
-    on the contents of these documents is STRICTLY PROHIBITED. If you have received this fax in error,
-    please notify the sender immediately by telephone to arrange for the return of the original documents.
+    If you are not the intended recipient, do not disclose, copy, or distribute this transmission.
+    Notify the sender immediately if received in error.
   </div>
 
   <div class="footer">
-    &copy; ${new Date().getFullYear()} StrykeFox Medical Platform &mdash; HIPAA Compliant &mdash; 45 CFR &sect;164
+    ${new Date().getFullYear()} StrykeFox Medical Platform — HIPAA — 45 CFR 164
   </div>
 </body>
 </html>`;
@@ -267,7 +381,7 @@ export async function POST(req: NextRequest) {
         attachmentBuffers.push({
           name: (file as File).name || "attachment",
           buffer: buf,
-          type: file.type || "application/pdf",
+          type: file.type || "application/octet-stream",
         });
       }
     }
@@ -293,6 +407,20 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+
+  const checked: { name: string; buffer: Buffer; type: string }[] = [];
+  for (const att of attachmentBuffers) {
+    const { error, ext } = validateFaxAttachment(att.buffer, att.name);
+    if (error) {
+      return NextResponse.json({ error }, { status: 400 });
+    }
+    checked.push({
+      name: att.name,
+      buffer: att.buffer,
+      type: mimeForFax(ext),
+    });
+  }
+  attachmentBuffers = checked;
 
   const coverHtml = buildCoverPageHtml(payload);
   const authorizationHtml = buildAuthorizationHtml(payload);
@@ -429,21 +557,40 @@ export async function POST(req: NextRequest) {
       },
     };
 
-    // Fire-and-forget log to core
-    fetch(`${coreApiUrl}/fax/log`, {
+    const logRes = await fetch(`${coreApiUrl}/fax/log`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${session.user.accessToken}`,
       },
       body: JSON.stringify(logPayload),
-    }).catch(() => {
-      // Log failure is non-critical
-    });
+      cache: "no-store",
+    }).catch(() => null);
+
+    if (!logRes || !logRes.ok) {
+      const logBody = logRes ? await logRes.text().catch(() => "") : "";
+      console.error("Core fax_log persist failed after Sinch accept", {
+        faxId: faxData.id,
+        logStatus: logRes?.status,
+        logBody: logBody.slice(0, 500),
+      });
+      return NextResponse.json(
+        {
+          error:
+            "Fax was accepted by Sinch but the internal fax log could not be saved. Retain the Fax ID for reconciliation.",
+          faxId: faxData.id,
+          sinchStatus: faxData.status || "queued",
+          logStatus: logRes?.status ?? null,
+          logDetail: logBody ? logBody.slice(0, 500) : "Unable to reach core service",
+        },
+        { status: 502 },
+      );
+    }
 
     return NextResponse.json({
       success: true,
       faxId: faxData.id,
+      faxLogPersisted: true,
       to: toNumber,
       pages: 2 + attachmentBuffers.length,
       status: faxData.status || "queued",

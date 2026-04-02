@@ -28,7 +28,12 @@ bash scripts/ingest_lvco.sh --file /path/to/file.csv
 ```
 
 - **Auth:** set `POSEIDON_INGEST_EMAIL` / `POSEIDON_INGEST_PASSWORD`, or use `POSEIDON_ACCESS_TOKEN`. `CORE_API_EMAIL` / `CORE_API_PASSWORD` remain valid for automation-oriented flows, but they should not be treated as the default human dashboard login.
-- **URL:** `CORE_BASE_URL` should point at the live Core origin for the active environment. In production, use the deployed Render-backed API route rather than an old local Compose hostname.
+- **URL (`CORE_BASE_URL`) — must reach Core `/auth/login` and `/orders/import`, not NextAuth:**
+  - **Local nginx in front of Core:** `http://localhost/api` → requests go to `.../api/auth/login` and `.../api/orders/import` (rewritten to Core).
+  - **Direct Core:** `http://127.0.0.1:8001` → `.../auth/login`, `.../orders/import`.
+  - **Render (Core private, dashboard public):** use the dashboard **Core proxy** prefix:
+    `CORE_BASE_URL=https://dashboard.strykefox.com/api/core`
+    so login hits `.../api/core/auth/login` (forwards to Core) instead of `.../api/auth/login` (NextAuth).
 - **XLSX:** install `openpyxl` once: `pip install openpyxl` (or `python3 -m pip install openpyxl`).
 
 Column mapping matches the dashboard live ingest route (`frontend/src/app/api/ingest/live/route.ts`): patient name, payer, HCPCS/CPT, ICD, DOB, etc.

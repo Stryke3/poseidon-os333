@@ -1,7 +1,7 @@
 "use client"
 
 import { Suspense, useState, useEffect } from "react"
-import { signIn, useSession } from "next-auth/react"
+import { signIn, signOut, useSession } from "next-auth/react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { PageShell } from "@/components/dashboard/DashboardPrimitives"
@@ -46,7 +46,7 @@ function LoginContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const pathname = usePathname()
-  const { status } = useSession()
+  const { data: session, status } = useSession()
   const callbackUrl = sanitizeCallbackUrl(searchParams.get("callbackUrl"))
   const authError = searchParams.get("error")
 
@@ -81,11 +81,18 @@ function LoginContent() {
   }, [effectiveResetToken])
 
   useEffect(() => {
-    if (status === "authenticated" && view === "login") {
-      router.replace(callbackUrl)
-      router.refresh()
+    if (view !== "login" || status !== "authenticated") return
+
+    if (!session?.user?.accessToken) {
+      void signOut({ redirect: false })
+      setMessage("Your session expired. Sign in again.")
+      return
     }
-  }, [callbackUrl, router, status, view])
+
+    if (session.user.accessToken) {
+      router.replace(callbackUrl)
+    }
+  }, [callbackUrl, router, session?.user?.accessToken, status, view])
 
   useEffect(() => {
     if (!authError || effectiveResetToken) return
@@ -129,7 +136,6 @@ function LoginContent() {
 
       const destination = sanitizeCallbackUrl(result?.url) || callbackUrl
       router.replace(destination)
-      router.refresh()
     } catch {
       setError("Authentication failed. Try again in a moment.")
     } finally {

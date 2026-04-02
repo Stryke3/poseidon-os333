@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server"
 import {
   availityServiceBaseUrl,
   AVAILITY_INTEGRATION_PATH,
@@ -7,7 +6,7 @@ import {
   gateAvailityApiRequest,
   takeAvailityGateFailure,
 } from "@/lib/availity-api-security"
-import { serverFetch } from "@/lib/server-http"
+import { proxyUpstreamText } from "@/lib/upstream-proxy"
 
 export async function POST(req: Request) {
   const gate = await gateAvailityApiRequest(req)
@@ -16,18 +15,11 @@ export async function POST(req: Request) {
 
   const url = `${availityServiceBaseUrl()}${AVAILITY_INTEGRATION_PATH}/eligibility`
   const body = await req.text()
-  const res = await serverFetch(url, {
+  return proxyUpstreamText(url, {
     method: "POST",
     headers: {
       "Content-Type": req.headers.get("content-type") || "application/json",
     },
     body,
-  })
-  const text = await res.text()
-  return new NextResponse(text, {
-    status: res.status,
-    headers: {
-      "Content-Type": res.headers.get("content-type") || "application/json",
-    },
   })
 }

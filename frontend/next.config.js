@@ -40,7 +40,11 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com data:",
       "img-src 'self' data: blob: https:",
-      "connect-src 'self' https://api.strykefox.com https://trident.strykefox.com https://intake.strykefox.com https://ml.strykefox.com https://edi.strykefox.com",
+      // Tesseract.js (browser OCR) loads worker, WASM, and eng.traineddata from jsDelivr by default.
+      "connect-src 'self' https://api.strykefox.com https://trident.strykefox.com https://intake.strykefox.com https://ml.strykefox.com https://edi.strykefox.com https://cdn.jsdelivr.net",
+      "worker-src 'self' blob: https://cdn.jsdelivr.net",
+      "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net 'wasm-unsafe-eval'",
+      "script-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net 'wasm-unsafe-eval'",
       "frame-ancestors 'self'",
       "base-uri 'self'",
       "form-action 'self'",

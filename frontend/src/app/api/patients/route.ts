@@ -16,12 +16,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
   }
 
+  const incomingIdem = req.headers.get("Idempotency-Key")?.trim()
+  const forwardHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${session.user.accessToken}`,
+  }
+  if (incomingIdem) {
+    forwardHeaders["Idempotency-Key"] = incomingIdem.slice(0, 128)
+  }
+
   const res = await fetch(`${CORE_API_URL}/patients`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session.user.accessToken}`,
-    },
+    headers: forwardHeaders,
     body: JSON.stringify(body),
     cache: "no-store",
   }).catch(() => null)

@@ -50,8 +50,15 @@ CREATE TABLE IF NOT EXISTS payers (
     requires_cmn BOOLEAN NOT NULL DEFAULT false,
     requires_prior_auth JSONB NOT NULL DEFAULT '[]',
     baseline_denial_rate NUMERIC(5,4),
-    active BOOLEAN NOT NULL DEFAULT true
+    active BOOLEAN NOT NULL DEFAULT true,
+    -- X12 NM1*PR NM109 (PI) and related Availity / clearinghouse trading-partner id; verify in Availity payer list.
+    availity_payer_id TEXT,
+    -- Optional override for NM103 when it must differ from display name
+    availity_payer_name TEXT
 );
+
+ALTER TABLE payers ADD COLUMN IF NOT EXISTS availity_payer_id TEXT;
+ALTER TABLE payers ADD COLUMN IF NOT EXISTS availity_payer_name TEXT;
 
 -- =============================================================================
 -- PATIENTS & INSURANCE
@@ -227,12 +234,7 @@ CREATE TABLE IF NOT EXISTS order_documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     org_id UUID NOT NULL,
-    doc_type VARCHAR(50) NOT NULL CHECK (doc_type IN (
-        'swo','pod','cms1500','patient_id','doctors_notes','addendum',
-        'prescription','chart_notes','appeal_letter','eob','denial_letter',
-        'prior_auth','eligibility_response','signed_swo',
-        'tracking_confirmation','other'
-    )),
+    doc_type VARCHAR(50) NOT NULL CHECK (char_length(btrim(doc_type)) BETWEEN 1 AND 50),
     file_name VARCHAR(500),
     mime_type VARCHAR(100),
     file_size_bytes BIGINT,
@@ -564,12 +566,20 @@ CREATE TABLE IF NOT EXISTS fax_log (
     patient_name VARCHAR(255),
     patient_dob VARCHAR(32),
     patient_mrn VARCHAR(128),
+    patient_id UUID,
+    order_id UUID,
+    related_fax_id UUID,
+    review_status VARCHAR(64),
+    review_reason TEXT,
     record_types JSONB DEFAULT '[]'::jsonb,
     urgency VARCHAR(32),
     status VARCHAR(32) NOT NULL,
     pages INTEGER DEFAULT 0,
     service VARCHAR(64),
     sinch_fax_id VARCHAR(255),
+    external_fax_id VARCHAR(255),
+    document_hash VARCHAR(128),
+    intake_status VARCHAR(64),
     sent_by VARCHAR(255),
     file_url TEXT,
     received_at TIMESTAMPTZ,
@@ -580,6 +590,18 @@ CREATE TABLE IF NOT EXISTS fax_log (
 
 CREATE INDEX IF NOT EXISTS idx_fax_log_org_created_at ON fax_log (org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_fax_log_direction_created_at ON fax_log (direction, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fax_log_patient_created_at ON fax_log (patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fax_log_order_created_at ON fax_log (order_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fax_log_related_fax_id ON fax_log (related_fax_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fax_log_inbound_external_fax_id
+    ON fax_log (external_fax_id)
+    WHERE direction = 'inbound' AND external_fax_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fax_log_inbound_document_hash
+    ON fax_log (document_hash)
+    WHERE direction = 'inbound' AND document_hash IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_fax_log_inbound_intake_status ON fax_log (intake_status) WHERE direction = 'inbound';
 
 CREATE TABLE IF NOT EXISTS notifications (
     id BIGSERIAL PRIMARY KEY,
@@ -625,6 +647,7 @@ CREATE INDEX IF NOT EXISTS idx_patient_notes_patient ON patient_notes(patient_id
 -- =============================================================================
 CREATE INDEX IF NOT EXISTS idx_patients_org ON patients(org_id);
 CREATE INDEX IF NOT EXISTS idx_patients_name ON patients USING gin(to_tsvector('english', coalesce(first_name,'') || ' ' || coalesce(last_name,'')));
+CREATE INDEX IF NOT EXISTS idx_patient_identity ON patients (org_id, lower(first_name), lower(last_name), date_of_birth);
 CREATE INDEX IF NOT EXISTS idx_orders_org ON orders(org_id);
 DO $$
 BEGIN
@@ -791,27 +814,46 @@ INSERT INTO timely_filing_windows (payer_id, payer_name, window_days, window_typ
   ('medicaid','Medicaid',365,'from_dos')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO payers (id, name, timely_filing_days, requires_cmn, requires_prior_auth, baseline_denial_rate, active) VALUES
-  ('MEDICARE_DMERC', 'Medicare DMERC', 365, true, '["L1833","L1686","E1399","K0001","K0002","K0003","K0004","K0005","K0333"]', 0.9050, true),
-  ('UHC', 'UnitedHealthcare', 180, false, '["L1833","L1686","K0001","K0004","K0005","K0333"]', 0.3200, true),
-  ('AETNA', 'Aetna', 180, false, '["L1833","L1686","K0001","K0333"]', 0.2800, true),
-  ('BCBS', 'Blue Cross Blue Shield', 365, false, '["L1833","L1686","K0001","K0004","K0333"]', 0.2500, true),
-  ('CIGNA', 'Cigna', 180, false, '["L1833","L1686","K0333"]', 0.2700, true),
-  ('HUMANA', 'Humana', 365, true, '["L1833","L1686","K0001","K0004","K0005","K0333"]', 0.3500, true),
-  ('MEDICAID', 'Medicaid', 365, true, '[]', 0.4000, true),
-  ('ANTHEM', 'Anthem', 180, false, '["L1833","L1686"]', 0.2600, true),
-  ('MOLINA', 'Molina Healthcare', 365, false, '[]', 0.3800, true),
-  ('CENTENE', 'Centene', 180, false, '[]', 0.3300, true),
-  ('WELLCARE', 'WellCare', 180, false, '[]', 0.3600, true),
-  ('CARESOURCE', 'CareSource', 365, false, '[]', 0.3400, true),
-  ('OSCAR', 'Oscar Health', 180, false, '[]', 0.2200, true),
-  ('AMBETTER', 'Ambetter', 180, false, '[]', 0.3000, true),
-  ('TRICARE', 'TRICARE', 365, false, '["L1833","L1686"]', 0.1800, true),
-  ('VA', 'Veterans Affairs', 365, false, '[]', 0.1500, true),
-  ('KAISER', 'Kaiser Permanente', 180, false, '[]', 0.1200, true),
-  ('MAGELLAN', 'Magellan Health', 180, false, '[]', 0.2900, true),
-  ('CHAMP_VA', 'ChampVA', 365, false, '[]', 0.1600, true)
+INSERT INTO payers (id, name, timely_filing_days, requires_cmn, requires_prior_auth, baseline_denial_rate, active, availity_payer_id, availity_payer_name) VALUES
+  ('MEDICARE_DMERC', 'Medicare DMERC', 365, true, '["L1833","L1686","E1399","K0001","K0002","K0003","K0004","K0005","K0333"]', 0.9050, true, '00882', NULL),
+  ('UHC', 'UnitedHealthcare', 180, false, '["L1833","L1686","K0001","K0004","K0005","K0333"]', 0.3200, true, '87726', NULL),
+  ('AETNA', 'Aetna', 180, false, '["L1833","L1686","K0001","K0333"]', 0.2800, true, '60054', NULL),
+  ('BCBS', 'Blue Cross Blue Shield', 365, false, '["L1833","L1686","K0001","K0004","K0333"]', 0.2500, true, '00710', NULL),
+  ('CIGNA', 'Cigna', 180, false, '["L1833","L1686","K0333"]', 0.2700, true, '62308', NULL),
+  ('HUMANA', 'Humana', 365, true, '["L1833","L1686","K0001","K0004","K0005","K0333"]', 0.3500, true, '61101', NULL),
+  ('MEDICAID', 'Medicaid', 365, true, '[]', 0.4000, true, NULL, NULL),
+  ('ANTHEM', 'Anthem', 180, false, '["L1833","L1686"]', 0.2600, true, '47009', NULL),
+  ('MOLINA', 'Molina Healthcare', 365, false, '[]', 0.3800, true, '38338', NULL),
+  ('CENTENE', 'Centene', 180, false, '[]', 0.3300, true, '68068', NULL),
+  ('WELLCARE', 'WellCare', 180, false, '[]', 0.3600, true, '14163', NULL),
+  ('CARESOURCE', 'CareSource', 365, false, '[]', 0.3400, true, '31117', NULL),
+  ('OSCAR', 'Oscar Health', 180, false, '[]', 0.2200, true, NULL, NULL),
+  ('AMBETTER', 'Ambetter', 180, false, '[]', 0.3000, true, '95378', NULL),
+  ('TRICARE', 'TRICARE', 365, false, '["L1833","L1686"]', 0.1800, true, '99726', NULL),
+  ('VA', 'Veterans Affairs', 365, false, '[]', 0.1500, true, '84146', NULL),
+  ('KAISER', 'Kaiser Permanente', 180, false, '[]', 0.1200, true, '94135', NULL),
+  ('MAGELLAN', 'Magellan Health', 180, false, '[]', 0.2900, true, '01260', NULL),
+  ('CHAMP_VA', 'ChampVA', 365, false, '[]', 0.1600, true, '84146', NULL)
 ON CONFLICT (id) DO NOTHING;
+
+-- Backfill Availity / EDI payer ids when upgrading an existing database (skipped if already set).
+UPDATE payers SET availity_payer_id = '00882' WHERE id = 'MEDICARE_DMERC' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '87726' WHERE id = 'UHC' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '60054' WHERE id = 'AETNA' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '00710' WHERE id = 'BCBS' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '62308' WHERE id = 'CIGNA' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '61101' WHERE id = 'HUMANA' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '47009' WHERE id = 'ANTHEM' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '38338' WHERE id = 'MOLINA' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '68068' WHERE id = 'CENTENE' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '14163' WHERE id = 'WELLCARE' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '31117' WHERE id = 'CARESOURCE' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '95378' WHERE id = 'AMBETTER' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '99726' WHERE id = 'TRICARE' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '84146' WHERE id = 'VA' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '84146' WHERE id = 'CHAMP_VA' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '94135' WHERE id = 'KAISER' AND availity_payer_id IS NULL;
+UPDATE payers SET availity_payer_id = '01260' WHERE id = 'MAGELLAN' AND availity_payer_id IS NULL;
 
 -- =============================================================================
 -- EDI SERVICE TABLES (837P Outbound / 835 Inbound)
@@ -847,6 +889,9 @@ CREATE TABLE IF NOT EXISTS claim_submissions (
     updated_at                  TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_cs_order  ON claim_submissions(order_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_submissions_one_success_per_order
+    ON claim_submissions (order_id)
+    WHERE status IN ('submitted', 'accepted');
 CREATE INDEX IF NOT EXISTS idx_cs_org    ON claim_submissions(org_id);
 CREATE INDEX IF NOT EXISTS idx_cs_status ON claim_submissions(status, submitted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_cs_icn    ON claim_submissions(interchange_control_number);

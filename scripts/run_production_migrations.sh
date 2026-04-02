@@ -41,7 +41,11 @@ for migration in \
   "${ROOT_DIR}/scripts/migrations/006_cleanup_import_dedup.sql" \
   "${ROOT_DIR}/scripts/migrations/007_patient_contact_dl_nok.sql" \
   "${ROOT_DIR}/scripts/migrations/008_dedup_orders_sorted_hcpcs.sql" \
-  "${ROOT_DIR}/scripts/migrations/009_dedup_payment_outcomes.sql"
+  "${ROOT_DIR}/scripts/migrations/009_dedup_payment_outcomes.sql" \
+  "${ROOT_DIR}/scripts/migrations/010_patient_identity_index.sql" \
+  "${ROOT_DIR}/scripts/migrations/011_fax_log_full_schema.sql" \
+  "${ROOT_DIR}/scripts/migrations/012_claim_submissions_one_success_per_order.sql" \
+  "${ROOT_DIR}/scripts/migrations/013_order_documents_doc_type_flex.sql"
 do
   echo "Applying $(basename "${migration}")"
   PGPASSWORD="${POSTGRES_PASSWORD}" psql \

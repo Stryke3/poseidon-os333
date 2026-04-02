@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server"
 import {
   availityServiceBaseUrl,
   AVAILITY_INTEGRATION_PATH,
@@ -7,7 +6,7 @@ import {
   gateAvailityApiRequest,
   takeAvailityGateFailure,
 } from "@/lib/availity-api-security"
-import { serverFetch } from "@/lib/server-http"
+import { proxyUpstreamText } from "@/lib/upstream-proxy"
 
 export async function GET(req: Request) {
   const gate = await gateAvailityApiRequest(req)
@@ -15,12 +14,5 @@ export async function GET(req: Request) {
   if (blocked) return blocked
 
   const url = `${availityServiceBaseUrl()}${AVAILITY_INTEGRATION_PATH}/health`
-  const res = await serverFetch(url, { method: "GET" })
-  const body = await res.text()
-  return new NextResponse(body, {
-    status: res.status,
-    headers: {
-      "Content-Type": res.headers.get("content-type") || "application/json",
-    },
-  })
+  return proxyUpstreamText(url, { method: "GET" })
 }

@@ -87,6 +87,34 @@ function reviewLabel(status?: string): string {
 
 // ── Client-side OCR with Tesseract.js (lazy-loaded) ──
 
+async function pdfPagesToDataUrls(file: File, maxPages = 3): Promise<string[]> {
+  const pdfjs = await import("pdfjs-dist");
+  if (typeof window !== "undefined") {
+    pdfjs.GlobalWorkerOptions.workerSrc = `${window.location.origin}/pdf.worker.min.mjs`;
+  }
+  const data = new Uint8Array(await file.arrayBuffer());
+  const loadingTask = pdfjs.getDocument({ data, useSystemFonts: true });
+  const pdf = await loadingTask.promise;
+  const total = Math.min(Math.max(1, pdf.numPages), maxPages);
+  const outputs: string[] = [];
+  for (let i = 1; i <= total; i += 1) {
+    const page = await pdf.getPage(i);
+    const scale = 2;
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Canvas is not available for PDF rendering.");
+    }
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const renderTask = page.render({ canvasContext: ctx, viewport });
+    await renderTask.promise;
+    outputs.push(canvas.toDataURL("image/png"));
+  }
+  return outputs;
+}
+
 async function runClientOcr(
   file: File,
   onProgress?: (pct: number) => void
@@ -107,26 +135,35 @@ async function runClientOcr(
     },
   });
 
-  let imageSource: string | File = file;
-
-  // For PDFs, we need to convert to image first using canvas
-  if (file.type === "application/pdf") {
-    // Can't OCR PDF directly in browser without pdf.js — use the raw file
-    // Tesseract handles common image formats; PDF requires server-side
-    imageSource = file;
+  let imageSources: (string | File)[] = [file];
+  const isPdf =
+    file.type === "application/pdf" ||
+    file.name.toLowerCase().endsWith(".pdf");
+  if (isPdf) {
+    imageSources = await pdfPagesToDataUrls(file, 3);
   }
-
-  const {
-    data: { text, confidence },
-  } = await worker.recognize(imageSource);
+  let combinedText = "";
+  let confidenceTotal = 0;
+  for (let i = 0; i < imageSources.length; i += 1) {
+    const {
+      data: { text, confidence },
+    } = await worker.recognize(imageSources[i]);
+    combinedText += (combinedText ? "\n\n" : "") + text;
+    confidenceTotal += confidence;
+    if (onProgress) {
+      const pct = Math.min(99, Math.round(((i + 1) / imageSources.length) * 100));
+      onProgress(pct);
+    }
+  }
   await worker.terminate();
 
   // Extract structured fields from OCR text using pattern matching
-  const extracted = extractFieldsFromText(text);
+  const extracted = extractFieldsFromText(combinedText);
+  const avgConfidence = imageSources.length > 0 ? confidenceTotal / imageSources.length : 0;
 
   return {
-    text,
-    confidence: confidence / 100,
+    text: combinedText,
+    confidence: avgConfidence / 100,
     ...extracted,
   };
 }
@@ -247,6 +284,10 @@ export default function StrykeFoxFaxSystem() {
     dob: "",
     mrn: "",
     insuranceId: "",
+    payerId: "",
+    physicianNpi: "",
+    icd10Codes: "",
+    hcpcsCodes: "",
     phone: "",
     address: "",
     existingChartId: "",
@@ -319,13 +360,22 @@ export default function StrykeFoxFaxSystem() {
     setOcrResult(null);
 
     try {
-      // Try server-side OCR first
+      // Try server-side OCR first (Intake parse-document). Accept even when raw text is
+      // empty — scanned PDFs often have no extractable text server-side.
       const serverResult = await processOcr(file);
 
-      if (serverResult.source === "server" && serverResult.rawText) {
+      const hasServerSignal = Boolean(
+        serverResult.patientName?.trim() ||
+          serverResult.firstName?.trim() ||
+          serverResult.lastName?.trim() ||
+          serverResult.dob?.trim() ||
+          serverResult.insuranceId?.trim() ||
+          serverResult.rawText?.trim(),
+      );
+      if (serverResult.success && serverResult.source === "server" && hasServerSignal) {
         setOcrResult(serverResult);
       } else {
-        // Fall back to client-side Tesseract.js
+        // Fall back to client-side Tesseract.js (images + PDF first page via pdf.js)
         const clientResult = await runClientOcr(file, setOcrProgress);
         setOcrResult({
           success: true,
@@ -343,11 +393,15 @@ export default function StrykeFoxFaxSystem() {
         });
       }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "OCR processing failed";
       setOcrResult({
         success: false,
         source: "client",
         fileName: file.name,
-        error: err instanceof Error ? err.message : "OCR processing failed",
+        error:
+          msg.includes("pdf.worker") || msg.includes("PDF")
+            ? "PDF could not be rendered for OCR. Ensure pdf.worker.min.mjs is deployed (run npm install in frontend) or try a PNG/JPG export."
+            : msg,
       });
     }
 
@@ -367,6 +421,12 @@ export default function StrykeFoxFaxSystem() {
     if (ocrResult.mrn) updateIntake("mrn", ocrResult.mrn);
     if (ocrResult.insuranceId)
       updateIntake("insuranceId", ocrResult.insuranceId);
+    if (ocrResult.payerName) updateIntake("payerId", ocrResult.payerName);
+    if (ocrResult.physicianNpi) updateIntake("physicianNpi", ocrResult.physicianNpi);
+    if (ocrResult.diagnosisCodes?.length)
+      updateIntake("icd10Codes", ocrResult.diagnosisCodes.join(", "));
+    if (ocrResult.hcpcsCodes?.length)
+      updateIntake("hcpcsCodes", ocrResult.hcpcsCodes.join(", "));
     if (ocrResult.phone) updateIntake("phone", ocrResult.phone);
     if (ocrResult.address) updateIntake("address", ocrResult.address);
   };
@@ -500,15 +560,51 @@ export default function StrykeFoxFaxSystem() {
   const handleSaveIntake = async () => {
     setIntakeSaving(true);
     try {
+      if (
+        intakeMode === "new" &&
+        ocrResult?.source === "client" &&
+        typeof ocrResult.confidence === "number" &&
+        ocrResult.confidence < 0.55
+      ) {
+        setSendResult({
+          type: "error",
+          message:
+            "OCR confidence is too low for automatic chart creation. Verify identity or route to manual review.",
+        });
+        setIntakeSaving(false);
+        return;
+      }
+      const parseCodes = (value: string) =>
+        value
+          .split(/[,\s]+/)
+          .map((c) => c.trim().toUpperCase())
+          .filter(Boolean);
+      const patientIdem =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `fax-intake-p-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       const patientPayload = {
-        first_name: patientIntake.firstName,
-        last_name: patientIntake.lastName,
-        dob: patientIntake.dob,
-        mrn: patientIntake.mrn,
-        insurance_id: patientIntake.insuranceId,
-        phone: patientIntake.phone,
-        address: patientIntake.address,
+        first_name: patientIntake.firstName.trim(),
+        last_name: patientIntake.lastName.trim(),
+        dob: patientIntake.dob.trim(),
+        insurance_id: patientIntake.insuranceId.trim() || null,
+        payer_id: patientIntake.payerId.trim() || null,
+        diagnosis_codes: parseCodes(patientIntake.icd10Codes),
+        phone: patientIntake.phone.trim() || null,
+        address:
+          patientIntake.address.trim().length > 0
+            ? { line1: patientIntake.address.trim() }
+            : null,
       };
+      const patchPayload = Object.fromEntries(
+        Object.entries(patientPayload).filter(([, value]) => {
+          if (value === null || value === undefined) return false;
+          if (typeof value === "string") return value.trim().length > 0;
+          if (Array.isArray(value)) return value.length > 0;
+          if (typeof value === "object") return Object.keys(value as object).length > 0;
+          return true;
+        }),
+      );
 
       const endpoint =
         intakeMode === "existing" && patientIntake.existingChartId
@@ -519,16 +615,75 @@ export default function StrykeFoxFaxSystem() {
 
       const res = await fetch(endpoint, {
         method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patientPayload),
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": patientIdem,
+        },
+        body: JSON.stringify(intakeMode === "existing" ? patchPayload : patientPayload),
       });
 
-      if (res.ok) {
+      const patientResponse = await res.json().catch(() => ({} as { patient_id?: string; detail?: string; status?: string }));
+      if (res.ok || (res.status === 409 && Boolean(patientResponse.patient_id))) {
+        const patientId = patientResponse.patient_id || patientIntake.existingChartId || null;
+        let orderId: string | null = null;
+        const hcpcsCodes = parseCodes(patientIntake.hcpcsCodes);
+        if (
+          intakeMode === "new" &&
+          patientId &&
+          hcpcsCodes.length > 0 &&
+          patientIntake.payerId.trim() &&
+          patientIntake.physicianNpi.trim()
+        ) {
+          const orderRes = await fetch("/api/orders", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Idempotency-Key":
+                typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                  ? crypto.randomUUID()
+                  : `fax-intake-o-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+            },
+            body: JSON.stringify({
+              patient_id: patientId,
+              hcpcs_codes: hcpcsCodes,
+              referring_physician_npi: patientIntake.physicianNpi.trim(),
+              payer_id: patientIntake.payerId.trim(),
+              priority: "standard",
+              source_channel: "fax",
+              source_reference: "strykefox-fax-ocr",
+              intake_payload: {
+                patient_input: {
+                  first_name: patientIntake.firstName.trim(),
+                  last_name: patientIntake.lastName.trim(),
+                  dob: patientIntake.dob.trim(),
+                  phone: patientIntake.phone.trim() || null,
+                },
+                coding: {
+                  icd10_codes: parseCodes(patientIntake.icd10Codes),
+                  hcpcs_codes: hcpcsCodes,
+                },
+                workflow: {
+                  intake_state: "normalization_complete",
+                  source: "fax_ocr",
+                },
+              },
+              source: "fax_ocr",
+            }),
+          });
+          if (orderRes.ok) {
+            const orderData = await orderRes.json().catch(() => ({} as { order_id?: string }));
+            orderId = orderData.order_id || null;
+          }
+        }
         setSendResult({
           type: "success",
           message:
             intakeMode === "new"
-              ? "Patient chart created successfully"
+              ? orderId
+                ? `Patient chart created and case ${orderId.slice(0, 8)} opened`
+                : res.status === 409
+                  ? "Matched existing patient chart (record enriched)"
+                  : "Patient chart created successfully"
               : "Patient chart updated successfully",
         });
         setPatientIntake({
@@ -537,15 +692,21 @@ export default function StrykeFoxFaxSystem() {
           dob: "",
           mrn: "",
           insuranceId: "",
+          payerId: "",
+          physicianNpi: "",
+          icd10Codes: "",
+          hcpcsCodes: "",
           phone: "",
           address: "",
           existingChartId: "",
         });
       } else {
-        const data = await res.json().catch(() => ({}));
         setSendResult({
           type: "error",
-          message: data.error || "Failed to save patient chart",
+          message:
+            (patientResponse as { detail?: string; error?: string }).detail ||
+            (patientResponse as { detail?: string; error?: string }).error ||
+            "Failed to save patient chart",
         });
       }
     } catch {
@@ -1352,6 +1513,26 @@ export default function StrykeFoxFaxSystem() {
                     />
                   </div>
                   <div>
+                    <label className={labelClass}>Payer ID / Name</label>
+                    <input
+                      type="text"
+                      value={patientIntake.payerId}
+                      onChange={(e) =>
+                        updateIntake("payerId", e.target.value)
+                      }
+                      className={monoInputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Referring NPI</label>
+                    <input
+                      type="text"
+                      value={patientIntake.physicianNpi}
+                      onChange={(e) => updateIntake("physicianNpi", e.target.value)}
+                      className={monoInputClass}
+                    />
+                  </div>
+                  <div>
                     <label className={labelClass}>Phone</label>
                     <input
                       type="tel"
@@ -1363,6 +1544,26 @@ export default function StrykeFoxFaxSystem() {
                         )
                       }
                       className={inputClass}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>ICD-10 Codes (comma separated)</label>
+                    <input
+                      type="text"
+                      value={patientIntake.icd10Codes}
+                      onChange={(e) => updateIntake("icd10Codes", e.target.value)}
+                      className={monoInputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>HCPCS Codes (comma separated)</label>
+                    <input
+                      type="text"
+                      value={patientIntake.hcpcsCodes}
+                      onChange={(e) => updateIntake("hcpcsCodes", e.target.value)}
+                      className={monoInputClass}
                     />
                   </div>
                 </div>

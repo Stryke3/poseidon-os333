@@ -1656,6 +1656,21 @@ async def v1_parse_document(file: UploadFile = File(...)):
             r"(?:ID Number|Policy Number|Member #)[:\s]+([A-Z0-9\-]+)",
         ],
     )
+    hcpcs_codes = list(set(re.findall(r"\b[A-Z]\d{4}\b", text)))
+    # Heuristic 0–1 score for Core fax gating (INTAKE_OCR_CONFIDENCE_THRESHOLD)
+    parse_confidence = max(
+        0.0,
+        min(
+            1.0,
+            (
+                (1.0 if patient_name else 0.0)
+                + (1.0 if dob_raw else 0.0)
+                + (1.0 if (payer_name or member_id) else 0.0)
+                + (0.5 if hcpcs_codes else 0.0)
+            )
+            / 3.5,
+        ),
+    )
     return {
         "patient_name": patient_name,
         "first_name": first_name,
@@ -1667,8 +1682,9 @@ async def v1_parse_document(file: UploadFile = File(...)):
         },
         "diagnosis_codes": list(set(re.findall(r"\b[A-Z]\d{2}(?:\.\d{1,4})?\b", text))),
         "physician_npi": _extract_first(text, [r"\bNPI[:\s]+(\d{10})\b"]),
-        "hcpcs_codes": list(set(re.findall(r"\b[A-Z]\d{4}\b", text))),
+        "hcpcs_codes": hcpcs_codes,
         "raw_text_preview": text[:1500],
+        "confidence": parse_confidence,
     }
 
 

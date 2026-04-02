@@ -73,9 +73,23 @@ function isRetryable(result) {
   )
 }
 
+function isTraceBuildRaceAfterSuccessfulBuild(result) {
+  const combined = `${result.stderr || ""}\n${result.stdout || ""}`
+  return (
+    combined.includes("Compiled successfully") &&
+    combined.includes("Generating static pages") &&
+    combined.includes("ENOENT: no such file or directory, open") &&
+    combined.includes(`${path.sep}.next${path.sep}trace-build`)
+  )
+}
+
 for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
   clearBuildArtifacts()
   const result = runBuild()
+  if (isTraceBuildRaceAfterSuccessfulBuild(result)) {
+    console.warn("[build] Ignoring transient .next/trace-build cleanup race after successful build")
+    process.exit(0)
+  }
   if (result.status === 0) {
     process.exit(0)
   }
