@@ -71,6 +71,11 @@ app = create_app(
 )
 security = HTTPBearer()
 
+POSEIDON_EXPECTED_SCHEMA_VERSION = 14
+
+_core_schema_verified = False
+_core_schema_gate_lock: asyncio.Lock | None = None
+
 
 def sql(query: str) -> str:
     return re.sub(r"\$\d+", "%s", query)
@@ -106,6 +111,37 @@ async def _table_columns(conn, table_name: str, schema: str = "public") -> set[s
         table_name,
     )
     return {str(row["column_name"]) for row in rows}
+
+
+async def _assert_core_schema_version_and_columns(conn) -> None:
+    row = await fetch_one(conn, "SELECT version FROM schema_version WHERE id = 1")
+    if not row:
+        raise RuntimeError("schema_version missing (id=1); apply migrations through 014_claim_authority_schema_parity.sql")
+    ver = int(row.get("version") or 0)
+    if ver < POSEIDON_EXPECTED_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"schema_version is {ver}; Core requires >= {POSEIDON_EXPECTED_SCHEMA_VERSION}. Run migrations."
+        )
+    ocols = await _table_columns(conn, "orders")
+    if "claim_strategy" not in ocols:
+        raise RuntimeError("orders.claim_strategy missing; apply migration 014")
+    ccols = await _table_columns(conn, "claim_submissions")
+    if "submission_format" not in ccols:
+        raise RuntimeError("claim_submissions.submission_format missing; apply migration 014")
+
+
+def _require_claim_strategy_availity(claim_strategy: Any) -> None:
+    raw = (str(claim_strategy).strip() if claim_strategy is not None else "") or None
+    if raw is None:
+        raise HTTPException(
+            status_code=409,
+            detail="claim_strategy must be set to AVAILITY or EDI on the order before Availity claim submission",
+        )
+    if raw != "AVAILITY":
+        raise HTTPException(
+            status_code=409,
+            detail="Order claim_strategy is not AVAILITY; use EDI submission or change claim_strategy to AVAILITY",
+        )
 
 
 async def _safe_fetch_all(
@@ -1111,7 +1147,7 @@ async def _precheck_order_for_claim_submission(conn, org_id: str, order_id: str)
     row = await fetch_one(
         conn,
         """
-        SELECT id, billing_ready_at, billing_status, status, patient_id, payer_id, referring_physician_npi, hcpcs_codes
+        SELECT id, billing_ready_at, billing_status, status, patient_id, payer_id, referring_physician_npi, hcpcs_codes, claim_strategy
         FROM orders
         WHERE id = $1 AND org_id = $2
         """,
@@ -1120,6 +1156,7 @@ async def _precheck_order_for_claim_submission(conn, org_id: str, order_id: str)
     )
     if not row:
         raise HTTPException(status_code=404, detail="Order not found")
+    _require_claim_strategy_availity(row.get("claim_strategy"))
     if settings.billing_claim_require_billing_ready and not row.get("billing_ready_at"):
         raise HTTPException(
             status_code=409,
@@ -1159,7 +1196,7 @@ async def _load_order_patient_for_837_with_claim_lock(
     order = await fetch_one(
         conn,
         """
-        SELECT id, patient_id, payer_id, referring_physician_npi, hcpcs_codes, billing_ready_at, billing_status, status
+        SELECT id, patient_id, payer_id, referring_physician_npi, hcpcs_codes, billing_ready_at, billing_status, status, claim_strategy
         FROM orders
         WHERE id = $1 AND org_id = $2
         FOR UPDATE
@@ -1169,6 +1206,7 @@ async def _load_order_patient_for_837_with_claim_lock(
     )
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    _require_claim_strategy_availity(order.get("claim_strategy"))
     if settings.billing_claim_require_billing_ready and not order.get("billing_ready_at"):
         raise HTTPException(
             status_code=409,
@@ -1933,6 +1971,29 @@ def require_internal_api_key():
     return _check
 
 
+@app.get("/internal/orders/{order_id}/claim-authority")
+async def internal_order_claim_authority(
+    order_id: str,
+    request: Request,
+    _: bool = Depends(require_internal_api_key()),
+):
+    """EDI (and other services) verify claim_strategy before submitting claims."""
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        row = await fetch_one(
+            conn,
+            "SELECT id, org_id, claim_strategy FROM orders WHERE id = $1",
+            order_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return {
+        "order_id": str(row["id"]),
+        "org_id": str(row["org_id"]),
+        "claim_strategy": row.get("claim_strategy"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
@@ -2583,7 +2644,9 @@ async def login(payload: LoginRequest, request: Request):
         row = await fetch_one(
             conn,
             "SELECT id, role, org_id, password_hash, permissions FROM users "
-            "WHERE LOWER(TRIM(email)) = $1 AND active IS TRUE AND COALESCE(is_active, TRUE) IS TRUE",
+            "WHERE LOWER(TRIM(email)) = $1 "
+            "AND COALESCE(active, TRUE) IS TRUE "
+            "AND COALESCE(is_active, TRUE) IS TRUE",
             email_key,
         )
         if not row or not verify_password(payload.password, row["password_hash"]):
@@ -6900,6 +6963,150 @@ def _build_837_p_minimal(
     return "~".join(segments) + "~"
 
 
+async def submit_claim_for_order(
+    request: Request,
+    *,
+    org_id: str,
+    order_id: str,
+    service_date: str | None,
+) -> dict[str, Any]:
+    """
+    Single authoritative entry for order-based claim submission.
+    Routes by orders.claim_strategy: AVAILITY -> Availity API + Core persistence; EDI -> EDI service.
+    """
+    correlation = getattr(request.state, "correlation_id", None)
+    db_pool = request.app.state.db_pool
+    async with db_pool.connection() as conn:
+        row = await fetch_one(
+            conn,
+            "SELECT claim_strategy FROM orders WHERE id = $1 AND org_id = $2",
+            order_id,
+            org_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Order not found")
+    strat_raw = row.get("claim_strategy")
+    if strat_raw is None or not str(strat_raw).strip():
+        raise HTTPException(
+            status_code=409,
+            detail="claim_strategy must be set to AVAILITY or EDI before submission",
+        )
+    strat = str(strat_raw).strip().upper()
+    if strat not in ("AVAILITY", "EDI"):
+        raise HTTPException(status_code=409, detail="Invalid claim_strategy on order")
+
+    if strat == "AVAILITY":
+        edi_payer_name: str | None = None
+        edi_payer_pi: str | None = None
+        async with db_pool.connection() as conn:
+            async with conn.transaction():
+                order, patient, edi_pair = await _load_order_patient_for_837_with_claim_lock(conn, org_id, order_id)
+                edi_payer_name, edi_payer_pi = edi_pair
+
+        svc = service_date or datetime.now(timezone.utc).strftime("%Y%m%d")
+        billing_npi = settings.availity_default_provider_npi or (order.get("referring_physician_npi") or "0000000000")
+        billing_tin = settings.availity_billing_tin or ""
+        edi_837 = _build_837_p_minimal(
+            dict(patient),
+            dict(order),
+            svc,
+            billing_npi,
+            billing_tin,
+            edi_payer_name=edi_payer_name,
+            edi_payer_pi=edi_payer_pi,
+        )
+
+        try:
+            result = await submit_claim_837(
+                edi_837,
+                claim_type="professional",
+                correlation_id=order_id,
+            )
+        except AvailityConfigError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            logger.exception("Availity submit-claim-from-order failed: %s", e)
+            raise HTTPException(status_code=502, detail="Availity claim submission failed")
+
+        summary: dict[str, Any] = {}
+        if isinstance(result.get("body"), str) and result["status_code"] < 500:
+            body = result["body"].strip()
+            if "ST*997" in body or body.startswith("ISA"):
+                try:
+                    summary = parse_997_basic(result["body"])
+                except Exception as e:
+                    logger.warning("Failed to parse 997: %s", e)
+
+        async with db_pool.connection() as conn:
+            await _persist_claim_submission(
+                conn,
+                org_id=org_id,
+                order_id=order_id,
+                payer_id=order.get("payer_id") or patient.get("payer_id"),
+                submission_format="837p",
+                submission_payload={
+                    "correlation_id": order_id,
+                    "claim_type": "professional",
+                    "service_date": svc,
+                    "edi_837": edi_837,
+                },
+                acknowledgment_payload={
+                    "status_code": result["status_code"],
+                    "body": result["body"],
+                    "summary": summary,
+                },
+            )
+        redis = get_redis(request)
+        await redis.publish(
+            "trident.learning_events",
+            json.dumps({
+                "event_type": "claim_submitted",
+                "order_id": order_id,
+                "org_id": org_id,
+            }),
+        )
+        logger.info(
+            "claim_submitted_availity order_id=%s org=%s correlation_id=%s",
+            order_id,
+            org_id,
+            correlation,
+        )
+        return {
+            "status_code": result["status_code"],
+            "order_id": order_id,
+            "summary": summary,
+            "edi_837": edi_837,
+            "raw_response": result["body"],
+        }
+
+    edi_base = (settings.edi_api_url or "").strip().rstrip("/")
+    if not edi_base:
+        raise HTTPException(status_code=503, detail="EDI_API_URL is not configured on Core")
+    headers: dict[str, str] = {"X-Internal-API-Key": settings.internal_api_key}
+    if correlation:
+        headers["X-Correlation-ID"] = correlation
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            r = await client.post(f"{edi_base}/api/v1/claims/submit/{order_id}", headers=headers)
+    except Exception as e:
+        logger.exception("EDI claim proxy failed: %s", e)
+        raise HTTPException(status_code=502, detail="EDI service unreachable") from e
+    try:
+        payload = r.json()
+    except Exception:
+        payload = {"detail": r.text[:500]}
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code, detail=payload)
+    logger.info(
+        "claim_submitted_edi_proxied order_id=%s org=%s correlation_id=%s http_status=%s",
+        order_id,
+        org_id,
+        correlation,
+        r.status_code,
+    )
+    return payload if isinstance(payload, dict) else {"result": payload}
+
+
 @app.post("/billing/submit-claim")
 async def billing_submit_claim(
     payload: ClaimSubmitRequest,
@@ -6909,10 +7116,17 @@ async def billing_submit_claim(
     """
     Submit a raw X12 837 (P, I, or D) to Availity. Returns raw response (often 997).
     """
+    correlation = getattr(request.state, "correlation_id", None)
     if payload.order_id:
         db = request.app.state.db_pool
         async with db.connection() as conn:
             await _precheck_order_for_claim_submission(conn, str(user["org_id"]), payload.order_id)
+        logger.info(
+            "billing_submit_claim_begin order_id=%s org=%s correlation_id=%s",
+            payload.order_id,
+            user["org_id"],
+            correlation,
+        )
     try:
         result = await submit_claim_837(
             payload.edi_837,
@@ -6977,87 +7191,14 @@ async def billing_submit_claim_from_order(
     user: dict = Depends(require_permissions("submit_claims")),
 ):
     """
-    Build a minimal 837 P from patient/order and submit to Availity.
-    Uses AVAILITY_DEFAULT_PROVIDER_NPI and org settings for billing NPI/TIN if needed.
+    Authoritative order claim submission: routes by orders.claim_strategy (AVAILITY or EDI).
     """
-    db = request.app.state.db_pool
-    edi_payer_name: str | None = None
-    edi_payer_pi: str | None = None
-    async with db.connection() as conn:
-        async with conn.transaction():
-            order, patient, edi_pair = await _load_order_patient_for_837_with_claim_lock(
-                conn, str(user["org_id"]), payload.order_id
-            )
-            edi_payer_name, edi_payer_pi = edi_pair
-
-    service_date = payload.service_date or datetime.now(timezone.utc).strftime("%Y%m%d")
-    billing_npi = settings.availity_default_provider_npi or (order.get("referring_physician_npi") or "0000000000")
-    billing_tin = settings.availity_billing_tin or ""
-
-    edi_837 = _build_837_p_minimal(
-        dict(patient),
-        dict(order),
-        service_date,
-        billing_npi,
-        billing_tin,
-        edi_payer_name=edi_payer_name,
-        edi_payer_pi=edi_payer_pi,
+    return await submit_claim_for_order(
+        request,
+        org_id=str(user["org_id"]),
+        order_id=payload.order_id,
+        service_date=payload.service_date,
     )
-
-    try:
-        result = await submit_claim_837(
-            edi_837,
-            claim_type="professional",
-            correlation_id=payload.order_id,
-        )
-    except AvailityConfigError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        logger.exception("Availity submit-claim-from-order failed: %s", e)
-        raise HTTPException(status_code=502, detail="Availity claim submission failed")
-
-    summary = {}
-    if isinstance(result.get("body"), str) and result["status_code"] < 500:
-        body = result["body"].strip()
-        if "ST*997" in body or body.startswith("ISA"):
-            try:
-                summary = parse_997_basic(result["body"])
-            except Exception as e:
-                logger.warning("Failed to parse 997: %s", e)
-
-    async with db.connection() as conn:
-        await _persist_claim_submission(
-            conn,
-            org_id=user["org_id"],
-            order_id=payload.order_id,
-            payer_id=order.get("payer_id") or patient.get("payer_id"),
-            submission_format="837p",
-            submission_payload={
-                "correlation_id": payload.order_id,
-                "claim_type": "professional",
-                "service_date": service_date,
-                "edi_837": edi_837,
-            },
-            acknowledgment_payload={
-                "status_code": result["status_code"],
-                "body": result["body"],
-                "summary": summary,
-            },
-        )
-    redis = get_redis(request)
-    await redis.publish("trident.learning_events", json.dumps({
-        "event_type": "claim_submitted",
-        "order_id": payload.order_id,
-        "org_id": user["org_id"],
-    }))
-
-    return {
-        "status_code": result["status_code"],
-        "order_id": payload.order_id,
-        "summary": summary,
-        "edi_837": edi_837,
-        "raw_response": result["body"],
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -7741,6 +7882,17 @@ class V1OrderPatchPayload(BaseModel):
     total_billed: float | None = None
     total_allowed: float | None = None
     total_paid: float | None = None
+    claim_strategy: str | None = None
+
+    @field_validator("claim_strategy")
+    @classmethod
+    def _validate_claim_strategy(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip().upper()
+        if s not in ("AVAILITY", "EDI"):
+            raise ValueError("claim_strategy must be AVAILITY or EDI")
+        return s
 
 
 class V1DocumentPatchPayload(BaseModel):
@@ -8524,6 +8676,7 @@ async def v1_patch_order(
                 total_allowed = COALESCE($6, total_allowed),
                 total_paid = COALESCE($7, total_paid),
                 paid_amount = COALESCE($7, paid_amount),
+                claim_strategy = COALESCE($10, claim_strategy),
                 updated_at = NOW()
             WHERE id = $8 AND org_id = $9
             """,
@@ -8536,6 +8689,7 @@ async def v1_patch_order(
             payload.total_paid,
             order_id,
             user["org_id"],
+            payload.claim_strategy,
         )
         if payload.status:
             await _record_workflow_event(conn, user["org_id"], "order.status_changed", {"order_id": order_id, "from": order["status"], "to": payload.status}, order_id=order_id)
@@ -9127,3 +9281,28 @@ async def v1_tracking_webhook(payload: dict[str, Any], request: Request):
         )
         await _record_workflow_event(conn, str(order["org_id"]), "shipment.updated", {"order_id": order_id, "tracking_number": tracking_number, "tracking_status": tracking_status}, order_id=order_id)
     return {"status": "processed", "order_id": order_id, "tracking_number": tracking_number}
+
+
+def _skip_core_schema_gate(path: str) -> bool:
+    """Auth must work before operators can run migrations or fix config from the UI."""
+    if path in ("/health", "/live", "/ready"):
+        return True
+    if path.startswith("/auth/") or path.startswith("/api/v1/auth/"):
+        return True
+    return False
+
+
+@app.middleware("http")
+async def enforce_core_schema_version(request: Request, call_next):
+    global _core_schema_verified, _core_schema_gate_lock
+    if _skip_core_schema_gate(request.url.path):
+        return await call_next(request)
+    if _core_schema_gate_lock is None:
+        _core_schema_gate_lock = asyncio.Lock()
+    async with _core_schema_gate_lock:
+        if not _core_schema_verified:
+            pool = request.app.state.db_pool
+            async with pool.connection() as conn:
+                await _assert_core_schema_version_and_columns(conn)
+            _core_schema_verified = True
+    return await call_next(request)
