@@ -31,7 +31,10 @@ function buildAuthErrorMessage(coreStatus?: CoreStatusBody) {
   if (coreStatus?.databaseOk === false) {
     return "Core is running but cannot reach the database. Check the Core service DATABASE_URL in Render and confirm the managed Postgres instance is healthy."
   }
-  return "Invalid email or password. If the seeded admin account exists, use admin@strykefox.com. If the password was changed, use Reset Password to set a new one."
+  if (process.env.NODE_ENV !== "production") {
+    return "Invalid email or password. For a fresh local DB, use the seed operator emails from scripts/init.sql (initial password in that file) or Forgot Password."
+  }
+  return "Invalid email or password. Try Forgot Password, or contact your administrator if you need an account."
 }
 
 export default function LoginPage() {
@@ -97,7 +100,15 @@ function LoginContent() {
   useEffect(() => {
     if (!authError || effectiveResetToken) return
     if (authError === "CredentialsSignin") {
-      setError(buildAuthErrorMessage())
+      void (async () => {
+        try {
+          const st = await fetch("/api/core-status", { cache: "no-store" })
+          const body = (await st.json()) as CoreStatusBody
+          setError(buildAuthErrorMessage(body))
+        } catch {
+          setError(buildAuthErrorMessage())
+        }
+      })()
       return
     }
     if (authError === "SessionRequired") {

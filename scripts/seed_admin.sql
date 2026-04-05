@@ -21,6 +21,21 @@ ON CONFLICT (email) DO UPDATE SET
     active = true,
     is_active = true;
 
+INSERT INTO users (id, org_id, email, password_hash, first_name, last_name, role, active, is_active, permissions)
+VALUES (
+    '00000000-0000-0000-0000-00000000009a',
+    '00000000-0000-0000-0000-000000000001',
+    'adam@strykefox.com',
+    '$2b$12$Q6fcSVopF05evYvpk76v7eVTnxsbOD5doYGQj8u7sXWo81IKF2DbS',
+    'Adam', 'Stryker', 'admin', true, true,
+    '{"grant":["manage_users","reset_passwords","view_reports","manage_fulfillment"]}'::jsonb
+)
+ON CONFLICT (email) DO UPDATE SET
+    password_hash = EXCLUDED.password_hash,
+    role = EXCLUDED.role,
+    active = true,
+    is_active = true;
+
 -- Also create the password_reset_tokens table if it doesn't exist
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),

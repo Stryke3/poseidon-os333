@@ -197,6 +197,7 @@ CREATE TABLE IF NOT EXISTS orders (
     pod_received_at TIMESTAMPTZ,
     billing_status TEXT DEFAULT 'not_ready',
     billing_ready_at TIMESTAMPTZ,
+    claim_strategy TEXT DEFAULT 'EDI' CHECK (claim_strategy IS NULL OR claim_strategy IN ('AVAILITY', 'EDI')),
     notes TEXT,
     created_by UUID,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -871,6 +872,7 @@ CREATE TABLE IF NOT EXISTS claim_submissions (
     stedi_transaction_id        VARCHAR(100),
     submission_type             VARCHAR(20) NOT NULL DEFAULT '837P',
     submission_method           VARCHAR(20) NOT NULL DEFAULT 'stedi_api',
+    submission_format           VARCHAR(32),
     clearinghouse               VARCHAR(50) DEFAULT 'stedi',
     submission_payload          JSONB,
     acknowledgment_payload      JSONB,
@@ -1036,6 +1038,18 @@ DO $$ BEGIN
     ALTER TABLE payment_outcomes ADD COLUMN IF NOT EXISTS payment_status VARCHAR(30);
 END $$;
 
+CREATE TABLE IF NOT EXISTS schema_version (
+    id         SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    version    INTEGER NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO schema_version (id, version, updated_at)
+VALUES (1, 14, NOW())
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE schema_version SET version = GREATEST(version, 14), updated_at = NOW() WHERE id = 1;
+
 -- =============================================================================
 -- PASSWORD RESET TOKENS
 -- =============================================================================
@@ -1059,6 +1073,16 @@ VALUES (
     '00000000-0000-0000-0000-000000000099',
     '00000000-0000-0000-0000-000000000001',
     'admin@strykefox.com',
+    '$2b$12$Q6fcSVopF05evYvpk76v7eVTnxsbOD5doYGQj8u7sXWo81IKF2DbS',
+    'Adam', 'Stryker', 'admin', true, true,
+    '{"grant":["manage_users","reset_passwords","view_reports","manage_fulfillment"]}'::jsonb
+) ON CONFLICT (email) DO NOTHING;
+
+INSERT INTO users (id, org_id, email, password_hash, first_name, last_name, role, active, is_active, permissions)
+VALUES (
+    '00000000-0000-0000-0000-00000000009a',
+    '00000000-0000-0000-0000-000000000001',
+    'adam@strykefox.com',
     '$2b$12$Q6fcSVopF05evYvpk76v7eVTnxsbOD5doYGQj8u7sXWo81IKF2DbS',
     'Adam', 'Stryker', 'admin', true, true,
     '{"grant":["manage_users","reset_passwords","view_reports","manage_fulfillment"]}'::jsonb
