@@ -2107,8 +2107,8 @@ class PatientUpdate(BaseModel):
 
 class OrderCreate(BaseModel):
     patient_id: str
-    hcpcs_codes: list[str]
-    referring_physician_npi: str
+    hcpcs_codes: list[str] = []
+    referring_physician_npi: str | None = None
     payer_id: str
     insurance_auth_number: str | None = None
     notes: str | None = None

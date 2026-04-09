@@ -363,7 +363,10 @@ def _normalize_date(value: str | None) -> str:
     raw = (value or "").strip()
     if not raw:
         return "1970-01-01"
-    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%m/%d/%y", "%m-%d-%y"):
+    for fmt in (
+        "%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%m/%d/%y", "%m-%d-%y",
+        "%b %d, %Y", "%b %d %Y", "%B %d, %Y", "%B %d %Y",
+    ):
         try:
             return datetime.strptime(raw, fmt).date().isoformat()
         except ValueError:
@@ -1631,6 +1634,101 @@ async def require_intake_internal_key(request: Request) -> bool:
     return True
 
 
+def _extract_patient_name(text: str) -> str:
+    """Extract patient name from EMR/medical PDFs with multiple fallback strategies."""
+    # Strategy 1: "LAST, FIRST DOB:" header (eClinicalWorks repeating header)
+    m = re.search(r"^([A-Z][A-Za-z'\-]+,\s*[A-Z][A-Za-z'\-]+)\s+(?:DOB|Date of Birth)\b", text, re.M)
+    if m:
+        return m.group(1).strip()
+
+    # Strategy 2: "Patient Medical Record" header followed by name on next line
+    m = re.search(r"Patient\s+Medical\s+Record\s*\n\s*([A-Z][A-Za-z'\-]+,\s*[A-Z][A-Za-z'\- ]+)", text, re.I)
+    if m:
+        name = m.group(1).strip()
+        name = re.split(r"\d", name)[0].strip().rstrip(",")
+        if name:
+            return name
+
+    # Strategy 3: "LAST, FIRST  ##Y, M/F" pattern (age/sex after name)
+    m = re.search(r"^([A-Z][A-Za-z'\-]+,\s*[A-Z][A-Za-z'\- ]+?)\s+\d{1,3}\s*(?:Y|yo)\b", text, re.M | re.I)
+    if m:
+        return m.group(1).strip()
+
+    # Strategy 4: "Patient Name:" / "Member Name:" explicit label
+    m = re.search(r"(?:Patient|Member)\s+Name[:\s]+([A-Z][A-Za-z,'\-\s]+?)(?:\s{2,}|\t|\n|$)", text, re.I)
+    if m:
+        return m.group(1).strip()
+
+    # Strategy 5: "Name:" label
+    m = re.search(r"\bName[:\s]+([A-Z][A-Za-z,'\-\s]+?)(?:\s{2,}|\t|\n|$)", text, re.I)
+    if m:
+        return m.group(1).strip()
+
+    return ""
+
+
+def _extract_dob(text: str) -> str:
+    """Extract date of birth, supporting numeric and month-name formats."""
+    # Numeric: DOB: 06/13/1957 or DOB: 1957-06-13
+    m = re.search(r"(?:DOB|Date of Birth|Birth Date)[:\s]+(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})", text, re.I)
+    if m:
+        return m.group(1).strip()
+
+    # Month name: DOB: Jun 13, 1957
+    m = re.search(
+        r"(?:DOB|Date of Birth|Birth Date)[:\s]+"
+        r"((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4})",
+        text,
+        re.I,
+    )
+    if m:
+        return m.group(1).strip()
+
+    # ISO: DOB: 1957-06-13
+    m = re.search(r"(?:DOB|Date of Birth|Birth Date)[:\s]+(\d{4}-\d{2}-\d{2})", text, re.I)
+    if m:
+        return m.group(1).strip()
+
+    return ""
+
+
+def _extract_insurance(text: str) -> tuple[str, str]:
+    """Extract payer name and member/subscriber ID."""
+    payer_name = ""
+    member_id = ""
+
+    # Payer from "Primary Insurance: Humana" (stop at tab, double-space, or newline)
+    m = re.search(
+        r"(?:Primary|Secondary)?\s*Insurance[:\s]+([A-Za-z][A-Za-z0-9 &.'\-]+?)(?:\s{2,}|\t|\n|$)",
+        text, re.I,
+    )
+    if m:
+        payer_name = m.group(1).strip()
+
+    if not payer_name:
+        m = re.search(r"(?:Payer|Plan|Carrier)[:\s]+([A-Za-z][A-Za-z0-9 &.'\-]+?)(?:\s{2,}|\t|\n|$)", text, re.I)
+        if m:
+            payer_name = m.group(1).strip()
+
+    # "Insurance: Humana Payer ID: 61101" pattern (eClinicalWorks encounter footer)
+    if not payer_name:
+        m = re.search(r"Insurance:\s*([A-Za-z][A-Za-z0-9 &.'\-]+?)\s+Payer\s+ID:", text, re.I)
+        if m:
+            payer_name = m.group(1).strip()
+
+    # Member/Subscriber ID patterns
+    m = re.search(r"(?:Member\s*ID|Subscriber\s*(?:No|Number|ID)|Insurance\s*ID)[:\s]+([A-Z0-9][A-Z0-9\-]+)", text, re.I)
+    if m:
+        member_id = m.group(1).strip()
+
+    if not member_id:
+        m = re.search(r"(?:Policy\s*Number|Member\s*#|ID\s*Number)[:\s]+([A-Z0-9][A-Z0-9\-]+)", text, re.I)
+        if m:
+            member_id = m.group(1).strip()
+
+    return payer_name, member_id
+
+
 @app.post("/api/v1/intake/parse-document")
 async def v1_parse_document(
     request: Request,
@@ -1638,41 +1736,32 @@ async def v1_parse_document(
     _: bool = Depends(require_intake_internal_key),
 ):
     cid = getattr(request.state, "correlation_id", None)
-    logger.info("intake_parse_document correlation_id=%s", cid)
+    logger.info("intake_parse_document correlation_id=%s filename=%s", cid, file.filename)
     content = await file.read()
     text = _extract_pdf_text(content)
-    patient_name = _extract_first(
-        text,
-        [
-            r"(?:Patient|Member)(?: Name)?[:\s]+([A-Z][A-Z,\-'\s]+)",
-            r"(?:Patient|Member)\s*[:#]?\s*([A-Z][A-Z,\-'\s]+)",
-            r"Name[:\s]+([A-Z][A-Z,\-'\s]+)",
-        ],
-    )
+
+    patient_name = _extract_patient_name(text)
     first_name, last_name = _split_name(patient_name)
-    dob_raw = _extract_first(
-        text,
-        [
-            r"(?:DOB|Date of Birth|Birth Date)[:\s]+([0-9/\-]{6,10})",
-            r"\bDOB\b[^0-9]{0,8}([0-9/\-]{6,10})",
-        ],
-    )
-    payer_name = _extract_first(
-        text,
-        [
-            r"(?:Insurance|Payer|Plan)[:\s]+([A-Z][A-Z0-9&.,'\/\-\s]+)",
-            r"(?:Primary Payer|Carrier)[:\s]+([A-Z][A-Z0-9&.,'\/\-\s]+)",
-        ],
-    )
-    member_id = _extract_first(
-        text,
-        [
-            r"(?:Member ID|Subscriber ID|Insurance ID)[:\s]+([A-Z0-9\-]+)",
-            r"(?:ID Number|Policy Number|Member #)[:\s]+([A-Z0-9\-]+)",
-        ],
-    )
-    hcpcs_codes = list(set(re.findall(r"\b[A-Z]\d{4}\b", text)))
-    # Heuristic 0–1 score for Core fax gating (INTAKE_OCR_CONFIDENCE_THRESHOLD)
+
+    dob_raw = _extract_dob(text)
+
+    payer_name, member_id = _extract_insurance(text)
+
+    # ICD-10 diagnosis codes
+    diagnosis_codes = list(set(re.findall(r"\b[A-Z]\d{2}(?:\.\d{1,4})?\b", text)))
+
+    # HCPCS codes (L-codes, K-codes, E-codes, A-codes)
+    hcpcs_codes = list(set(re.findall(r"\b[LKEAHJ]\d{4}\b", text)))
+
+    # Infer HCPCS from ICD-10 when no explicit HCPCS found
+    inferred_source = None
+    if not hcpcs_codes and diagnosis_codes:
+        hcpcs_codes, inferred_source = _infer_hcpcs_from_diagnosis(diagnosis_codes)
+        if inferred_source and inferred_source != "no-inference":
+            logger.info("Inferred HCPCS %s from ICD-10 via %s", ",".join(hcpcs_codes), inferred_source)
+
+    physician_npi = _extract_first(text, [r"\bNPI[:\s]+(\d{10})\b"])
+
     parse_confidence = max(
         0.0,
         min(
@@ -1686,6 +1775,13 @@ async def v1_parse_document(
             / 3.5,
         ),
     )
+
+    logger.info(
+        "intake_parse_document result: patient=%s dob=%s payer=%s member_id=%s dx=%s hcpcs=%s confidence=%.2f",
+        patient_name, dob_raw, payer_name, member_id,
+        ",".join(diagnosis_codes[:5]), ",".join(hcpcs_codes[:5]), parse_confidence,
+    )
+
     return {
         "patient_name": patient_name,
         "first_name": first_name,
@@ -1695,9 +1791,10 @@ async def v1_parse_document(
             "payer_name": payer_name,
             "member_id": member_id,
         },
-        "diagnosis_codes": list(set(re.findall(r"\b[A-Z]\d{2}(?:\.\d{1,4})?\b", text))),
-        "physician_npi": _extract_first(text, [r"\bNPI[:\s]+(\d{10})\b"]),
+        "diagnosis_codes": diagnosis_codes,
+        "physician_npi": physician_npi,
         "hcpcs_codes": hcpcs_codes,
+        "hcpcs_inferred_from": inferred_source if inferred_source and inferred_source != "no-inference" else None,
         "raw_text_preview": text[:1500],
         "confidence": parse_confidence,
     }

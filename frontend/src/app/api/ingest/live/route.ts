@@ -255,13 +255,15 @@ function mapParsedPdfToOrders(parsed: ParsedPdfDocument): ImportOrderPayload[] {
   if (!patientName) return []
 
   const nameParts = splitName(patientName)
-  const hcpcsCodes = (parsed.hcpcs_codes || [])
-    .map((code) => String(code || "").trim().toUpperCase())
-    .filter(Boolean)
   const diagnosisCodes = (parsed.diagnosis_codes || [])
     .map((code) => String(code || "").trim().toUpperCase().replace(/\./g, ""))
     .filter(Boolean)
-  const notes = parsed.raw_text_preview?.trim() || "Imported from PDF intake document."
+  let hcpcsCodes = (parsed.hcpcs_codes || [])
+    .map((code) => String(code || "").trim().toUpperCase())
+    .filter(Boolean)
+  if (!hcpcsCodes.length && diagnosisCodes.length) {
+    hcpcsCodes = inferHcpcsFromDiagnosis(diagnosisCodes)
+  }
 
   return [
     {
@@ -278,7 +280,7 @@ function mapParsedPdfToOrders(parsed: ParsedPdfDocument): ImportOrderPayload[] {
       diagnosis_codes: diagnosisCodes,
       referring_physician_npi: parsed.physician_npi?.trim() || "",
       priority: "standard",
-      notes,
+      notes: `PDF intake: ${parsed.patient_name || "document"}`,
     },
   ]
 }
@@ -436,12 +438,33 @@ function normalizeDiagnosisCodes(order: ImportOrderPayload) {
   return ["Z00.00"]
 }
 
+const ICD10_TO_HCPCS: Array<[string[], string[], string]> = [
+  [["M17", "M23", "M2556", "M2557"], ["L1833"], "knee-bracing"],
+  [["M16", "M2445", "M2555"], ["L1686"], "hip-bracing"],
+  [["G82", "G80", "G35", "R26"], ["K0823"], "mobility"],
+  [["M54", "M51", "M48"], ["L0650"], "lumbar-bracing"],
+]
+
+function inferHcpcsFromDiagnosis(diagnosisCodes: string[]): string[] {
+  const normalized = diagnosisCodes
+    .map((c) => String(c || "").toUpperCase().replace(/\./g, ""))
+    .filter(Boolean)
+  for (const [prefixes, hcpcs] of ICD10_TO_HCPCS) {
+    for (const code of normalized) {
+      if (prefixes.some((p) => code.startsWith(p))) return [...hcpcs]
+    }
+  }
+  return []
+}
+
 function normalizeHcpcsCodes(order: ImportOrderPayload) {
   const codes = (order.hcpcs_codes || [])
     .map((code) => String(code || "").trim().toUpperCase())
     .filter(Boolean)
   if (codes.length > 0) return codes
   if (order.hcpcs?.trim()) return [order.hcpcs.trim().toUpperCase()]
+  const inferred = inferHcpcsFromDiagnosis(order.diagnosis_codes || [])
+  if (inferred.length > 0) return inferred
   return []
 }
 
@@ -453,18 +476,15 @@ async function createPatientsAndOrdersDirectly(coreBase: string, token: string, 
     const firstName = (order.first_name || "").trim() || splitName(order.patient_name).first_name
     const lastName = (order.last_name || "").trim() || splitName(order.patient_name).last_name
     const dob = normalizeDob(order.dob || "")
-    const payerId = (order.payer_id || order.payer || "").trim()
+    let payerId = (order.payer_id || order.payer || "").trim()
     const diagnosisCodes = normalizeDiagnosisCodes(order)
-    const hcpcsCodes = normalizeHcpcsCodes(order)
+    let hcpcsCodes = normalizeHcpcsCodes(order)
 
     if (!payerId) {
-      throw new Error(`Live ingest row for ${order.patient_name} is missing payer.`)
+      payerId = "UNKNOWN"
     }
     if (!hcpcsCodes.length) {
-      throw new Error(`Live ingest row for ${order.patient_name} is missing HCPCS/device codes.`)
-    }
-    if (!(order.referring_physician_npi || order.npi || "").trim()) {
-      throw new Error(`Live ingest row for ${order.patient_name} is missing referring physician NPI.`)
+      hcpcsCodes = inferHcpcsFromDiagnosis(diagnosisCodes)
     }
 
     const patientKey = [
@@ -511,37 +531,40 @@ async function createPatientsAndOrdersDirectly(coreBase: string, token: string, 
       patientIds.set(patientKey, patientId)
     }
 
+    const npi = (order.referring_physician_npi || order.npi || "").trim()
+    const orderBody: Record<string, unknown> = {
+      patient_id: patientId,
+      payer_id: payerId,
+      notes: order.notes?.slice(0, 500).trim() || undefined,
+      priority: order.priority || "standard",
+      source_channel: "manual",
+      source_reference: "live-ingest-pdf",
+      intake_payload: {
+        patient_input: {
+          first_name: firstName,
+          last_name: lastName,
+          dob,
+          email: order.email?.trim() || null,
+        },
+        coding: {
+          icd10_codes: diagnosisCodes,
+          hcpcs_codes: hcpcsCodes,
+        },
+      },
+      vertical: "dme",
+      product_category: "live-ingest",
+      source: "manual",
+    }
+    if (hcpcsCodes.length) orderBody.hcpcs_codes = hcpcsCodes
+    if (npi) orderBody.referring_physician_npi = npi
+
     const orderRes = await fetch(`${coreBase}/orders`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        patient_id: patientId,
-        hcpcs_codes: hcpcsCodes,
-        referring_physician_npi: (order.referring_physician_npi || order.npi || "").trim(),
-        payer_id: payerId,
-        notes: order.notes?.trim() || undefined,
-        priority: order.priority || "standard",
-        source_channel: "manual",
-        source_reference: "live-ingest-fallback",
-        intake_payload: {
-          patient_input: {
-            first_name: firstName,
-            last_name: lastName,
-            dob,
-            email: order.email?.trim() || null,
-          },
-          coding: {
-            icd10_codes: diagnosisCodes,
-            hcpcs_codes: hcpcsCodes,
-          },
-        },
-        vertical: "dme",
-        product_category: "live-ingest",
-        source: "manual",
-      }),
+      body: JSON.stringify(orderBody),
       cache: "no-store",
     }).catch(() => null)
 
