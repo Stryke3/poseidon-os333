@@ -52,6 +52,10 @@ const INTAKE_FALLBACK_URLS = [
   "https://poseidon-intake.onrender.com",
   "https://intake.strykefox.com",
 ]
+const INTAKE_REQUEST_TIMEOUT_MS = (() => {
+  const parsed = Number(process.env.INTAKE_REQUEST_TIMEOUT_MS || "60000")
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60000
+})()
 
 function normalizeKey(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")
@@ -362,7 +366,8 @@ async function parsePdfDocument(file: File, req: NextRequest): Promise<ParsedPdf
 
   const candidateBaseUrls = Array.from(
     new Set(
-      [INTAKE_API_URL, ...INTAKE_FALLBACK_URLS]
+      // Prefer explicitly configured intake endpoint. Only use built-in fallbacks when unset.
+      (INTAKE_API_URL ? [INTAKE_API_URL] : INTAKE_FALLBACK_URLS)
         .map((url) => url.trim().replace(/\/$/, ""))
         .filter(Boolean),
     ),
@@ -382,7 +387,7 @@ async function parsePdfDocument(file: File, req: NextRequest): Promise<ParsedPdf
   const errors: string[] = []
   for (const baseUrl of candidateBaseUrls) {
     const abortController = new AbortController()
-    const timer = setTimeout(() => abortController.abort("timeout"), 15000)
+    const timer = setTimeout(() => abortController.abort("timeout"), INTAKE_REQUEST_TIMEOUT_MS)
 
     const res = await fetch(`${baseUrl}/api/v1/intake/parse-document`, {
       method: "POST",
