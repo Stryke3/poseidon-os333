@@ -17,14 +17,19 @@ import uuid as _uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query, Form
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from app.database import get_db, get_db_transaction, audit_log, to_json
+from app.deps import require_edi_caller
 from app.parsers.era_835 import parse_835_x12, classify_carc
 
 log = logging.getLogger("edi.routes.remittance")
-router = APIRouter(prefix="/api/v1/remittance", tags=["835 Remittance"])
+router = APIRouter(
+    prefix="/api/v1/remittance",
+    tags=["835 Remittance"],
+    dependencies=[Depends(require_edi_caller)],
+)
 
 
 # ─── UPLOAD & PARSE 835 FILE ────────────────────────────────────────────────

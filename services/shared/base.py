@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 from urllib import error as urllib_error
@@ -100,6 +101,7 @@ class Settings:
     trident_url: str = os.getenv("TRIDENT_API_URL", "http://trident:8002")
     intake_url: str = os.getenv("INTAKE_API_URL", "http://intake:8003")
     ml_url: str = os.getenv("ML_API_URL", "http://ml:8004")
+    edi_api_url: str = os.getenv("EDI_API_URL", "http://edi:8006").strip()
 
     # Operational
     phi_in_logs: bool = os.getenv("PHI_IN_LOGS", "false").lower() == "true"
@@ -156,8 +158,8 @@ class Settings:
         "TRUSTED_HOSTS",
         "dashboard.strykefox.com,app.strykefox.com,api.strykefox.com,"
         "trident.strykefox.com,intake.strykefox.com,ml.strykefox.com,"
-        "localhost,127.0.0.1,core,trident,intake,ml,poseidon_core,poseidon_trident,"
-        "poseidon_intake,poseidon_ml",
+        "localhost,127.0.0.1,core,trident,intake,ml,edi,availity,poseidon_core,poseidon_trident,"
+        "poseidon_intake,poseidon_ml,poseidon_edi",
     )
     expose_docs: bool = os.getenv("EXPOSE_API_DOCS", "false").lower() == "true"
 
@@ -348,8 +350,23 @@ def create_app(
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Internal-API-Key", "X-Requested-With"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Internal-API-Key",
+            "X-Requested-With",
+            "X-Correlation-ID",
+            "Idempotency-Key",
+        ],
     )
+
+    @app.middleware("http")
+    async def correlation_id_middleware(request: Request, call_next):
+        cid = (request.headers.get("X-Correlation-ID") or "").strip() or str(uuid.uuid4())
+        request.state.correlation_id = cid
+        response = await call_next(request)
+        response.headers["X-Correlation-ID"] = cid
+        return response
 
     # Request timing middleware
     @app.middleware("http")

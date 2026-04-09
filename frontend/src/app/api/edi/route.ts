@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth"
 import { NextRequest, NextResponse } from "next/server"
 
 import { authOptions } from "@/lib/auth"
+import { correlationHeaders } from "@/lib/proxy-headers"
 import { getServiceBaseUrl } from "@/lib/runtime-config"
 
 const EDI_API_URL = getServiceBaseUrl("EDI_API_URL")
@@ -33,6 +34,7 @@ export async function GET(req: NextRequest) {
       headers: {
         Authorization: `Bearer ${session.user.accessToken}`,
         "Content-Type": "application/json",
+        ...correlationHeaders(req.headers),
       },
       cache: "no-store",
     })
@@ -62,6 +64,7 @@ export async function POST(req: NextRequest) {
       headers: {
         Authorization: `Bearer ${session.user.accessToken}`,
         "Content-Type": "application/json",
+        ...correlationHeaders(req.headers),
       },
       body: payload ? JSON.stringify(payload) : undefined,
     })

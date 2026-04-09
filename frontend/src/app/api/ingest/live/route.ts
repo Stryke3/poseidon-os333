@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getToken } from "next-auth/jwt"
+import { correlationHeaders, internalApiKeyHeaders } from "@/lib/proxy-headers"
 import { getRequiredEnv, getServiceBaseUrl } from "@/lib/runtime-config"
 
 const INTAKE_API_URL = getServiceBaseUrl("INTAKE_API_URL")
@@ -325,14 +326,15 @@ async function getCoreAuth(req: NextRequest) {
   throw new Error("Live ingest requires an authenticated operator session.")
 }
 
-async function parsePdfDocument(file: File, token: string) {
+async function parsePdfDocument(file: File, req: NextRequest) {
   const upstream = new FormData()
   upstream.append("file", file, file.name)
 
   const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/parse-document`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`,
+      ...internalApiKeyHeaders(),
+      ...correlationHeaders(req.headers),
     },
     body: upstream,
     cache: "no-store",
@@ -520,7 +522,7 @@ export async function POST(req: NextRequest) {
     const buffer = isPdf ? null : Buffer.from(await file.arrayBuffer())
     const rows = buffer ? parseRows(buffer) : []
     const orders = isPdf
-      ? mapParsedPdfToOrders(await parsePdfDocument(file, token))
+      ? mapParsedPdfToOrders(await parsePdfDocument(file, req))
       : mapRowsToOrders(rows)
 
     if (!orders.length) {

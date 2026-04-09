@@ -65,6 +65,7 @@ services:
     environment:
       SERVICE_NAME: core
       PORT: 8001
+      EDI_API_URL: ${EDI_API_URL:-http://edi:8006}
     volumes:
       - ./data:/app/data
     depends_on:
@@ -186,6 +187,7 @@ services:
       BILLING_PHONE: ${BILLING_PHONE:-6124996561}
       AVAILITY_SFTP_USER: ${AVAILITY_SFTP_USER:-}
       AVAILITY_SFTP_PASS: ${AVAILITY_SFTP_PASS:-}
+      CORE_API_URL: ${CORE_API_URL:-http://core:8001}
     depends_on:
       redis:
         condition: service_healthy

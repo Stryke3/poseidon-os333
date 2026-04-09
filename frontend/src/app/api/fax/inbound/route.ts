@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { correlationHeaders, internalApiKeyHeaders } from "@/lib/proxy-headers";
 import { getServiceBaseUrl } from "@/lib/runtime-config";
 
 function secureCompare(left: string, right: string) {
@@ -116,6 +117,10 @@ export async function POST(req: NextRequest) {
       parseBody.append("file", uploadBlob, "inbound-fax.pdf");
       const parsedRes = await fetch(`${intakeUrl}/api/v1/intake/parse-document`, {
         method: "POST",
+        headers: {
+          ...internalApiKeyHeaders(),
+          ...correlationHeaders(req.headers),
+        },
         body: parseBody,
       });
       if (parsedRes.ok) {

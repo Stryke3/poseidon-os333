@@ -16,17 +16,23 @@ import os
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from app.core_client import ensure_edi_claim_strategy
 from app.database import get_db, get_db_transaction, audit_log, to_json
+from app.deps import require_edi_caller
 from app.builders.claim_837p import fetch_claim_data, build_837p_payload
 from app.builders.x12_837p import generate_837p
 from app.clients.stedi import stedi_client
 from app.clients.availity_sftp import availity_sftp
 
 log = logging.getLogger("edi.routes.claims")
-router = APIRouter(prefix="/api/v1/claims", tags=["837P Claims"])
+router = APIRouter(
+    prefix="/api/v1/claims",
+    tags=["837P Claims"],
+    dependencies=[Depends(require_edi_caller)],
+)
 
 DRY_RUN = False  # set from env in main.py
 SUBMISSION_METHOD = "availity_sftp"  # set from env in main.py: availity_sftp or stedi_api
@@ -179,11 +185,31 @@ async def _validate_order_for_submission(order_id: str, conn) -> list:
 # --- SUBMIT SINGLE CLAIM ---
 
 @router.post("/submit/{order_id}", response_model=SubmissionResponse)
-async def submit_claim(order_id: str, background_tasks: BackgroundTasks, triggered_by: Optional[str] = None):
+async def submit_claim_by_order(
+    order_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    triggered_by: Optional[str] = None,
+):
     """
     Submit a single 837P claim for an order.
     Validates, builds payload, submits via Availity SFTP or Stedi API, stores result.
     """
+    cid = getattr(request.state, "correlation_id", None)
+    log.info("edi_claim_submit_begin order_id=%s correlation_id=%s", order_id, cid)
+    return await edi_process_claim_submission(
+        order_id, background_tasks, triggered_by, correlation_id=cid
+    )
+
+
+async def edi_process_claim_submission(
+    order_id: str,
+    background_tasks: BackgroundTasks,
+    triggered_by: Optional[str] = None,
+    *,
+    correlation_id: Optional[str] = None,
+) -> SubmissionResponse:
+    await ensure_edi_claim_strategy(order_id, correlation_id)
     oid = uuid.UUID(order_id)
     triggered_uuid = uuid.UUID(triggered_by) if triggered_by else None
 
@@ -193,16 +219,20 @@ async def submit_claim(order_id: str, background_tasks: BackgroundTasks, trigger
         if errors:
             return SubmissionResponse(status="validation_failed", errors=errors)
 
-        # Check not already accepted
         existing = await conn.fetchrow(
-            "SELECT id, status FROM claim_submissions WHERE order_id=$1 AND status='accepted' ORDER BY id DESC LIMIT 1",
+            """
+            SELECT id, status FROM claim_submissions
+            WHERE order_id=$1 AND status IN ('submitted', 'accepted')
+            ORDER BY COALESCE(submitted_at, created_at) DESC NULLS LAST
+            LIMIT 1
+            """,
             oid,
         )
         if existing:
             return SubmissionResponse(
-                status="already_accepted",
+                status="already_submitted",
                 submission_id=str(existing["id"]),
-                message=f"Order {order_id} already has an accepted submission",
+                message=f"Order {order_id} already has a successful submission ({existing['status']})",
             )
 
         # Generate ICN
@@ -332,14 +362,22 @@ async def submit_claim(order_id: str, background_tasks: BackgroundTasks, trigger
 # --- BATCH SUBMIT ---
 
 @router.post("/submit/batch", response_model=dict)
-async def submit_batch(request: BatchSubmitRequest, background_tasks: BackgroundTasks, triggered_by: Optional[str] = None):
+async def submit_batch(
+    http_request: Request,
+    payload: BatchSubmitRequest,
+    background_tasks: BackgroundTasks,
+    triggered_by: Optional[str] = None,
+):
     """Submit multiple claims in a batch. Each order processed independently."""
     batch_id = f"BATCH-{uuid.uuid4().hex[:12].upper()}"
+    cid = getattr(http_request.state, "correlation_id", None)
 
     results = []
-    for order_id in request.order_ids:
+    for order_id in payload.order_ids:
         try:
-            result = await submit_claim(order_id, background_tasks, triggered_by)
+            result = await edi_process_claim_submission(
+                order_id, background_tasks, triggered_by, correlation_id=cid
+            )
             # Tag with batch_id
             if result.submission_id:
                 async with get_db() as conn:
@@ -354,9 +392,9 @@ async def submit_batch(request: BatchSubmitRequest, background_tasks: Background
     succeeded = sum(1 for r in results if r["status"] in ("accepted", "submitted", "dry_run"))
     return {
         "batch_id": batch_id,
-        "total": len(request.order_ids),
+        "total": len(payload.order_ids),
         "succeeded": succeeded,
-        "failed": len(request.order_ids) - succeeded,
+        "failed": len(payload.order_ids) - succeeded,
         "results": results,
     }
 
@@ -364,9 +402,15 @@ async def submit_batch(request: BatchSubmitRequest, background_tasks: Background
 # --- RESUBMIT ---
 
 @router.post("/resubmit/{submission_id}", response_model=SubmissionResponse)
-async def resubmit_claim(submission_id: str, background_tasks: BackgroundTasks, triggered_by: Optional[str] = None):
+async def resubmit_claim(
+    submission_id: str,
+    http_request: Request,
+    background_tasks: BackgroundTasks,
+    triggered_by: Optional[str] = None,
+):
     """Resubmit a previously rejected or failed claim."""
     sid = uuid.UUID(submission_id)
+    cid = getattr(http_request.state, "correlation_id", None)
     async with get_db() as conn:
         original = await conn.fetchrow(
             "SELECT order_id, submission_count FROM claim_submissions WHERE id=$1", sid,
@@ -375,7 +419,9 @@ async def resubmit_claim(submission_id: str, background_tasks: BackgroundTasks, 
             raise HTTPException(404, "Submission not found")
 
         # Submit as new with parent reference
-        result = await submit_claim(str(original["order_id"]), background_tasks, triggered_by)
+        result = await edi_process_claim_submission(
+            str(original["order_id"]), background_tasks, triggered_by, correlation_id=cid
+        )
 
         if result.submission_id:
             async with get_db() as conn2:
@@ -391,8 +437,10 @@ async def resubmit_claim(submission_id: str, background_tasks: BackgroundTasks, 
 # --- VALIDATE ONLY (DRY RUN) ---
 
 @router.post("/validate/{order_id}")
-async def validate_claim(order_id: str):
+async def validate_claim(order_id: str, request: Request):
     """Validate an order for 837P submission without actually submitting."""
+    cid = getattr(request.state, "correlation_id", None)
+    await ensure_edi_claim_strategy(order_id, cid)
     oid = uuid.UUID(order_id)
     async with get_db() as conn:
         errors = await _validate_order_for_submission(order_id, conn)

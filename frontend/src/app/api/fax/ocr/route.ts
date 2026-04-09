@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { getServiceBaseUrl } from "@/lib/runtime-config";
 import { authOptions } from "@/lib/auth";
+import { correlationHeaders, internalApiKeyHeaders } from "@/lib/proxy-headers";
+import { getServiceBaseUrl } from "@/lib/runtime-config";
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -36,7 +37,10 @@ export async function POST(req: NextRequest) {
     const INTAKE_API_URL = getServiceBaseUrl("INTAKE_API_URL");
     const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/parse-document`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${session.user.accessToken}` },
+      headers: {
+        ...internalApiKeyHeaders(),
+        ...correlationHeaders(req.headers),
+      },
       body: upstream,
     });
 

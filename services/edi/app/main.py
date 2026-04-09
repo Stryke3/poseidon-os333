@@ -19,10 +19,13 @@ import os
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, APIRouter
+import uuid
+
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import get_pool, close_pool
+from app.deps import require_edi_caller
 from app.routers import claims_837p, remittance_835
 from app.clients.stedi import stedi_client
 from app.clients.availity_sftp import availity_sftp
@@ -96,6 +99,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.middleware("http")
+async def edi_correlation_middleware(request: Request, call_next):
+    cid = (request.headers.get("X-Correlation-ID") or "").strip() or str(uuid.uuid4())
+    request.state.correlation_id = cid
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = cid
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -111,7 +124,11 @@ app.include_router(remittance_835.router)
 
 # --- SFTP MAILBOX ROUTES ---
 
-sftp_router = APIRouter(prefix="/api/v1/sftp", tags=["SFTP Mailbox"])
+sftp_router = APIRouter(
+    prefix="/api/v1/sftp",
+    tags=["SFTP Mailbox"],
+    dependencies=[Depends(require_edi_caller)],
+)
 
 
 @sftp_router.get("/mailbox")

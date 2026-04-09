@@ -34,6 +34,8 @@ envVarGroups:
         value: http://intake:8003
       - key: ML_API_URL
         value: http://ml:8004
+      - key: EDI_API_URL
+        value: http://edi:8006
       - key: AVAILITY_BASE_URL
         value: https://tst.api.availity.com
       - key: AVAILITY_TOKEN_URL

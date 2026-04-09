@@ -1622,8 +1622,23 @@ async def v1_intake_batch(file: UploadFile = File(...)):
     return {"processed": processed, "failed": failed, "errors": errors}
 
 
+async def require_intake_internal_key(request: Request) -> bool:
+    expected = (settings.internal_api_key or "").strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail="INTERNAL_API_KEY is not configured")
+    if request.headers.get("X-Internal-API-Key", "").strip() != expected:
+        raise HTTPException(status_code=401, detail="Invalid internal service key")
+    return True
+
+
 @app.post("/api/v1/intake/parse-document")
-async def v1_parse_document(file: UploadFile = File(...)):
+async def v1_parse_document(
+    request: Request,
+    file: UploadFile = File(...),
+    _: bool = Depends(require_intake_internal_key),
+):
+    cid = getattr(request.state, "correlation_id", None)
+    logger.info("intake_parse_document correlation_id=%s", cid)
     content = await file.read()
     text = _extract_pdf_text(content)
     patient_name = _extract_first(
