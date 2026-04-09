@@ -59,11 +59,14 @@ def _validate_startup_secrets() -> None:
     if SUBMISSION_METHOD not in {"availity_sftp", "stedi_api"}:
         raise RuntimeError("SUBMISSION_METHOD must be either 'availity_sftp' or 'stedi_api'.")
 
+    # Keep EDI service bootable even if an external clearinghouse credential is missing.
+    # Submission routes will return clear runtime errors when callers attempt unavailable methods.
     if SUBMISSION_METHOD == "availity_sftp":
-        _required_env("AVAILITY_SFTP_USER")
-        _required_env("AVAILITY_SFTP_PASS")
+        if not os.getenv("AVAILITY_SFTP_USER", "").strip() or not os.getenv("AVAILITY_SFTP_PASS", "").strip():
+            log.warning("AVAILITY_SFTP_USER/AVAILITY_SFTP_PASS not configured; Availity submission endpoints will fail until set")
     elif SUBMISSION_METHOD == "stedi_api":
-        _required_env("STEDI_API_KEY")
+        if not os.getenv("STEDI_API_KEY", "").strip():
+            log.warning("STEDI_API_KEY not configured; Stedi submission endpoints will fail until set")
 
 
 _validate_startup_secrets()

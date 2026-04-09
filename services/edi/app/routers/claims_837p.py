@@ -273,6 +273,8 @@ async def edi_process_claim_submission(
         # -- SUBMIT: Branch on method ---
         try:
             if SUBMISSION_METHOD == "availity_sftp":
+                if not os.getenv("AVAILITY_SFTP_USER", "").strip() or not os.getenv("AVAILITY_SFTP_PASS", "").strip():
+                    raise ValueError("Availity SFTP credentials are not configured")
                 # Generate raw X12 837P and upload to Availity SFTP
                 raw_x12 = generate_837p(order, diags, lines, icn)
                 result = await availity_sftp.submit_837p(raw_x12)
@@ -300,6 +302,8 @@ async def edi_process_claim_submission(
                 )
 
             else:
+                if not os.getenv("STEDI_API_KEY", "").strip():
+                    raise ValueError("STEDI_API_KEY is not configured")
                 # Submit via Stedi Healthcare API (JSON -> X12 handled by Stedi)
                 result = await stedi_client.submit_837p(payload, idempotency_key=icn)
 

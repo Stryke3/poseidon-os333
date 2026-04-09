@@ -6,6 +6,10 @@
 # Shared secrets are generated once in `poseidon-shared-secrets`.
 # Service-specific secrets like `DATABASE_URL` remain unmanaged in YAML so they
 # can be set from the Render Dashboard or API without committing values here.
+#
+# Core login "cannot reach the database": set each service's DATABASE_URL to the
+# Postgres **Internal** connection string from the Render Postgres dashboard.
+# Code in services/shared/base.py appends sslmode=require when missing for Render/Neon hosts.
 
 previews:
   generation: off
@@ -37,15 +41,15 @@ envVarGroups:
       - key: EDI_API_URL
         value: http://edi:8006
       - key: AVAILITY_BASE_URL
-        value: https://tst.api.availity.com
+        value: https://api.availity.com
       - key: AVAILITY_TOKEN_URL
-        value: https://tst.api.availity.com/v1/token
+        value: https://api.availity.com/v1/token
       - key: AVAILITY_ELIGIBILITY_PATH
         value: /v1/coverages/eligibility
       - key: AVAILITY_PRIOR_AUTH_PATH
         value: /v1/authorizations
       - key: AVAILITY_ELIGIBILITY_URL
-        value: https://tst.api.availity.com/v1/coverages/eligibility
+        value: https://api.availity.com/v1/coverages/eligibility
       - key: NEXTAUTH_URL
         value: https://dashboard.strykefox.com
       - key: CORS_ALLOW_ORIGINS
@@ -101,8 +105,12 @@ services:
         value: core
       - key: PORT
         value: "8001"
+      # Paste Internal Database URL from Render Postgres (same for all backend services that use this DB).
       - key: DATABASE_URL
         sync: false
+      # Must be >= NEXTAUTH_SESSION_MAX_AGE in hours (default 168h = 7d)
+      - key: JWT_EXPIRY_HOURS
+        value: "168"
       - key: REDIS_URL
         fromService:
           type: keyvalue
@@ -314,6 +322,9 @@ services:
         sync: false
       - key: NEXTAUTH_URL
         value: https://dashboard.strykefox.com
+      # 7 days; shorten with NEXTAUTH_SESSION_MAX_AGE (seconds) for stricter policies
+      - key: NEXTAUTH_SESSION_MAX_AGE
+        value: "604800"
       - key: PUBLIC_INQUIRY_ALLOWED_ORIGINS
         value: https://dashboard.strykefox.com
       - key: NEXT_PUBLIC_AVAILITY_SERVICE_URL
