@@ -3,7 +3,7 @@ import { getToken } from "next-auth/jwt"
 import { correlationHeaders, internalApiKeyHeaders } from "@/lib/proxy-headers"
 import { getRequiredEnv, getServiceBaseUrl } from "@/lib/runtime-config"
 
-const INTAKE_API_URL = getServiceBaseUrl("INTAKE_API_URL")
+const INTAKE_API_URL = process.env.INTAKE_API_URL?.trim().replace(/\/$/, "") || null
 
 interface ImportOrderPayload {
   patient_name: string
@@ -326,7 +326,9 @@ async function getCoreAuth(req: NextRequest) {
   throw new Error("Live ingest requires an authenticated operator session.")
 }
 
-async function parsePdfDocument(file: File, req: NextRequest) {
+async function parsePdfViaUpstream(file: File, req: NextRequest): Promise<ParsedPdfDocument | null> {
+  if (!INTAKE_API_URL) return null
+
   const upstream = new FormData()
   upstream.append("file", file, file.name)
 
@@ -340,20 +342,83 @@ async function parsePdfDocument(file: File, req: NextRequest) {
     cache: "no-store",
   }).catch(() => null)
 
-  if (!res) {
-    throw new Error("Unable to reach intake document parser.")
+  if (!res || !res.ok) return null
+
+  const data = (await res.json().catch(() => null)) as ParsedPdfDocument | null
+  return data && data.patient_name ? data : null
+}
+
+function extractFromText(text: string): ParsedPdfDocument {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean)
+  const joined = lines.join(" ")
+
+  const namePatterns = [
+    /(?:Patient\s*(?:Name)?|Name)\s*[:\-]?\s*([A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+)/i,
+    /(?:Member|Subscriber|Insured)\s*(?:Name)?\s*[:\-]?\s*([A-Z][a-z]+\s+[A-Z][a-z]+)/i,
+  ]
+  let patientName = ""
+  for (const pat of namePatterns) {
+    const m = joined.match(pat)
+    if (m) { patientName = m[1].trim(); break }
   }
 
-  const data = (await res.json().catch(() => null)) as ParsedPdfDocument | { detail?: string } | null
-  if (!res.ok) {
-    const detail =
-      data && typeof data === "object" && "detail" in data && typeof data.detail === "string"
-        ? data.detail
-        : `PDF parsing failed: ${res.status}`
-    throw new Error(detail)
+  const dobMatch = joined.match(
+    /(?:DOB|Date\s*of\s*Birth|Birth\s*Date|D\.O\.B)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+  )
+
+  const payerMatch = joined.match(
+    /(?:Payer|Insurance|Plan|Carrier|Health\s*Plan)\s*(?:Name)?\s*[:\-]?\s*([A-Za-z][A-Za-z\s&.\-']{2,40}?)(?:\s{2,}|\n|Member|Policy|Group|ID|$)/i,
+  )
+
+  const memberIdMatch = joined.match(
+    /(?:Member\s*ID|Subscriber\s*ID|Insurance\s*ID|Policy\s*#?|ID\s*#?)\s*[:\-]?\s*([A-Z0-9]{4,20})/i,
+  )
+
+  const npiMatch = joined.match(
+    /(?:NPI|Provider\s*(?:NPI|#))\s*[:\-]?\s*(\d{10})/i,
+  )
+
+  const hcpcsMatches = joined.match(/\b([AELKV]\d{4})\b/gi) || []
+  const hcpcsCodes = [...new Set(hcpcsMatches.map((c) => c.toUpperCase()))]
+
+  const icdMatches = joined.match(/\b([A-TV-Z]\d{2,3}(?:\.\d{1,4})?)\b/g) || []
+  const diagnosisCodes = [...new Set(
+    icdMatches
+      .map((c) => c.toUpperCase())
+      .filter((c) => /^[A-TV-Z]\d{2}/.test(c) && !/^[AELKV]\d{4}$/.test(c)),
+  )]
+
+  const nameParts = patientName.split(/\s+/)
+  return {
+    patient_name: patientName || undefined,
+    first_name: nameParts[0] || undefined,
+    last_name: nameParts.slice(1).join(" ") || undefined,
+    date_of_birth: dobMatch?.[1] || undefined,
+    insurance_info: {
+      payer_name: payerMatch?.[1]?.trim() || undefined,
+      member_id: memberIdMatch?.[1] || undefined,
+    },
+    physician_npi: npiMatch?.[1] || undefined,
+    hcpcs_codes: hcpcsCodes.length ? hcpcsCodes : undefined,
+    diagnosis_codes: diagnosisCodes.length ? diagnosisCodes : undefined,
+    raw_text_preview: text.slice(0, 500),
+  }
+}
+
+async function parsePdfDocument(file: File, req: NextRequest): Promise<ParsedPdfDocument> {
+  const upstreamResult = await parsePdfViaUpstream(file, req)
+  if (upstreamResult) return upstreamResult
+
+  // Fallback: extract text locally with pdf-parse
+  const pdfParse = (await import("pdf-parse")).default
+  const buffer = Buffer.from(await file.arrayBuffer())
+  const parsed = await pdfParse(buffer).catch(() => null)
+
+  if (!parsed?.text?.trim()) {
+    throw new Error("Could not extract text from the uploaded PDF.")
   }
 
-  return (data || {}) as ParsedPdfDocument
+  return extractFromText(parsed.text)
 }
 
 function normalizeDiagnosisCodes(order: ImportOrderPayload) {
