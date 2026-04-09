@@ -2,10 +2,18 @@ import { getServerSession } from "next-auth"
 import { NextRequest, NextResponse } from "next/server"
 
 import { authOptions } from "@/lib/auth"
-import { correlationHeaders, internalApiKeyHeaders } from "@/lib/proxy-headers"
-import { getServiceBaseUrl } from "@/lib/runtime-config"
+import { correlationHeaders } from "@/lib/proxy-headers"
+import { getRequiredEnv, getServiceBaseUrl } from "@/lib/runtime-config"
 
 const EDI_API_URL = getServiceBaseUrl("EDI_API_URL")
+
+function ediInternalApiKeyHeaders(): Record<string, string> {
+  const key =
+    process.env.EDI_INTERNAL_API_KEY?.trim() ||
+    process.env.INTERNAL_API_KEY?.trim() ||
+    getRequiredEnv("INTERNAL_API_KEY")
+  return { "X-Internal-API-Key": key }
+}
 
 /**
  * GET  /api/edi?path=/api/v1/remittance/stats&days=30
@@ -34,7 +42,7 @@ export async function GET(req: NextRequest) {
       headers: {
         Authorization: `Bearer ${session.user.accessToken}`,
         "Content-Type": "application/json",
-        ...internalApiKeyHeaders(),
+        ...ediInternalApiKeyHeaders(),
         ...correlationHeaders(req.headers),
       },
       cache: "no-store",
@@ -74,7 +82,7 @@ export async function POST(req: NextRequest) {
       headers: {
         Authorization: `Bearer ${session.user.accessToken}`,
         "Content-Type": "application/json",
-        ...internalApiKeyHeaders(),
+        ...ediInternalApiKeyHeaders(),
         ...correlationHeaders(req.headers),
       },
       body: payload ? JSON.stringify(payload) : undefined,
