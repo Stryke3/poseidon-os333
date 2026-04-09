@@ -114,7 +114,28 @@ async def _table_columns(conn, table_name: str, schema: str = "public") -> set[s
 
 
 async def _assert_core_schema_version_and_columns(conn) -> None:
-    row = await fetch_one(conn, "SELECT version FROM schema_version WHERE id = 1")
+    try:
+        row = await fetch_one(conn, "SELECT version FROM schema_version WHERE id = 1")
+    except Exception:
+        logger.warning("schema_version table missing — auto-creating via migration 014")
+        await conn.execute("""
+            ALTER TABLE orders ADD COLUMN IF NOT EXISTS claim_strategy TEXT;
+            ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_claim_strategy_check;
+            ALTER TABLE orders ADD CONSTRAINT orders_claim_strategy_check
+                CHECK (claim_strategy IS NULL OR claim_strategy IN ('AVAILITY', 'EDI'));
+            CREATE INDEX IF NOT EXISTS idx_orders_org_claim_strategy ON orders (org_id, claim_strategy)
+                WHERE claim_strategy IS NOT NULL;
+            ALTER TABLE claim_submissions ADD COLUMN IF NOT EXISTS submission_format VARCHAR(32);
+            CREATE TABLE IF NOT EXISTS schema_version (
+                id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                version INTEGER NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            INSERT INTO schema_version (id, version, updated_at)
+                VALUES (1, 14, NOW()) ON CONFLICT (id) DO NOTHING;
+            UPDATE schema_version SET version = GREATEST(version, 14), updated_at = NOW() WHERE id = 1;
+        """)
+        row = await fetch_one(conn, "SELECT version FROM schema_version WHERE id = 1")
     if not row:
         raise RuntimeError("schema_version missing (id=1); apply migrations through 014_claim_authority_schema_parity.sql")
     ver = int(row.get("version") or 0)
