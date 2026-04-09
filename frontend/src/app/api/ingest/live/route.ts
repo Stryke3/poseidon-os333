@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getToken } from "next-auth/jwt"
-import { correlationHeaders, internalApiKeyHeaders } from "@/lib/proxy-headers"
 import { getRequiredEnv, getServiceBaseUrl } from "@/lib/runtime-config"
-
-const INTAKE_API_URL = process.env.INTAKE_API_URL?.trim().replace(/\/$/, "") || null
 
 interface ImportOrderPayload {
   patient_name: string
@@ -326,99 +323,76 @@ async function getCoreAuth(req: NextRequest) {
   throw new Error("Live ingest requires an authenticated operator session.")
 }
 
-async function parsePdfViaUpstream(file: File, req: NextRequest): Promise<ParsedPdfDocument | null> {
-  if (!INTAKE_API_URL) return null
-
-  const upstream = new FormData()
-  upstream.append("file", file, file.name)
-
-  const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/parse-document`, {
-    method: "POST",
-    headers: {
-      ...internalApiKeyHeaders(),
-      ...correlationHeaders(req.headers),
-    },
-    body: upstream,
-    cache: "no-store",
-  }).catch(() => null)
-
-  if (!res || !res.ok) return null
-
-  const data = (await res.json().catch(() => null)) as ParsedPdfDocument | null
-  return data && data.patient_name ? data : null
+function extractFirst(text: string, patterns: RegExp[]): string {
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match) return match[1].trim()
+  }
+  return ""
 }
 
-function extractFromText(text: string): ParsedPdfDocument {
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean)
-  const joined = lines.join(" ")
-
-  const namePatterns = [
-    /(?:Patient\s*(?:Name)?|Name)\s*[:\-]?\s*([A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+)/i,
-    /(?:Member|Subscriber|Insured)\s*(?:Name)?\s*[:\-]?\s*([A-Z][a-z]+\s+[A-Z][a-z]+)/i,
-  ]
-  let patientName = ""
-  for (const pat of namePatterns) {
-    const m = joined.match(pat)
-    if (m) { patientName = m[1].trim(); break }
-  }
-
-  const dobMatch = joined.match(
-    /(?:DOB|Date\s*of\s*Birth|Birth\s*Date|D\.O\.B)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
-  )
-
-  const payerMatch = joined.match(
-    /(?:Payer|Insurance|Plan|Carrier|Health\s*Plan)\s*(?:Name)?\s*[:\-]?\s*([A-Za-z][A-Za-z\s&.\-']{2,40}?)(?:\s{2,}|\n|Member|Policy|Group|ID|$)/i,
-  )
-
-  const memberIdMatch = joined.match(
-    /(?:Member\s*ID|Subscriber\s*ID|Insurance\s*ID|Policy\s*#?|ID\s*#?)\s*[:\-]?\s*([A-Z0-9]{4,20})/i,
-  )
-
-  const npiMatch = joined.match(
-    /(?:NPI|Provider\s*(?:NPI|#))\s*[:\-]?\s*(\d{10})/i,
-  )
-
-  const hcpcsMatches = joined.match(/\b([AELKV]\d{4})\b/gi) || []
-  const hcpcsCodes = [...new Set(hcpcsMatches.map((c) => c.toUpperCase()))]
-
-  const icdMatches = joined.match(/\b([A-TV-Z]\d{2,3}(?:\.\d{1,4})?)\b/g) || []
-  const diagnosisCodes = [...new Set(
-    icdMatches
-      .map((c) => c.toUpperCase())
-      .filter((c) => /^[A-TV-Z]\d{2}/.test(c) && !/^[AELKV]\d{4}$/.test(c)),
-  )]
-
-  const nameParts = patientName.split(/\s+/)
-  return {
-    patient_name: patientName || undefined,
-    first_name: nameParts[0] || undefined,
-    last_name: nameParts.slice(1).join(" ") || undefined,
-    date_of_birth: dobMatch?.[1] || undefined,
-    insurance_info: {
-      payer_name: payerMatch?.[1]?.trim() || undefined,
-      member_id: memberIdMatch?.[1] || undefined,
-    },
-    physician_npi: npiMatch?.[1] || undefined,
-    hcpcs_codes: hcpcsCodes.length ? hcpcsCodes : undefined,
-    diagnosis_codes: diagnosisCodes.length ? diagnosisCodes : undefined,
-    raw_text_preview: text.slice(0, 500),
-  }
-}
-
-async function parsePdfDocument(file: File, req: NextRequest): Promise<ParsedPdfDocument> {
-  const upstreamResult = await parsePdfViaUpstream(file, req)
-  if (upstreamResult) return upstreamResult
-
-  // Fallback: extract text locally with pdf-parse
+async function parsePdfDocument(file: File): Promise<ParsedPdfDocument> {
   const pdfParse = (await import("pdf-parse")).default
   const buffer = Buffer.from(await file.arrayBuffer())
-  const parsed = await pdfParse(buffer).catch(() => null)
+  const parsed = await pdfParse(buffer)
 
-  if (!parsed?.text?.trim()) {
+  const text = parsed.text || ""
+  if (!text.trim()) {
     throw new Error("Could not extract text from the uploaded PDF.")
   }
 
-  return extractFromText(parsed.text)
+  const patientName = extractFirst(text, [
+    /(?:Patient|Member)(?: Name)?[:\s]+([A-Z][A-Z,\-'\s]+)/i,
+    /Name[:\s]+([A-Z][A-Z,\-'\s]+)/i,
+  ])
+  const dobRaw = extractFirst(text, [
+    /(?:DOB|Date of Birth|Birth Date)[:\s]+([0-9/\-]{6,10})/i,
+    /\bDOB\b[^0-9]{0,8}([0-9/\-]{6,10})/i,
+  ])
+  const payerName = extractFirst(text, [
+    /(?:Insurance|Payer|Plan)[:\s]+([A-Z][A-Z0-9&.,'\/\-\s]+)/i,
+    /(?:Primary Payer|Carrier)[:\s]+([A-Z][A-Z0-9&.,'\/\-\s]+)/i,
+  ])
+  const memberId = extractFirst(text, [
+    /(?:Member ID|Subscriber ID|Insurance ID)[:\s]+([A-Z0-9\-]+)/i,
+    /(?:ID Number|Policy Number|Member #)[:\s]+([A-Z0-9\-]+)/i,
+  ])
+  const physicianNpi = extractFirst(text, [/\bNPI[:\s]+(\d{10})\b/i])
+
+  const hcpcsCodes = Array.from(
+    new Set((text.match(/\b[A-Z]\d{4}\b/g) || []).map((c) => c.toUpperCase())),
+  )
+  const diagnosisCodes = Array.from(
+    new Set(
+      (text.match(/\b[A-Z]\d{2}(?:\.\d{1,4})?\b/g) || [])
+        .map((c) => c.toUpperCase())
+        .filter((c) => /^[A-TV-Z]\d{2}/.test(c) && !/^[AELKV]\d{4}$/.test(c)),
+    ),
+  )
+
+  const nameParts = patientName.trim().split(/\s+/)
+  const firstName = nameParts[0] || ""
+  const lastName = nameParts.length > 1
+    ? patientName.includes(",")
+      ? nameParts[0]
+      : nameParts.slice(1).join(" ")
+    : ""
+  const resolvedFirst = patientName.includes(",") ? nameParts.slice(1).join(" ").replace(/^,\s*/, "") : firstName
+
+  return {
+    patient_name: patientName || undefined,
+    first_name: resolvedFirst || undefined,
+    last_name: patientName.includes(",") ? nameParts[0]?.replace(/,$/, "") : lastName || undefined,
+    date_of_birth: dobRaw ? normalizeDob(dobRaw) : undefined,
+    insurance_info: {
+      payer_name: payerName || undefined,
+      member_id: memberId || undefined,
+    },
+    physician_npi: physicianNpi || undefined,
+    hcpcs_codes: hcpcsCodes.length ? hcpcsCodes : undefined,
+    diagnosis_codes: diagnosisCodes.length ? diagnosisCodes : undefined,
+    raw_text_preview: text.slice(0, 1500),
+  }
 }
 
 function normalizeDiagnosisCodes(order: ImportOrderPayload) {
@@ -587,7 +561,7 @@ export async function POST(req: NextRequest) {
     const buffer = isPdf ? null : Buffer.from(await file.arrayBuffer())
     const rows = buffer ? parseRows(buffer) : []
     const orders = isPdf
-      ? mapParsedPdfToOrders(await parsePdfDocument(file, req))
+      ? mapParsedPdfToOrders(await parsePdfDocument(file))
       : mapRowsToOrders(rows)
 
     if (!orders.length) {
