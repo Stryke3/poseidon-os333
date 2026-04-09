@@ -41,8 +41,9 @@ export async function GET(req: NextRequest) {
     const data = await res.json().catch(() => ({}))
     return NextResponse.json(data, { status: res.status })
   } catch (e) {
+    const detail = e instanceof Error ? e.message : "unknown_error"
     return NextResponse.json(
-      { error: "EDI service unavailable" },
+      { error: "EDI service unavailable", detail },
       { status: 502 },
     )
   }
@@ -71,8 +72,9 @@ export async function POST(req: NextRequest) {
     const data = await res.json().catch(() => ({}))
     return NextResponse.json(data, { status: res.status })
   } catch (e) {
+    const detail = e instanceof Error ? e.message : "unknown_error"
     return NextResponse.json(
-      { error: "EDI service unavailable" },
+      { error: "EDI service unavailable", detail },
       { status: 502 },
     )
   }
