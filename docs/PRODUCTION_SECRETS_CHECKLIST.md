@@ -49,7 +49,7 @@ This checklist defines required secret material for go-live.
 ## EDI / Clearinghouse
 - `SUBMISSION_METHOD` (`availity_sftp` or `stedi_api`)
 - `AVAILITY_SFTP_USER` + `AVAILITY_SFTP_PASS` (when `SUBMISSION_METHOD=availity_sftp`)
-- `STEDI_API_KEY` (when `SUBMISSION_METHOD=stedi_api`)
+- `STEDI_API_KEY` (when `SUBMISSION_METHOD=stedi_api`) — use the **raw** key in env; Stedi does not use a `Bearer` prefix (see [Stedi auth](https://www.stedi.com/docs/healthcare/api-reference#passing-the-api-key))
 
 ## Eligibility / Prior Authorization APIs
 - `AVAILITY_BASE_URL`

@@ -118,6 +118,12 @@ services:
           type: pserv
           name: minio
           envVarKey: MINIO_ROOT_PASSWORD
+      - key: AVAILITY_CLIENT_ID
+        sync: false
+      - key: AVAILITY_CLIENT_SECRET
+        sync: false
+      - key: AVAILITY_SCOPE
+        sync: false
 
   - type: pserv
     runtime: docker
@@ -186,6 +192,14 @@ services:
           type: pserv
           name: minio
           envVarKey: MINIO_ROOT_PASSWORD
+      - key: AVAILITY_CLIENT_ID
+        sync: false
+      - key: AVAILITY_CLIENT_SECRET
+        sync: false
+      - key: AVAILITY_SCOPE
+        sync: false
+      - key: STEDI_API_KEY
+        sync: false
 
   - type: pserv
     runtime: docker
@@ -250,10 +264,13 @@ services:
           type: pserv
           name: minio
           envVarKey: MINIO_ROOT_PASSWORD
+      # Production: EDI_DRY_RUN must be false when ENVIRONMENT=production (see services/edi/app/main.py).
       - key: EDI_DRY_RUN
-        value: "true"
+        value: "false"
       - key: SUBMISSION_METHOD
         value: stedi_api
+      - key: STEDI_API_KEY
+        sync: false
 
   - type: pserv
     runtime: docker
@@ -274,6 +291,12 @@ services:
           type: keyvalue
           name: poseidon-kv
           property: connectionString
+      - key: AVAILITY_CLIENT_ID
+        sync: false
+      - key: AVAILITY_CLIENT_SECRET
+        sync: false
+      - key: AVAILITY_SCOPE
+        sync: false
 
   - type: web
     runtime: docker

@@ -1885,11 +1885,18 @@ async def v1_submit_claim(order_id: str, request: Request):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Stedi API key is not configured.",
             )
+        # Stedi: raw API key in Authorization (not Bearer). Path matches EDI Stedi client professional claims v3.
+        auth_header = stedi_api_key[7:].strip() if stedi_api_key.lower().startswith("bearer ") else stedi_api_key
+        idem = idempotency_key or str(uuid.uuid4())
         async with httpx.AsyncClient(timeout=45.0) as client:
             response = await client.post(
-                "https://healthcare.us.stedi.com/2024-04-01/claims",
+                "https://healthcare.us.stedi.com/2024-04-01/change/medicalnetwork/professionalclaims/v3/submission",
                 json=submission_payload,
-                headers={"Authorization": f"Bearer {stedi_api_key}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": auth_header,
+                    "Content-Type": "application/json",
+                    "Idempotency-Key": idem,
+                },
             )
         if response.status_code >= 400:
             raise HTTPException(
@@ -1900,6 +1907,16 @@ async def v1_submit_claim(order_id: str, request: Request):
         submission_id = str(uuid.uuid4())
         ack_payload = dict(response_payload)
         ack_payload["idempotency_key"] = idempotency_key
+        claim_ref = response_payload.get("claimReference") or {}
+        stedi_tx_id = (
+            claim_ref.get("correlationId")
+            or response_payload.get("transactionId")
+            or response_payload.get("correlationId")
+            or ""
+        )
+        stedi_status = str(response_payload.get("status") or "")
+        if stedi_status == "SUCCESS":
+            status_value = "accepted"
         await exec_write(
             conn,
             """
@@ -1912,7 +1929,7 @@ async def v1_submit_claim(order_id: str, request: Request):
             order_id,
             order["org_id"],
             order.get("payer_id"),
-            response_payload.get("transactionId"),
+            stedi_tx_id,
             json.dumps(submission_payload),
             json.dumps(ack_payload),
             status_value,

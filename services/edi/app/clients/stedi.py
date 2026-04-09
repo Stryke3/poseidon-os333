@@ -20,6 +20,21 @@ STEDI_BASE_URL = "https://healthcare.us.stedi.com/2024-04-01"
 STEDI_CORE_URL = "https://core.us.stedi.com/2023-08-01"
 
 
+def _stedi_authorization_value(api_key: str) -> str:
+    """
+    Stedi expects the raw API key in Authorization (or legacy 'Key <key>').
+    Do not send 'Bearer' — that breaks authentication. See:
+    https://www.stedi.com/docs/healthcare/api-reference#passing-the-api-key
+    """
+    k = (api_key or "").strip()
+    if not k:
+        return ""
+    low = k.lower()
+    if low.startswith("bearer "):
+        k = k[7:].strip()
+    return k
+
+
 class StediClient:
     """
     Stedi Healthcare API client for professional claim submission,
@@ -27,9 +42,7 @@ class StediClient:
     """
 
     def __init__(self):
-        authorization = STEDI_API_KEY.strip()
-        if authorization and not authorization.lower().startswith("bearer "):
-            authorization = f"Bearer {authorization}"
+        authorization = _stedi_authorization_value(STEDI_API_KEY)
         self.headers = {
             "Authorization": authorization,
             "Content-Type": "application/json",
