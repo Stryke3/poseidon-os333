@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getToken } from "next-auth/jwt"
+import { correlationHeaders } from "@/lib/proxy-headers"
 import { getRequiredEnv, getServiceBaseUrl } from "@/lib/runtime-config"
 
 interface ImportOrderPayload {
@@ -43,6 +44,8 @@ type CoreOrderCreateResponse = {
   detail?: string
   error?: string
 }
+
+const INTAKE_API_URL = process.env.INTAKE_API_URL?.trim().replace(/\/$/, "") || ""
 
 function normalizeKey(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")
@@ -323,76 +326,41 @@ async function getCoreAuth(req: NextRequest) {
   throw new Error("Live ingest requires an authenticated operator session.")
 }
 
-function extractFirst(text: string, patterns: RegExp[]): string {
-  for (const pattern of patterns) {
-    const match = text.match(pattern)
-    if (match) return match[1].trim()
-  }
-  return ""
-}
-
-async function parsePdfDocument(file: File): Promise<ParsedPdfDocument> {
-  const pdfParse = (await import("pdf-parse")).default
-  const buffer = Buffer.from(await file.arrayBuffer())
-  const parsed = await pdfParse(buffer)
-
-  const text = parsed.text || ""
-  if (!text.trim()) {
-    throw new Error("Could not extract text from the uploaded PDF.")
+async function parsePdfDocument(file: File, req: NextRequest): Promise<ParsedPdfDocument> {
+  if (!INTAKE_API_URL) {
+    throw new Error("INTAKE_API_URL is not configured for PDF parsing.")
   }
 
-  const patientName = extractFirst(text, [
-    /(?:Patient|Member)(?: Name)?[:\s]+([A-Z][A-Z,\-'\s]+)/i,
-    /Name[:\s]+([A-Z][A-Z,\-'\s]+)/i,
-  ])
-  const dobRaw = extractFirst(text, [
-    /(?:DOB|Date of Birth|Birth Date)[:\s]+([0-9/\-]{6,10})/i,
-    /\bDOB\b[^0-9]{0,8}([0-9/\-]{6,10})/i,
-  ])
-  const payerName = extractFirst(text, [
-    /(?:Insurance|Payer|Plan)[:\s]+([A-Z][A-Z0-9&.,'\/\-\s]+)/i,
-    /(?:Primary Payer|Carrier)[:\s]+([A-Z][A-Z0-9&.,'\/\-\s]+)/i,
-  ])
-  const memberId = extractFirst(text, [
-    /(?:Member ID|Subscriber ID|Insurance ID)[:\s]+([A-Z0-9\-]+)/i,
-    /(?:ID Number|Policy Number|Member #)[:\s]+([A-Z0-9\-]+)/i,
-  ])
-  const physicianNpi = extractFirst(text, [/\bNPI[:\s]+(\d{10})\b/i])
+  const upstream = new FormData()
+  upstream.append("file", file, file.name)
 
-  const hcpcsCodes = Array.from(
-    new Set((text.match(/\b[A-Z]\d{4}\b/g) || []).map((c) => c.toUpperCase())),
-  )
-  const diagnosisCodes = Array.from(
-    new Set(
-      (text.match(/\b[A-Z]\d{2}(?:\.\d{1,4})?\b/g) || [])
-        .map((c) => c.toUpperCase())
-        .filter((c) => /^[A-TV-Z]\d{2}/.test(c) && !/^[AELKV]\d{4}$/.test(c)),
-    ),
-  )
-
-  const nameParts = patientName.trim().split(/\s+/)
-  const firstName = nameParts[0] || ""
-  const lastName = nameParts.length > 1
-    ? patientName.includes(",")
-      ? nameParts[0]
-      : nameParts.slice(1).join(" ")
-    : ""
-  const resolvedFirst = patientName.includes(",") ? nameParts.slice(1).join(" ").replace(/^,\s*/, "") : firstName
-
-  return {
-    patient_name: patientName || undefined,
-    first_name: resolvedFirst || undefined,
-    last_name: patientName.includes(",") ? nameParts[0]?.replace(/,$/, "") : lastName || undefined,
-    date_of_birth: dobRaw ? normalizeDob(dobRaw) : undefined,
-    insurance_info: {
-      payer_name: payerName || undefined,
-      member_id: memberId || undefined,
-    },
-    physician_npi: physicianNpi || undefined,
-    hcpcs_codes: hcpcsCodes.length ? hcpcsCodes : undefined,
-    diagnosis_codes: diagnosisCodes.length ? diagnosisCodes : undefined,
-    raw_text_preview: text.slice(0, 1500),
+  const headers: Record<string, string> = {
+    ...correlationHeaders(req.headers),
   }
+  const internalKey = process.env.INTERNAL_API_KEY?.trim()
+  if (internalKey) {
+    headers["X-Internal-API-Key"] = internalKey
+  }
+
+  const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/parse-document`, {
+    method: "POST",
+    headers,
+    body: upstream,
+    cache: "no-store",
+  }).catch(() => null)
+
+  if (!res) {
+    throw new Error("Unable to reach intake parser service.")
+  }
+
+  const parsed = await safeJson<ParsedPdfDocument & { detail?: string; error?: string }>(res)
+  if (!res.ok) {
+    throw new Error(parsed.detail || parsed.error || `Intake parser failed (${res.status}).`)
+  }
+  if (!parsed.patient_name) {
+    throw new Error("No usable patient data was found in the uploaded PDF.")
+  }
+  return parsed
 }
 
 function normalizeDiagnosisCodes(order: ImportOrderPayload) {
@@ -561,7 +529,7 @@ export async function POST(req: NextRequest) {
     const buffer = isPdf ? null : Buffer.from(await file.arrayBuffer())
     const rows = buffer ? parseRows(buffer) : []
     const orders = isPdf
-      ? mapParsedPdfToOrders(await parsePdfDocument(file))
+      ? mapParsedPdfToOrders(await parsePdfDocument(file, req))
       : mapRowsToOrders(rows)
 
     if (!orders.length) {
