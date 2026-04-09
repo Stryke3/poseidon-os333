@@ -46,6 +46,12 @@ type CoreOrderCreateResponse = {
 }
 
 const INTAKE_API_URL = process.env.INTAKE_API_URL?.trim().replace(/\/$/, "") || ""
+const INTAKE_FALLBACK_URLS = [
+  "http://intake:8003",
+  "http://intake-yyft:10000",
+  "https://poseidon-intake.onrender.com",
+  "https://intake.strykefox.com",
+]
 
 function normalizeKey(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")
@@ -310,6 +316,31 @@ async function safeJson<T>(res: Response) {
   }
 }
 
+function extractFetchErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message
+  if (typeof error === "string" && error.trim()) return error.trim()
+  return "network request failed"
+}
+
+async function buildMultipartFilePayload(file: File) {
+  const safeName = (file.name || "upload.pdf").replace(/"/g, "")
+  const contentType = file.type || "application/pdf"
+  const boundary = `----poseidon-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const encoder = new TextEncoder()
+  const preamble = encoder.encode(
+    `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="file"; filename="${safeName}"\r\n` +
+      `Content-Type: ${contentType}\r\n\r\n`,
+  )
+  const fileBytes = new Uint8Array(await file.arrayBuffer())
+  const closing = encoder.encode(`\r\n--${boundary}--\r\n`)
+  const payload = new Uint8Array(preamble.length + fileBytes.length + closing.length)
+  payload.set(preamble, 0)
+  payload.set(fileBytes, preamble.length)
+  payload.set(closing, preamble.length + fileBytes.length)
+  return { boundary, payload }
+}
+
 async function getCoreAuth(req: NextRequest) {
   const coreBase = getServiceBaseUrl("POSEIDON_API_URL")
   const nextAuthSecret = getRequiredEnv("NEXTAUTH_SECRET")
@@ -327,12 +358,18 @@ async function getCoreAuth(req: NextRequest) {
 }
 
 async function parsePdfDocument(file: File, req: NextRequest): Promise<ParsedPdfDocument> {
-  if (!INTAKE_API_URL) {
+  const { boundary, payload } = await buildMultipartFilePayload(file)
+
+  const candidateBaseUrls = Array.from(
+    new Set(
+      [INTAKE_API_URL, ...INTAKE_FALLBACK_URLS]
+        .map((url) => url.trim().replace(/\/$/, ""))
+        .filter(Boolean),
+    ),
+  )
+  if (!candidateBaseUrls.length) {
     throw new Error("INTAKE_API_URL is not configured for PDF parsing.")
   }
-
-  const upstream = new FormData()
-  upstream.append("file", file, file.name)
 
   const headers: Record<string, string> = {
     ...correlationHeaders(req.headers),
@@ -342,25 +379,47 @@ async function parsePdfDocument(file: File, req: NextRequest): Promise<ParsedPdf
     headers["X-Internal-API-Key"] = internalKey
   }
 
-  const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/parse-document`, {
-    method: "POST",
-    headers,
-    body: upstream,
-    cache: "no-store",
-  }).catch(() => null)
+  const errors: string[] = []
+  for (const baseUrl of candidateBaseUrls) {
+    const abortController = new AbortController()
+    const timer = setTimeout(() => abortController.abort("timeout"), 15000)
 
-  if (!res) {
-    throw new Error("Unable to reach intake parser service.")
+    const res = await fetch(`${baseUrl}/api/v1/intake/parse-document`, {
+      method: "POST",
+      headers: {
+        ...headers,
+        "Content-Type": `multipart/form-data; boundary=${boundary}`,
+        "Content-Length": String(payload.byteLength),
+      },
+      body: payload,
+      cache: "no-store",
+      signal: abortController.signal,
+    }).catch((error) => {
+      errors.push(`${baseUrl}: ${extractFetchErrorMessage(error)}`)
+      return null
+    })
+    clearTimeout(timer)
+
+    if (!res) {
+      continue
+    }
+
+    const parsed = await safeJson<ParsedPdfDocument & { detail?: string; error?: string }>(res)
+    if (!res.ok) {
+      errors.push(`${baseUrl}: ${parsed.detail || parsed.error || `Intake parser failed (${res.status}).`}`)
+      continue
+    }
+    if (!parsed.patient_name) {
+      errors.push(`${baseUrl}: No usable patient data was found in the uploaded PDF.`)
+      continue
+    }
+
+    return parsed
   }
 
-  const parsed = await safeJson<ParsedPdfDocument & { detail?: string; error?: string }>(res)
-  if (!res.ok) {
-    throw new Error(parsed.detail || parsed.error || `Intake parser failed (${res.status}).`)
-  }
-  if (!parsed.patient_name) {
-    throw new Error("No usable patient data was found in the uploaded PDF.")
-  }
-  return parsed
+  throw new Error(
+    `Unable to parse PDF via intake parser service. ${errors.slice(0, 3).join(" | ")}`,
+  )
 }
 
 function normalizeDiagnosisCodes(order: ImportOrderPayload) {
