@@ -41,7 +41,15 @@ export async function GET(req: NextRequest) {
     const data = await res.json().catch(() => ({}))
     return NextResponse.json(data, { status: res.status })
   } catch (e) {
-    const detail = e instanceof Error ? e.message : "unknown_error"
+    const cause = e instanceof Error && (e as Error & { cause?: unknown }).cause
+    const causeMessage =
+      cause && typeof cause === "object" && "message" in cause
+        ? String((cause as { message?: unknown }).message ?? "")
+        : ""
+    const detail =
+      e instanceof Error
+        ? [e.message, causeMessage].filter(Boolean).join(": ") || "fetch_failed"
+        : "unknown_error"
     return NextResponse.json(
       { error: "EDI service unavailable", detail },
       { status: 502 },
@@ -72,7 +80,15 @@ export async function POST(req: NextRequest) {
     const data = await res.json().catch(() => ({}))
     return NextResponse.json(data, { status: res.status })
   } catch (e) {
-    const detail = e instanceof Error ? e.message : "unknown_error"
+    const cause = e instanceof Error && (e as Error & { cause?: unknown }).cause
+    const causeMessage =
+      cause && typeof cause === "object" && "message" in cause
+        ? String((cause as { message?: unknown }).message ?? "")
+        : ""
+    const detail =
+      e instanceof Error
+        ? [e.message, causeMessage].filter(Boolean).join(": ") || "fetch_failed"
+        : "unknown_error"
     return NextResponse.json(
       { error: "EDI service unavailable", detail },
       { status: 502 },
