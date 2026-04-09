@@ -127,8 +127,18 @@ function buildInternalTridentResponse({
   historicalSummary: HistoricalHcpcsSummary | null
   context: unknown
 }): string {
-  if (!orders.length && !patients.length && !kpisData) {
+  // Only treat as "Core down" when we have neither live snapshot nor Trident historical baseline.
+  if (!orders.length && !patients.length && !kpisData && !historicalSummary) {
     return "Finding: live Poseidon data is unavailable right now. Risk: Trident cannot produce a grounded recommendation without a current Core snapshot. Recommended action: verify Core connectivity, then rerun the analysis."
+  }
+
+  if (!orders.length && !patients.length && historicalSummary?.topCodes?.length) {
+    const top = historicalSummary.topCodes[0]
+    return [
+      `Finding: Core returned no orders or patients in this snapshot; Trident historical charge-detail baseline has ${historicalSummary.rowCount.toLocaleString()} rows with top HCPCS ${top?.hcpcs} (avg paid ${formatMoney(top?.avgPaid || 0)}).`,
+      `Risk: guidance uses historical reimbursement patterns only until live pipeline data is available for your org.`,
+      `Recommended action: if you expect live data, verify POSEIDON_API_URL from the dashboard and Core auth; meanwhile prioritize documentation and auth discipline on ${top?.hcpcs} and related high-volume codes from the historical set.`,
+    ].join(" ")
   }
 
   const deniedOrders = orders.filter((o) => String(o.status || "").toLowerCase() === "denied").length
