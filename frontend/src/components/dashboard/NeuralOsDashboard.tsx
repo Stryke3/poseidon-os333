@@ -390,18 +390,19 @@ export default function NeuralOsDashboard({
         </div>
       </header>
 
-      {/* ── Hamburger Menu Drawer ────────────────── */}
+      {/* ── Sidebar Drawer ──────────────────────── */}
       {menuOpen && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMenuOpen(false)} />
-          <aside className="absolute left-0 top-0 h-full w-72 border-r border-white/10 bg-[#0a1420] p-5 shadow-2xl">
-            <div className="flex items-center justify-between mb-6">
+          <aside className="absolute left-0 top-0 flex h-full w-72 flex-col border-r border-white/10 bg-[#0a1420] shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-white/8 px-5 py-4">
               <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-slate-500">Poseidon OS</p>
-                <p className="mt-1 text-lg font-semibold text-white">Navigation</p>
+                <p className="font-mono text-[9px] uppercase tracking-[0.3em] text-slate-500">Poseidon OS</p>
+                <p className="mt-0.5 text-sm font-semibold text-white">{userName}</p>
               </div>
               <button
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-slate-400 transition hover:text-white"
+                className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 text-slate-400 transition hover:text-white"
                 onClick={() => setMenuOpen(false)}
                 type="button"
               >
@@ -409,85 +410,56 @@ export default function NeuralOsDashboard({
               </button>
             </div>
 
-            <Link
-              className="mb-4 block rounded-lg border border-cyan-400/35 bg-cyan-400/15 px-3 py-2.5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/25 hover:text-white"
-              href="/fax"
-              onClick={() => setMenuOpen(false)}
-            >
-              Open Fax
-            </Link>
-            <Link
-              className="mb-4 block rounded-lg border border-emerald-400/35 bg-emerald-400/15 px-3 py-2.5 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-400/25 hover:text-white"
-              href="/intake/new"
-              onClick={() => setMenuOpen(false)}
-            >
-              New Patient Intake
-            </Link>
+            {/* Scrollable nav */}
+            <nav className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+              {/* 1. New Patient */}
+              <SidebarSection title="New Patient">
+                <SidebarLink href="/intake/new" label="New Patient Intake" onClick={() => setMenuOpen(false)} accent="emerald" />
+                <SidebarLink href="/intake" label="Intake Workspace" active={true} onClick={() => setMenuOpen(false)} />
+                <SidebarLink href="/fax" label="Fax" onClick={() => setMenuOpen(false)} />
+              </SidebarSection>
 
-            <nav className="space-y-1">
-              {navItems.map((item, idx) => (
-                <React.Fragment key={item.href}>
-                  {idx > 0 && item.href.startsWith("/admin") && !navItems[idx - 1].href.startsWith("/admin") && (
-                    <div className="my-2 border-t border-white/8" />
-                  )}
-                  {idx > 0 && item.href.startsWith("/admin") && !navItems[idx - 1].href.startsWith("/admin") && (
-                    <p className="px-3 pt-1 pb-1 font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500">Admin</p>
-                  )}
-                  <Link
-                    className={cn(
-                      "block rounded-lg px-3 py-2.5 text-sm transition",
-                      item.active
-                        ? "bg-cyan-400/10 text-cyan-200 font-medium"
-                        : "text-slate-300 hover:bg-white/5 hover:text-white",
-                    )}
-                    href={item.href}
-                    onClick={() => setMenuOpen(false)}
-                  >
-                    {item.label}
-                  </Link>
-                </React.Fragment>
-              ))}
-              <Link
-                className="block rounded-lg px-3 py-2.5 text-sm text-slate-300 transition hover:bg-white/5 hover:text-white"
-                href={matiaUrl}
-                onClick={() => setMenuOpen(false)}
-              >
-                Matia Dashboard
-              </Link>
+              {/* 2. Patient Dashboard */}
+              <SidebarSection title="Patient Dashboard">
+                <SidebarLink href="/" label="Live OS" active={true} onClick={() => setMenuOpen(false)} />
+                <SidebarLink href="/executive" label="Executive" onClick={() => setMenuOpen(false)} />
+                <SidebarLink href="/ceo" label="CEO" onClick={() => setMenuOpen(false)} />
+                <SidebarLink href="/revenue" label="Revenue" onClick={() => setMenuOpen(false)} />
+              </SidebarSection>
+
+              {/* 3. Practice Dashboard */}
+              <SidebarSection title="Practice Dashboard">
+                <SidebarLink href="/edi" label="EDI" onClick={() => setMenuOpen(false)} />
+                <SidebarLink href={matiaUrl} label="Matia" onClick={() => setMenuOpen(false)} />
+                <SidebarLink href="/fax" label="Fax Queue" onClick={() => setMenuOpen(false)} />
+              </SidebarSection>
+
+              {/* 4. Admin Tools */}
+              {canManageUsers && (
+                <SidebarSection title="Admin Tools">
+                  <SidebarLink href="/settings" label="Settings" onClick={() => setMenuOpen(false)} />
+                  <SidebarLink href="/admin/denials/queue" label="Denials" onClick={() => setMenuOpen(false)} />
+                  <SidebarLink href="/admin/integrations/availity" label="Integrations" onClick={() => setMenuOpen(false)} />
+                  <SidebarLink href="/admin/learning" label="Learning" onClick={() => setMenuOpen(false)} />
+                  <SidebarLink href="/admin/playbooks" label="Playbooks" onClick={() => setMenuOpen(false)} />
+                </SidebarSection>
+              )}
             </nav>
 
-            <div className="mt-8 space-y-3">
-              <div className="rounded-lg border border-white/8 bg-white/[0.03] p-3">
-                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">System</p>
-                <p className="mt-1 text-sm text-emerald-300">{initialSystemState.status}</p>
-                <p className="mt-1 text-xs text-slate-400">Services: {initialSystemState.services.join(", ")}</p>
+            {/* Footer */}
+            <div className="border-t border-white/8 px-4 py-4 space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-500">System</span>
+                <span className="text-emerald-400">{initialSystemState.status}</span>
               </div>
-              <div className="rounded-lg border border-white/8 bg-white/[0.03] p-3">
-                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Session</p>
-                <p className="mt-1 text-sm text-white">{userName}</p>
-                <p className="mt-1 text-xs text-slate-400">Role: {String(userRole)}</p>
-              </div>
-
-              <div className="rounded-lg border border-white/8 bg-white/[0.03] p-3">
-                <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-500">Pipeline</p>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                  {PIPELINE_ORDER.map((key) => (
-                    <div key={key} className="flex items-center justify-between">
-                      <span className="text-slate-400">{COLUMN_LABELS[key]}</span>
-                      <span className="text-white">{filteredColumns[key]?.cards.length || 0}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <button
+                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-400 transition hover:border-red-400/30 hover:text-red-300"
+                onClick={() => signOut({ callbackUrl: "/login" })}
+                type="button"
+              >
+                Sign out
+              </button>
             </div>
-
-            <button
-              className="mt-8 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-slate-300 transition hover:border-red-400/30 hover:text-red-300"
-              onClick={() => signOut({ callbackUrl: "/login" })}
-              type="button"
-            >
-              Sign out
-            </button>
           </aside>
         </div>
       )}
@@ -804,6 +776,55 @@ function DetailCell({ label, value, highlight }: { label: string; value: string;
       <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500">{label}</p>
       <p className={cn("mt-1 text-sm", highlight ? "font-semibold text-white" : "text-slate-200")}>{value}</p>
     </div>
+  )
+}
+
+/* ── Sidebar Section ─────────────────────────────────── */
+
+function SidebarSection({ title, children }: { title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(true)
+  return (
+    <div>
+      <button
+        className="flex w-full items-center justify-between rounded-lg px-3 py-2 transition hover:bg-white/5"
+        onClick={() => setOpen((p) => !p)}
+        type="button"
+      >
+        <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-slate-400">{title}</span>
+        <svg
+          className={cn("h-3.5 w-3.5 text-slate-500 transition-transform", open && "rotate-180")}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        >
+          <path d="M19 9l-7 7-7-7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+        </svg>
+      </button>
+      {open && <div className="mt-1 space-y-0.5 pl-1">{children}</div>}
+    </div>
+  )
+}
+
+function SidebarLink({ href, label, active, accent, onClick }: { href: string; label: string; active?: boolean; accent?: "emerald" | "cyan"; onClick: () => void }) {
+  const accentStyles = accent === "emerald"
+    ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-100 hover:bg-emerald-400/20"
+    : accent === "cyan"
+      ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-100 hover:bg-cyan-400/20"
+      : undefined
+
+  return (
+    <Link
+      className={cn(
+        "block rounded-lg px-3 py-2 text-sm transition",
+        accentStyles
+          ? cn("border font-medium", accentStyles)
+          : active
+            ? "bg-cyan-400/10 text-cyan-200 font-medium"
+            : "text-slate-300 hover:bg-white/5 hover:text-white",
+      )}
+      href={href}
+      onClick={onClick}
+    >
+      {label}
+    </Link>
   )
 }
 
