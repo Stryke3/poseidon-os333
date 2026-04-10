@@ -1,7 +1,7 @@
 FROM node:20.20.1-alpine3.23 AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-COPY scripts ./scripts
+COPY scripts/ ./scripts/
 RUN npm ci
 
 FROM node:20.20.1-alpine3.23 AS builder
