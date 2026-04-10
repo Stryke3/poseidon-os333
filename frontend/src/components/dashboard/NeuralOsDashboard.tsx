@@ -27,6 +27,7 @@ type SystemState = {
 }
 
 type BusinessLineId = "all" | "dme" | "implants" | "biologics" | "matia"
+type ActiveView = "pipeline" | "comms"
 
 const PIPELINE_ORDER = [
   "intake",
@@ -168,6 +169,7 @@ export default function NeuralOsDashboard({
   const [menuOpen, setMenuOpen] = useState(false)
   const [tridentOpen, setTridentOpen] = useState(false)
   const [activeBusinessLine, setActiveBusinessLine] = useState<BusinessLineId>(initialBusinessLine)
+  const [activeView, setActiveView] = useState<ActiveView>("pipeline")
   const [columns, setColumns] = useState(initialKanban)
   const [prompt, setPrompt] = useState("")
   const [tridentResponse, setTridentResponse] = useState("Ask about queue status, denials, or reimbursement risk.")
@@ -325,23 +327,36 @@ export default function NeuralOsDashboard({
             <kbd className="hidden rounded border border-white/10 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 sm:block">⌘F</kbd>
           </label>
 
-          {/* Business line tabs */}
+          {/* Business line tabs + Comms */}
           <div className="hidden items-center gap-1 lg:flex">
             {businessLineTabs.map((tab) => (
               <button
                 key={tab.id}
                 className={cn(
                   "rounded-md px-3 py-1.5 text-xs font-medium transition",
-                  activeBusinessLine === tab.id
+                  activeView === "pipeline" && activeBusinessLine === tab.id
                     ? "bg-cyan-400/15 text-cyan-200 border border-cyan-400/30"
                     : "text-slate-400 hover:text-white hover:bg-white/5 border border-transparent",
                 )}
-                onClick={() => setActiveBusinessLine(tab.id)}
+                onClick={() => { setActiveView("pipeline"); setActiveBusinessLine(tab.id) }}
                 type="button"
               >
                 {tab.label}
               </button>
             ))}
+            <div className="mx-1 h-4 w-px bg-white/10" />
+            <button
+              className={cn(
+                "rounded-md px-3 py-1.5 text-xs font-medium transition",
+                activeView === "comms"
+                  ? "bg-violet-400/15 text-violet-200 border border-violet-400/30"
+                  : "text-slate-400 hover:text-white hover:bg-white/5 border border-transparent",
+              )}
+              onClick={() => setActiveView("comms")}
+              type="button"
+            >
+              Comms
+            </button>
           </div>
 
           {/* Summary chips */}
@@ -401,23 +416,36 @@ export default function NeuralOsDashboard({
           </div>
         </div>
 
-        {/* Mobile business line tabs */}
+        {/* Mobile business line tabs + Comms */}
         <div className="flex items-center gap-1 overflow-x-auto border-t border-white/5 px-4 py-2 lg:hidden">
           {businessLineTabs.map((tab) => (
             <button
               key={tab.id}
               className={cn(
                 "whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition",
-                activeBusinessLine === tab.id
+                activeView === "pipeline" && activeBusinessLine === tab.id
                   ? "bg-cyan-400/15 text-cyan-200 border border-cyan-400/30"
                   : "text-slate-400 hover:text-white border border-transparent",
               )}
-              onClick={() => setActiveBusinessLine(tab.id)}
+              onClick={() => { setActiveView("pipeline"); setActiveBusinessLine(tab.id) }}
               type="button"
             >
               {tab.label}
             </button>
           ))}
+          <div className="mx-1 h-4 w-px bg-white/10" />
+          <button
+            className={cn(
+              "whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition",
+              activeView === "comms"
+                ? "bg-violet-400/15 text-violet-200 border border-violet-400/30"
+                : "text-slate-400 hover:text-white border border-transparent",
+            )}
+            onClick={() => setActiveView("comms")}
+            type="button"
+          >
+            Comms
+          </button>
         </div>
       </header>
 
@@ -533,74 +561,76 @@ export default function NeuralOsDashboard({
         </div>
       </div>
 
-      {/* ── Main Pipeline Grid ───────────────────── */}
-      <div className="mx-auto max-w-[2200px] px-4 py-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-          {PIPELINE_ORDER.map((columnId) => {
-            const col = filteredColumns[columnId]
-            const cards = col?.cards || []
-            const colValue = sumCardValues(cards)
+      {activeView === "pipeline" ? (
+        <>
+          {/* ── Main Pipeline Grid ───────────────────── */}
+          <div className="mx-auto max-w-[2200px] px-4 py-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              {PIPELINE_ORDER.map((columnId) => {
+                const col = filteredColumns[columnId]
+                const cards = col?.cards || []
+                const colValue = sumCardValues(cards)
 
-            return (
-              <section
-                key={columnId}
-                className={cn(
-                  "min-h-[200px] rounded-xl border bg-[rgba(255,255,255,0.025)] transition",
-                  COLUMN_COLORS[columnId],
-                  dragOverColumn === columnId && "bg-cyan-400/5 border-cyan-400/40",
-                )}
-                onDragOver={(e) => { e.preventDefault(); setDragOverColumn(columnId) }}
-                onDragLeave={() => setDragOverColumn(null)}
-                onDrop={(e) => { e.preventDefault(); handleDrop(columnId) }}
-              >
-                {/* Column header */}
-                <div className="flex items-center justify-between border-b border-white/5 px-3 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className={cn("h-2 w-2 rounded-full", COLUMN_DOT[columnId])} />
-                    <span className="text-xs font-semibold text-white">{COLUMN_LABELS[columnId]}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-[11px] text-slate-400">{cards.length}</span>
-                    {colValue > 0 && (
-                      <span className="font-mono text-[10px] text-slate-500">{formatCurrency(colValue)}</span>
+                return (
+                  <section
+                    key={columnId}
+                    className={cn(
+                      "min-h-[200px] rounded-xl border bg-[rgba(255,255,255,0.025)] transition",
+                      COLUMN_COLORS[columnId],
+                      dragOverColumn === columnId && "bg-cyan-400/5 border-cyan-400/40",
                     )}
-                  </div>
-                </div>
-
-                {/* Cards */}
-                <div className="space-y-2 p-2">
-                  {cards.map((card) => (
-                    <PatientCard
-                      key={card.id}
-                      card={card}
-                      columnId={columnId}
-                      expanded={expandedCard === card.id}
-                      onToggle={() => setExpandedCard(expandedCard === card.id ? null : card.id)}
-                      onDragStart={() => setDragging({ cardId: card.id, columnId })}
-                      onDragEnd={() => setDragging(null)}
-                    />
-                  ))}
-                  {cards.length === 0 && (
-                    <div className="py-8 text-center text-xs text-slate-600">
-                      No cases
+                    onDragOver={(e) => { e.preventDefault(); setDragOverColumn(columnId) }}
+                    onDragLeave={() => setDragOverColumn(null)}
+                    onDrop={(e) => { e.preventDefault(); handleDrop(columnId) }}
+                  >
+                    {/* Column header */}
+                    <div className="flex items-center justify-between border-b border-white/5 px-3 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className={cn("h-2 w-2 rounded-full", COLUMN_DOT[columnId])} />
+                        <span className="text-xs font-semibold text-white">{COLUMN_LABELS[columnId]}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[11px] text-slate-400">{cards.length}</span>
+                        {colValue > 0 && (
+                          <span className="font-mono text-[10px] text-slate-500">{formatCurrency(colValue)}</span>
+                        )}
+                      </div>
                     </div>
-                  )}
-                </div>
-              </section>
-            )
-          })}
-        </div>
-      </div>
 
-      <div className="mx-auto max-w-[2200px] border-t border-white/5 px-4 py-6">
-        <h2 className="mb-3 text-sm font-semibold text-white">Communications</h2>
-        <div className="rounded-lg border border-white/8 bg-[rgba(255,255,255,0.025)] p-4">
+                    {/* Cards */}
+                    <div className="space-y-2 p-2">
+                      {cards.map((card) => (
+                        <PatientCard
+                          key={card.id}
+                          card={card}
+                          columnId={columnId}
+                          expanded={expandedCard === card.id}
+                          onToggle={() => setExpandedCard(expandedCard === card.id ? null : card.id)}
+                          onDragStart={() => setDragging({ cardId: card.id, columnId })}
+                          onDragEnd={() => setDragging(null)}
+                        />
+                      ))}
+                      {cards.length === 0 && (
+                        <div className="py-8 text-center text-xs text-slate-600">
+                          No cases
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                )
+              })}
+            </div>
+          </div>
+        </>
+      ) : (
+        /* ── Communications View ────────────────────── */
+        <div className="mx-auto max-w-[2200px] px-4 py-6">
           <CommunicationsPanel
             initialItems={initialCommunications as ComponentProps<typeof CommunicationsPanel>["initialItems"]}
             integrations={initialIntegrations as ComponentProps<typeof CommunicationsPanel>["integrations"]}
           />
         </div>
-      </div>
+      )}
 
       <div
         className={cn(
