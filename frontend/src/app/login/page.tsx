@@ -52,6 +52,7 @@ function LoginContent() {
   const { data: session, status } = useSession()
   const callbackUrl = sanitizeCallbackUrl(searchParams.get("callbackUrl"))
   const authError = searchParams.get("error")
+  const sessionExpired = searchParams.get("session_expired") === "true"
 
   // Detect reset token in URL
   const resetTokenParam = searchParams.get("reset_token")
@@ -84,6 +85,12 @@ function LoginContent() {
   }, [effectiveResetToken])
 
   useEffect(() => {
+    if (sessionExpired && status === "authenticated") {
+      void signOut({ redirect: false })
+      setMessage("Your session expired. Sign in again.")
+      return
+    }
+
     if (view !== "login" || status !== "authenticated") return
 
     if (!session?.user?.accessToken) {
@@ -95,7 +102,7 @@ function LoginContent() {
     if (session.user.accessToken) {
       router.replace(callbackUrl)
     }
-  }, [callbackUrl, router, session?.user?.accessToken, status, view])
+  }, [callbackUrl, router, session?.user?.accessToken, sessionExpired, status, view])
 
   useEffect(() => {
     if (!authError || effectiveResetToken) return

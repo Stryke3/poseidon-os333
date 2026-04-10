@@ -958,7 +958,7 @@ export async function getLiveDashboardData() {
   if (!ordersRes || !ordersRes.ok) {
     const statusCode = ordersRes?.status
     if (statusCode === 401 || statusCode === 403) {
-      redirect("/login")
+      redirect("/login?session_expired=true")
     }
 
     console.warn(
