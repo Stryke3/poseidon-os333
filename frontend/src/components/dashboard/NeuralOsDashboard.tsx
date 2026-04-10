@@ -291,49 +291,71 @@ export default function NeuralOsDashboard({
   return (
     <div className="min-h-screen text-white">
       {/* ── Top Bar ──────────────────────────────── */}
-      <header className="sticky top-0 z-40 border-b border-white/8 bg-[rgba(8,16,28,0.92)] backdrop-blur-xl">
-        <div className="mx-auto flex max-w-[2200px] items-center gap-4 px-4 py-3">
-          {/* Hamburger */}
+      <header className="sticky top-0 z-40 bg-[rgba(8,16,28,0.92)] backdrop-blur-xl">
+        {/* Row 1: Title, search, actions */}
+        <div className="mx-auto flex max-w-[2200px] items-center gap-4 px-4 py-2.5">
           <button
-            className="flex h-10 w-10 flex-col items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 transition hover:border-cyan-300/30 hover:bg-white/10"
+            className="flex h-9 w-9 flex-col items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 transition hover:border-cyan-300/30 hover:bg-white/10"
             onClick={() => setMenuOpen(true)}
             type="button"
             aria-label="Open menu"
           >
-            <span className="block h-0.5 w-5 rounded-full bg-slate-300" />
-            <span className="block h-0.5 w-5 rounded-full bg-slate-300" />
-            <span className="block h-0.5 w-5 rounded-full bg-slate-300" />
+            <span className="block h-0.5 w-4 rounded-full bg-slate-300" />
+            <span className="block h-0.5 w-4 rounded-full bg-slate-300" />
+            <span className="block h-0.5 w-4 rounded-full bg-slate-300" />
           </button>
 
-          {/* Title */}
-          <div className="mr-4 hidden sm:block">
-            <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-slate-500">Poseidon</p>
+          <div className="mr-2 hidden sm:block">
+            <p className="font-mono text-[9px] uppercase tracking-[0.3em] text-slate-500">Poseidon</p>
             <p className="text-sm font-semibold text-white">Operations Deck</p>
           </div>
 
-          {/* Search */}
-          <label className="flex flex-1 max-w-xl items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 transition focus-within:border-cyan-300/40 focus-within:bg-white/8">
-            <svg className="h-4 w-4 flex-shrink-0 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <label className="flex flex-1 max-w-md items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 transition focus-within:border-cyan-300/40 focus-within:bg-white/8">
+            <svg className="h-3.5 w-3.5 flex-shrink-0 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
             </svg>
             <input
               id="poseidon-search"
               className="w-full bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search patient, payer, HCPCS, order..."
+              placeholder="Search patient, payer, order..."
               type="search"
               value={search}
             />
             <kbd className="hidden rounded border border-white/10 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 sm:block">⌘F</kbd>
           </label>
 
-          {/* Business line tabs + Comms */}
-          <div className="hidden items-center gap-1 lg:flex">
+          <div className="flex items-center gap-2">
+            <Link className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-xs font-medium text-cyan-100 transition hover:bg-cyan-400/20" href="/fax">Fax</Link>
+            <Link className="rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-100 transition hover:bg-emerald-400/20" href="/intake/new">New Patient</Link>
+            <button
+              className={cn(
+                "rounded-lg border px-3 py-1.5 text-xs font-medium transition",
+                tridentOpen ? "border-cyan-400/30 bg-cyan-400/15 text-cyan-200" : "border-white/10 bg-white/5 text-slate-300 hover:text-white",
+              )}
+              onClick={() => setTridentOpen((p) => !p)}
+              type="button"
+            >
+              Trident AI
+            </button>
+          </div>
+
+          <div className="hidden items-center gap-2 md:flex">
+            <div className="text-right">
+              <p className="text-xs font-medium text-white">{userName}</p>
+              <p className="font-mono text-[10px] text-slate-500">{String(userRole)}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Row 2: View tabs + summary chips */}
+        <div className="border-t border-white/5 border-b border-b-white/8">
+          <div className="mx-auto flex max-w-[2200px] items-center gap-1 overflow-x-auto px-4 py-1.5">
             {businessLineTabs.map((tab) => (
               <button
                 key={tab.id}
                 className={cn(
-                  "rounded-md px-3 py-1.5 text-xs font-medium transition",
+                  "whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition",
                   activeView === "pipeline" && activeBusinessLine === tab.id
                     ? "bg-cyan-400/15 text-cyan-200 border border-cyan-400/30"
                     : "text-slate-400 hover:text-white hover:bg-white/5 border border-transparent",
@@ -344,10 +366,10 @@ export default function NeuralOsDashboard({
                 {tab.label}
               </button>
             ))}
-            <div className="mx-1 h-4 w-px bg-white/10" />
+            <div className="mx-1.5 h-4 w-px bg-white/10" />
             <button
               className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-medium transition",
+                "whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition",
                 activeView === "comms"
                   ? "bg-violet-400/15 text-violet-200 border border-violet-400/30"
                   : "text-slate-400 hover:text-white hover:bg-white/5 border border-transparent",
@@ -357,95 +379,14 @@ export default function NeuralOsDashboard({
             >
               Comms
             </button>
-          </div>
 
-          {/* Summary chips */}
-          <div className="hidden items-center gap-3 xl:flex">
-            <span className="rounded-md bg-white/5 px-2 py-1 font-mono text-[11px] text-slate-300">
-              {totalCards} cases
-            </span>
-            <span className="rounded-md bg-white/5 px-2 py-1 font-mono text-[11px] text-slate-300">
-              {formatCurrency(totalValue)}
-            </span>
-            {urgentCards > 0 && (
-              <span className="rounded-md bg-red-400/15 px-2 py-1 font-mono text-[11px] text-red-300">
-                {urgentCards} urgent
-              </span>
-            )}
-            {blockedCards > 0 && (
-              <span className="rounded-md bg-amber-400/15 px-2 py-1 font-mono text-[11px] text-amber-300">
-                {blockedCards} blocked
-              </span>
-            )}
-          </div>
-
-          <Link
-            className="rounded-lg border border-cyan-400/30 bg-cyan-400/12 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/50 hover:bg-cyan-400/20 hover:text-white"
-            href="/fax"
-          >
-            Fax
-          </Link>
-
-          <Link
-            className="rounded-lg border border-emerald-400/30 bg-emerald-400/12 px-3 py-2 text-xs font-medium text-emerald-100 transition hover:border-emerald-300/50 hover:bg-emerald-400/20 hover:text-white"
-            href="/intake/new"
-          >
-            New Patient
-          </Link>
-
-          {/* Trident toggle */}
-          <button
-            className={cn(
-              "rounded-lg border px-3 py-2 text-xs font-medium transition",
-              tridentOpen
-                ? "border-cyan-400/30 bg-cyan-400/15 text-cyan-200"
-                : "border-white/10 bg-white/5 text-slate-300 hover:text-white hover:border-cyan-300/30",
-            )}
-            onClick={() => setTridentOpen((p) => !p)}
-            type="button"
-          >
-            Trident AI
-          </button>
-
-          {/* User */}
-          <div className="hidden items-center gap-2 md:flex">
-            <div className="text-right">
-              <p className="text-xs font-medium text-white">{userName}</p>
-              <p className="font-mono text-[10px] text-slate-500">{String(userRole)}</p>
+            <div className="ml-auto hidden items-center gap-2 sm:flex">
+              <span className="rounded-md bg-white/5 px-2 py-1 font-mono text-[11px] text-slate-400">{totalCards} cases</span>
+              <span className="rounded-md bg-white/5 px-2 py-1 font-mono text-[11px] text-slate-400">{formatCurrency(totalValue)}</span>
+              {urgentCards > 0 && <span className="rounded-md bg-red-400/15 px-2 py-1 font-mono text-[11px] text-red-300">{urgentCards} urgent</span>}
+              {blockedCards > 0 && <span className="rounded-md bg-amber-400/15 px-2 py-1 font-mono text-[11px] text-amber-300">{blockedCards} blocked</span>}
             </div>
           </div>
-        </div>
-
-        {/* Mobile business line tabs + Comms */}
-        <div className="flex items-center gap-1 overflow-x-auto border-t border-white/5 px-4 py-2 lg:hidden">
-          {businessLineTabs.map((tab) => (
-            <button
-              key={tab.id}
-              className={cn(
-                "whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition",
-                activeView === "pipeline" && activeBusinessLine === tab.id
-                  ? "bg-cyan-400/15 text-cyan-200 border border-cyan-400/30"
-                  : "text-slate-400 hover:text-white border border-transparent",
-              )}
-              onClick={() => { setActiveView("pipeline"); setActiveBusinessLine(tab.id) }}
-              type="button"
-            >
-              {tab.label}
-            </button>
-          ))}
-          <div className="mx-1 h-4 w-px bg-white/10" />
-          <button
-            className={cn(
-              "whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition",
-              activeView === "comms"
-                ? "bg-violet-400/15 text-violet-200 border border-violet-400/30"
-                : "text-slate-400 hover:text-white border border-transparent",
-            )}
-            onClick={() => setActiveView("comms")}
-            type="button"
-          >
-            Comms
-          </button>
         </div>
       </header>
 
