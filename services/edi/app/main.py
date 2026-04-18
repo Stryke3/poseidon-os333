@@ -15,13 +15,16 @@ Routes:
   /api/v1/sftp/*         — SFTP mailbox management (list, download 835s)
   /health                — Service health check
 """
+from __future__ import annotations
+
 import os
 import logging
 from contextlib import asynccontextmanager
+from typing import Optional
 
 import uuid
 
-from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import get_pool, close_pool
@@ -142,35 +145,52 @@ async def list_sftp_mailbox():
 
 
 @sftp_router.post("/poll-835")
-async def poll_835_files():
-    """Download new 835 ERA files from Availity SFTP mailbox."""
-    from app.parsers.era_835 import parse_835_x12
-    from app.database import get_db_transaction, audit_log, to_json
+async def poll_835_files(
+    org_id: Optional[str] = Query(
+        None,
+        description="Organization UUID for remittance_batches; falls back to EDI_DEFAULT_ORG_ID",
+    ),
+):
+    """Download new 835 ERA files from Availity SFTP mailbox and persist like /remittance/upload."""
+    from app.routers.remittance_835 import persist_835_x12_string
+
+    resolved = (org_id or "").strip() or os.getenv("EDI_DEFAULT_ORG_ID", "").strip()
+    if not resolved:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide org_id query param or set EDI_DEFAULT_ORG_ID for remittance persistence.",
+        )
+    try:
+        org_uuid = uuid.UUID(resolved)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid org_id UUID")
 
     era_files = await availity_sftp.download_new_835s()
     if not era_files:
-        return {"message": "No new 835 files found", "files_processed": 0}
+        return {"message": "No new 835 files found", "files_processed": 0, "results": []}
 
     results = []
     for ef in era_files:
         try:
-            parsed = parse_835_x12(ef["content"])
-            results.append({
-                "filename": ef["filename"],
-                "claims": parsed["summary"]["total_claims"],
-                "paid": parsed["summary"]["total_paid"],
-                "denials": parsed["summary"]["total_denied"],
-                "status": "parsed",
-            })
+            out = await persist_835_x12_string(
+                org_uuid,
+                ef.get("filename") or "sftp.835",
+                "availity_sftp_poll",
+                ef.get("content") or "",
+            )
+            results.append({"filename": ef.get("filename"), **out})
         except Exception as e:
-            results.append({
-                "filename": ef["filename"],
-                "status": "error",
-                "error": str(e)[:200],
-            })
+            results.append(
+                {
+                    "filename": ef.get("filename"),
+                    "status": "error",
+                    "error": str(e)[:200],
+                }
+            )
 
     return {
         "files_processed": len(era_files),
+        "org_id": resolved,
         "results": results,
     }
 

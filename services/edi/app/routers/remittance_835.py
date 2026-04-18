@@ -3,6 +3,7 @@ POSEIDON EDI Service — 835 Inbound Remittance Routes
 
 Endpoints:
   POST /api/v1/remittance/upload          — Upload 835 EDI file or PDF EOB
+  POST /api/v1/remittance/poll-stedi-835  — Fetch Stedi 835 reports, persist (idempotent)
   POST /api/v1/remittance/parse-raw       — Parse raw X12 835 string
   GET  /api/v1/remittance/batches         — List remittance batches
   GET  /api/v1/remittance/batch/{id}      — Get batch detail with claims
@@ -10,6 +11,8 @@ Endpoints:
   GET  /api/v1/remittance/denials         — Denial worklist from remittance
   GET  /api/v1/remittance/stats           — Remittance KPIs
 """
+from __future__ import annotations
+
 import io
 import json
 import logging
@@ -20,6 +23,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
+from app.clients.stedi import stedi_client
 from app.database import get_db, get_db_transaction, audit_log, to_json
 from app.deps import require_edi_caller
 from app.parsers.era_835 import parse_835_x12, classify_carc
@@ -30,6 +34,258 @@ router = APIRouter(
     tags=["835 Remittance"],
     dependencies=[Depends(require_edi_caller)],
 )
+
+
+async def _existing_batch_by_icn(conn, org_uuid: _uuid.UUID, icn: Optional[str]):
+    if not icn or not str(icn).strip():
+        return None
+    row = await conn.fetchrow(
+        """
+        SELECT id FROM remittance_batches
+        WHERE org_id = $1 AND interchange_control_num = $2
+        LIMIT 1
+        """,
+        org_uuid,
+        str(icn).strip(),
+    )
+    return row["id"] if row else None
+
+
+async def persist_parsed_835_in_transaction(
+    conn,
+    org_uuid: _uuid.UUID,
+    filename: str,
+    source: str,
+    content_str: str,
+    parsed: dict,
+    *,
+    skip_duplicate_icn: bool = True,
+    stedi_transaction_id: Optional[str] = None,
+) -> dict:
+    """
+    Insert remittance_batches + claims + adjustments + service lines (same as upload).
+    If skip_duplicate_icn and interchange_control_num already exists for org, returns duplicate.
+    """
+    header = parsed.get("header", {})
+    claims = parsed.get("claims", [])
+    if not claims:
+        return {"status": "no_claims", "message": "No claims found in 835"}
+
+    icn = header.get("interchange_control_num")
+    if skip_duplicate_icn and icn:
+        existing = await _existing_batch_by_icn(conn, org_uuid, icn)
+        if existing:
+            return {
+                "status": "duplicate",
+                "batch_id": str(existing),
+                "interchange_control_num": icn,
+                "filename": filename,
+            }
+
+    batch_id = await conn.fetchval(
+        """
+        INSERT INTO remittance_batches
+            (org_id, filename, source, file_format, raw_x12_inbound,
+             interchange_control_num, payer_name, payer_id_code,
+             check_number, check_date, total_paid,
+             status, claim_count, parsed_at)
+        VALUES ($1, $2, $3, '835', $4, $5, $6, $7, $8, $9::DATE, $10,
+                'parsed', $11, NOW())
+        RETURNING id
+        """,
+        org_uuid,
+        filename,
+        source,
+        content_str,
+        icn,
+        header.get("payer_name"),
+        header.get("payer_id_code"),
+        header.get("check_number"),
+        header.get("check_date"),
+        float(header.get("total_paid", 0)),
+        len(claims),
+    )
+
+    denial_count = 0
+    for claim in claims:
+        pcn = claim.get("patient_control_number", "")
+        resolved_order_id = await _resolve_order_uuid(pcn, conn)
+
+        submission_id = None
+        if resolved_order_id:
+            submission_id = await conn.fetchval(
+                "SELECT id FROM claim_submissions WHERE order_id=$1 ORDER BY created_at DESC LIMIT 1",
+                resolved_order_id,
+            )
+
+        rc_id = await conn.fetchval(
+            """
+            INSERT INTO remittance_claims
+                (batch_id, org_id, patient_control_number, order_id,
+                 claim_submission_id, payer_claim_number,
+                 claim_status_code, billed_amount, paid_amount,
+                 patient_responsibility, filing_indicator,
+                 patient_last_name, patient_first_name, patient_member_id,
+                 rendering_npi, service_date_start, service_date_end,
+                 is_denial, is_partial_pay, is_reversal)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::DATE,$17::DATE,$18,$19,$20)
+            RETURNING id
+            """,
+            batch_id,
+            org_uuid,
+            pcn,
+            resolved_order_id,
+            submission_id,
+            claim.get("payer_claim_number"),
+            claim.get("claim_status_code"),
+            float(claim.get("billed_amount", 0)),
+            float(claim.get("paid_amount", 0)),
+            float(claim.get("patient_responsibility", 0)),
+            claim.get("filing_indicator"),
+            claim.get("patient", {}).get("last_name"),
+            claim.get("patient", {}).get("first_name"),
+            claim.get("patient", {}).get("member_id"),
+            claim.get("provider_npi"),
+            claim.get("service_date_start"),
+            claim.get("service_date_end"),
+            claim.get("is_denial", False),
+            claim.get("is_partial_pay", False),
+            claim.get("is_reversal", False),
+        )
+
+        if claim.get("is_denial"):
+            denial_count += 1
+
+        for adj in claim.get("adjustments", []):
+            await conn.execute(
+                """
+                INSERT INTO remittance_adjustments
+                    (remittance_claim_id, adjustment_group, carc_code,
+                     rarc_code, adjustment_amount, adjustment_quantity,
+                     denial_category, is_actionable, suggested_action)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                """,
+                rc_id,
+                adj.get("adjustment_group"),
+                adj.get("carc_code"),
+                adj.get("rarc_code"),
+                float(adj.get("adjustment_amount", 0)),
+                adj.get("adjustment_quantity"),
+                adj.get("denial_category"),
+                adj.get("is_actionable", True),
+                adj.get("suggested_action"),
+            )
+
+        for svc in claim.get("service_lines", []):
+            await conn.execute(
+                """
+                INSERT INTO remittance_service_lines
+                    (remittance_claim_id, hcpcs_code, modifier,
+                     billed_amount, paid_amount, allowed_amount,
+                     deductible, coinsurance, copay,
+                     units_billed, units_paid)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                """,
+                rc_id,
+                svc.get("hcpcs_code"),
+                svc.get("modifier"),
+                float(svc.get("billed_amount", 0)),
+                float(svc.get("paid_amount", 0)),
+                float(svc.get("allowed_amount", 0)) if svc.get("allowed_amount") else None,
+                float(svc.get("deductible", 0)) if svc.get("deductible") else None,
+                float(svc.get("coinsurance", 0)) if svc.get("coinsurance") else None,
+                float(svc.get("copay", 0)) if svc.get("copay") else None,
+                svc.get("units_billed"),
+                svc.get("units_paid"),
+            )
+
+        if resolved_order_id:
+            new_status = (
+                "denied"
+                if claim.get("is_denial")
+                else "paid"
+                if float(claim.get("paid_amount", 0)) > 0
+                else "adjudicated"
+            )
+            await conn.execute(
+                "UPDATE orders SET claim_status=$2, updated_at=NOW() WHERE id=$1",
+                resolved_order_id,
+                new_status,
+            )
+
+    await audit_log(
+        conn,
+        "remittance_batch",
+        batch_id,
+        "parsed",
+        new_status="parsed",
+        details={
+            "claims": len(claims),
+            "denials": denial_count,
+            "filename": filename,
+            "source": source,
+        },
+    )
+
+    if stedi_transaction_id and str(stedi_transaction_id).strip():
+        await conn.execute(
+            """
+            INSERT INTO stedi_835_import_ids (stedi_transaction_id, batch_id)
+            VALUES ($1, $2)
+            ON CONFLICT (stedi_transaction_id) DO NOTHING
+            """,
+            str(stedi_transaction_id).strip(),
+            batch_id,
+        )
+
+    return {
+        "status": "parsed",
+        "batch_id": str(batch_id),
+        "denial_count": denial_count,
+        "summary": parsed.get("summary", {}),
+        "payer": header.get("payer_name"),
+        "check_number": header.get("check_number"),
+    }
+
+
+async def persist_835_x12_string(
+    org_uuid: _uuid.UUID,
+    filename: str,
+    source: str,
+    content_str: str,
+    *,
+    stedi_transaction_id: Optional[str] = None,
+) -> dict:
+    """
+    Parse X12 835 and persist in one transaction. Used by SFTP poll and Stedi import.
+    """
+    content_str = content_str or ""
+    is_835 = (
+        content_str.strip().startswith("ISA")
+        or "~CLP*" in content_str
+        or "*HP*" in content_str
+    )
+    if not is_835:
+        return {"status": "not_835", "filename": filename, "message": "Content is not 835 X12"}
+
+    parsed = parse_835_x12(content_str)
+    async with get_db_transaction() as conn:
+        result = await persist_parsed_835_in_transaction(
+            conn,
+            org_uuid,
+            filename,
+            source,
+            content_str,
+            parsed,
+            stedi_transaction_id=stedi_transaction_id,
+        )
+    if result.get("status") == "parsed" and result.get("denial_count", 0) > 0:
+        log.info(
+            "Batch %s: %s denials queued for Trident training",
+            result.get("batch_id"),
+            result["denial_count"],
+        )
+    return result
 
 
 # ─── UPLOAD & PARSE 835 FILE ────────────────────────────────────────────────
@@ -59,150 +315,42 @@ async def upload_remittance(
 
     # Parse
     parsed = parse_835_x12(content_str)
-    header = parsed.get("header", {})
-    claims = parsed.get("claims", [])
 
-    if not claims:
+    if not parsed.get("claims"):
         raise HTTPException(400, "No claims found in 835 file")
 
-    # Store batch + claims + adjustments + service lines
     async with get_db_transaction() as conn:
-        batch_id = await conn.fetchval("""
-            INSERT INTO remittance_batches
-                (org_id, filename, source, file_format, raw_x12_inbound,
-                 interchange_control_num, payer_name, payer_id_code,
-                 check_number, check_date, total_paid,
-                 status, claim_count, parsed_at)
-            VALUES ($1, $2, $3, '835', $4, $5, $6, $7, $8, $9::DATE, $10,
-                    'parsed', $11, NOW())
-            RETURNING id
-        """,
+        out = await persist_parsed_835_in_transaction(
+            conn,
             org_uuid,
-            file.filename,
+            file.filename or "upload.edi",
             source,
             content_str,
-            header.get("interchange_control_num"),
-            header.get("payer_name"),
-            header.get("payer_id_code"),
-            header.get("check_number"),
-            header.get("check_date"),
-            float(header.get("total_paid", 0)),
-            len(claims),
+            parsed,
         )
 
-        denial_count = 0
-        for claim in claims:
-            pcn = claim.get("patient_control_number", "")
-            resolved_order_id = await _resolve_order_uuid(pcn, conn)
+    if out.get("status") == "duplicate":
+        return {
+            "batch_id": out["batch_id"],
+            "filename": file.filename,
+            "status": "duplicate",
+            "message": "Interchange control number already imported for this org",
+        }
 
-            # Look up claim_submission if exists
-            submission_id = None
-            if resolved_order_id:
-                submission_id = await conn.fetchval(
-                    "SELECT id FROM claim_submissions WHERE order_id=$1 ORDER BY created_at DESC LIMIT 1",
-                    resolved_order_id,
-                )
+    if out.get("status") != "parsed":
+        raise HTTPException(400, out.get("message", "Persist failed"))
 
-            rc_id = await conn.fetchval("""
-                INSERT INTO remittance_claims
-                    (batch_id, org_id, patient_control_number, order_id,
-                     claim_submission_id, payer_claim_number,
-                     claim_status_code, billed_amount, paid_amount,
-                     patient_responsibility, filing_indicator,
-                     patient_last_name, patient_first_name, patient_member_id,
-                     rendering_npi, service_date_start, service_date_end,
-                     is_denial, is_partial_pay, is_reversal)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::DATE,$17::DATE,$18,$19,$20)
-                RETURNING id
-            """,
-                batch_id, org_uuid, pcn, resolved_order_id,
-                submission_id, claim.get("payer_claim_number"),
-                claim.get("claim_status_code"), float(claim.get("billed_amount", 0)),
-                float(claim.get("paid_amount", 0)), float(claim.get("patient_responsibility", 0)),
-                claim.get("filing_indicator"),
-                claim.get("patient", {}).get("last_name"),
-                claim.get("patient", {}).get("first_name"),
-                claim.get("patient", {}).get("member_id"),
-                claim.get("provider_npi"),
-                claim.get("service_date_start"),
-                claim.get("service_date_end"),
-                claim.get("is_denial", False),
-                claim.get("is_partial_pay", False),
-                claim.get("is_reversal", False),
-            )
-
-            if claim.get("is_denial"):
-                denial_count += 1
-
-            # Store adjustments
-            for adj in claim.get("adjustments", []):
-                await conn.execute("""
-                    INSERT INTO remittance_adjustments
-                        (remittance_claim_id, adjustment_group, carc_code,
-                         rarc_code, adjustment_amount, adjustment_quantity,
-                         denial_category, is_actionable, suggested_action)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-                """,
-                    rc_id,
-                    adj.get("adjustment_group"),
-                    adj.get("carc_code"),
-                    adj.get("rarc_code"),
-                    float(adj.get("adjustment_amount", 0)),
-                    adj.get("adjustment_quantity"),
-                    adj.get("denial_category"),
-                    adj.get("is_actionable", True),
-                    adj.get("suggested_action"),
-                )
-
-            # Store service lines
-            for svc in claim.get("service_lines", []):
-                await conn.execute("""
-                    INSERT INTO remittance_service_lines
-                        (remittance_claim_id, hcpcs_code, modifier,
-                         billed_amount, paid_amount, allowed_amount,
-                         deductible, coinsurance, copay,
-                         units_billed, units_paid)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-                """,
-                    rc_id,
-                    svc.get("hcpcs_code"),
-                    svc.get("modifier"),
-                    float(svc.get("billed_amount", 0)),
-                    float(svc.get("paid_amount", 0)),
-                    float(svc.get("allowed_amount", 0)) if svc.get("allowed_amount") else None,
-                    float(svc.get("deductible", 0)) if svc.get("deductible") else None,
-                    float(svc.get("coinsurance", 0)) if svc.get("coinsurance") else None,
-                    float(svc.get("copay", 0)) if svc.get("copay") else None,
-                    svc.get("units_billed"),
-                    svc.get("units_paid"),
-                )
-
-            # Update order claim_status if we resolved it
-            if resolved_order_id:
-                new_status = "denied" if claim.get("is_denial") else "paid" if float(claim.get("paid_amount", 0)) > 0 else "adjudicated"
-                await conn.execute(
-                    "UPDATE orders SET claim_status=$2, updated_at=NOW() WHERE id=$1",
-                    resolved_order_id, new_status,
-                )
-
-        await audit_log(conn, "remittance_batch", batch_id, "parsed",
-                        new_status="parsed",
-                        details={
-                            "claims": len(claims),
-                            "denials": denial_count,
-                            "filename": file.filename,
-                        })
-
+    denial_count = out.get("denial_count", 0)
     if denial_count > 0:
-        log.info(f"Batch {batch_id}: {denial_count} denials queued for Trident training")
+        log.info(f"Batch {out['batch_id']}: {denial_count} denials queued for Trident training")
 
     return {
-        "batch_id": str(batch_id),
+        "batch_id": out["batch_id"],
         "filename": file.filename,
         "status": "parsed",
-        "summary": parsed["summary"],
-        "payer": header.get("payer_name"),
-        "check_number": header.get("check_number"),
+        "summary": out.get("summary", {}),
+        "payer": out.get("payer"),
+        "check_number": out.get("check_number"),
         "denials_found": denial_count,
     }
 
@@ -214,6 +362,167 @@ async def parse_raw_835(content: str = Form(...)):
     """Parse raw X12 835 string without storing. For testing/preview."""
     parsed = parse_835_x12(content)
     return parsed
+
+
+def _extract_x12_from_stedi_835_report(rep: dict) -> Optional[str]:
+    """Best-effort: Stedi 835 report JSON may nest raw X12 under several keys."""
+    if not rep or not isinstance(rep, dict):
+        return None
+    for key in ("x12", "rawX12", "raw_x12", "edi", "payload", "data"):
+        v = rep.get(key)
+        if isinstance(v, str) and v.strip().startswith("ISA"):
+            return v
+    nested_keys = ("report", "remittance", "835", "era", "output", "transaction")
+    for nk in nested_keys:
+        sub = rep.get(nk)
+        if isinstance(sub, dict):
+            found = _extract_x12_from_stedi_835_report(sub)
+            if found:
+                return found
+        if isinstance(sub, str) and sub.strip().startswith("ISA"):
+            return sub
+    return None
+
+
+@router.post("/poll-stedi-835")
+async def poll_stedi_835_remittance(
+    org_id: str = Query(..., description="Organization UUID stored on remittance_batches"),
+    max_submissions: int = Query(50, ge=1, le=200),
+    also_poll_transactions: bool = Query(
+        False,
+        description="If true, also call Stedi /polling/transactions once (optional cursor)",
+    ),
+    poll_cursor: Optional[str] = Query(None, alias="cursor"),
+):
+    """
+    Pull 835 ERAs from Stedi for claim submissions we originated (stedi_api), persist like /upload.
+    Idempotent per Stedi transaction id (stedi_835_import_ids).
+
+    Schedule via cron / Kubernetes CronJob / your scheduler, e.g. every 15–30 minutes:
+      POST /api/v1/remittance/poll-stedi-835?org_id=<uuid>&max_submissions=50
+    """
+    org_uuid = _uuid.UUID(org_id)
+    results: list[dict] = []
+    next_cursor: Optional[str] = None
+
+    async with get_db() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT t.tid
+            FROM (
+                SELECT cs.stedi_transaction_id AS tid, MAX(cs.submitted_at) AS mx
+                FROM claim_submissions cs
+                WHERE cs.stedi_transaction_id IS NOT NULL
+                  AND TRIM(cs.stedi_transaction_id) <> ''
+                  AND cs.submission_method = 'stedi_api'
+                  AND cs.submitted_at > NOW() - INTERVAL '400 days'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM stedi_835_import_ids s
+                      WHERE s.stedi_transaction_id = cs.stedi_transaction_id
+                  )
+                GROUP BY cs.stedi_transaction_id
+            ) t
+            ORDER BY t.mx DESC
+            LIMIT $1
+            """,
+            max_submissions,
+        )
+        pending_tids = [r["tid"] for r in rows]
+
+    for tid in pending_tids:
+        entry: dict = {"stedi_transaction_id": tid, "status": "skipped"}
+        try:
+            rep = await stedi_client.get_835_report(str(tid))
+            if not rep:
+                entry["status"] = "no_report_yet"
+                results.append(entry)
+                continue
+            raw = _extract_x12_from_stedi_835_report(rep)
+            if not raw:
+                entry["status"] = "no_x12_in_report"
+                entry["keys"] = list(rep.keys())[:20]
+                results.append(entry)
+                continue
+            out = await persist_835_x12_string(
+                org_uuid,
+                f"stedi-{tid}.835",
+                "stedi_api_poll",
+                raw,
+                stedi_transaction_id=str(tid),
+            )
+            entry.update(out)
+            results.append(entry)
+        except Exception as e:
+            log.warning("Stedi 835 poll failed for %s: %s", tid, e)
+            entry["status"] = "error"
+            entry["error"] = str(e)[:300]
+            results.append(entry)
+
+    if also_poll_transactions:
+        try:
+            polled = await stedi_client.poll_transactions(poll_cursor)
+        except Exception as e:
+            results.append({"poll_transactions": "error", "error": str(e)[:300]})
+            polled = None
+        if polled and isinstance(polled, dict):
+            next_cursor = polled.get("nextCursor") or polled.get("next_cursor")
+            txs = (
+                polled.get("transactions")
+                or polled.get("items")
+                or polled.get("data")
+                or []
+            )
+            if isinstance(txs, dict):
+                txs = list(txs.values()) if txs else []
+            cap = min(25, max_submissions)
+            for tx in txs[:cap]:
+                if not isinstance(tx, dict):
+                    continue
+                tx_id = (
+                    tx.get("transactionId")
+                    or tx.get("transaction_id")
+                    or tx.get("id")
+                )
+                if not tx_id:
+                    continue
+                try:
+                    async with get_db() as conn:
+                        exists = await conn.fetchval(
+                            "SELECT 1 FROM stedi_835_import_ids WHERE stedi_transaction_id=$1",
+                            str(tx_id),
+                        )
+                    if exists:
+                        continue
+                    rep = await stedi_client.get_835_report(str(tx_id))
+                    if not rep:
+                        continue
+                    raw = _extract_x12_from_stedi_835_report(rep)
+                    if not raw:
+                        continue
+                    out = await persist_835_x12_string(
+                        org_uuid,
+                        f"stedi-poll-{tx_id}.835",
+                        "stedi_transactions_poll",
+                        raw,
+                        stedi_transaction_id=str(tx_id),
+                    )
+                    results.append({"stedi_transaction_id": tx_id, **out, "via": "poll_transactions"})
+                except Exception as e:
+                    results.append(
+                        {
+                            "stedi_transaction_id": tx_id,
+                            "via": "poll_transactions",
+                            "status": "error",
+                            "error": str(e)[:300],
+                        }
+                    )
+
+    return {
+        "org_id": org_id,
+        "submission_sweep_count": len(pending_tids),
+        "results": results,
+        "next_poll_cursor": next_cursor,
+    }
 
 
 # ─── AUTO-POST PAYMENTS ─────────────────────────────────────────────────────

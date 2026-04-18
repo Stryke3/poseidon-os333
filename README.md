@@ -36,37 +36,41 @@ Revenue cycle + relationship management with full patient record (demographics, 
 
 AI (Claude) code shortcuts for this project: see [.cursor/CURSOR_SHORTCUTS.md](.cursor/CURSOR_SHORTCUTS.md). Quick ref: **Chat** `Cmd+L` / `Ctrl+L`, **Inline edit** `Cmd+K` / `Ctrl+K`, **Composer** `Cmd+I` / `Ctrl+I`.
 
-## Deployment Model
+## Deployment model
 
-This repository is now GitHub + Render first.
+**Canonical full stack:** [docker-compose.yml](docker-compose.yml) — Postgres, Redis, MinIO, Core, Trident, Intake, ML, EDI, Availity, Dashboard, and nginx on one machine (typically your office server or a single VM).
 
-- Application code lives in GitHub and deploys through [render.yaml](/Volumes/WORKSPACE/poseidon%202/render.yaml).
-- Backend services receive `DATABASE_URL`, `REDIS_URL`, and other runtime secrets from Render-managed service settings.
-- Do not treat local Docker Compose as the canonical production environment or as the source of truth for database connectivity.
+- **Secrets:** live in your root `.env` (never commit real `.env`). Start from [.env.template](.env.template).
+- **Optional cloud:** you can still point `DATABASE_URL` / `REDIS_URL` at managed providers; the codebase does not require any specific hoster.
 
-## Quick Start
+## Quick start (local full stack)
 
 ```bash
-# 1. Clone and configure
+# 1. Configure
 cp .env.template .env
-# Edit local-only values if you are running pieces of the stack in development.
-# Production secrets should live in Render, not in checked-in files.
+# Edit .env — at minimum set NEXTAUTH_SECRET and JWT-related secrets for anything beyond local defaults.
 
-# 2. Validate the repo before shipping
+# 2. Validate builds (frontend production build, Python compile, compose config)
 bash scripts/verify_deploy_readiness.sh
+
+# 3. Run everything
+bash scripts/docker-up.sh
+# Dashboard (via nginx): http://localhost/   — Core: http://127.0.0.1:8001/ready
 ```
 
-For production verification, use the Render dashboard, Render logs, and the live service URLs defined in [render.yaml](/Volumes/WORKSPACE/poseidon%202/render.yaml). The backend `DATABASE_URL` values are intentionally managed per service in Render rather than by local Compose.
+Destructive reset (wipes Compose volumes including the local DB): `bash scripts/hard_boot.sh`
 
-## Mobile build & Firestarter deploy
+## Mobile build & optional edge deploy
 
-The dashboard is **mobile-friendly** (responsive layout, touch-friendly kanban, safe-area support). To deploy as a static site (e.g. **Vercel** or **Firebase** / Firestarter), see **[firestarter/README.md](firestarter/README.md)**. Use `frontend/` as the deploy root; `firebase.json` and `frontend/vercel.json` are preconfigured.
+The dashboard is **mobile-friendly** (responsive layout, touch-friendly kanban, safe-area support). **Production by default:** ship it with **Docker Compose + nginx** (same as the rest of the stack). For go-live hardening, backups, and migrations, see **[PRODUCTION_HARDENING.md](PRODUCTION_HARDENING.md)**.
+
+**Optional:** host only the dashboard on **Vercel**, **Firebase**, or a Firestarter-style static pipeline — see **[firestarter/README.md](firestarter/README.md)**. Use `frontend/` as the deploy root; `firebase.json` and `frontend/vercel.json` are there for those flows.
 
 ## Dashboard — CRM meets EMR
 
 POSEIDON is **a CRM meets EMR**: pipeline and relationship tracking (orders, POD, rep worklist) with full **patient record** in one place—demographics, diagnoses, orders, DMEs, proof of delivery (POD), SWO, CMS-1500, and timeline. Click a card to open the patient account (EMR-style record) with order tracking, documents, and **View full patient record (PDF)**.
 
-- **Use the live dashboard origin** so `/api` is routed through the deployed frontend and backend services. In production, that means the Render-hosted dashboard and backend URLs, not an old local nginx or Compose path.
+- **Use the URL that matches your deployment.** With Docker Compose + nginx, use `http://localhost/` (or the hostname you configured) so `/api/*` hits the Next.js BFF, which calls Core using `CORE_API_URL` / `POSEIDON_API_URL` inside the compose network.
 - **Logo:** Put your logo at `frontend/logo.svg`. The app shows it when present; otherwise it shows the “P” mark. Rebuild the dashboard image (or refresh after replacing the file in a volume) and do a hard refresh (Ctrl+Shift+R / Cmd+Shift+R) if the old logo is cached.
 - **Live data:** The dashboard polls `/api/orders` and `/api/denials` on load and every 60s. Use the header “Refresh” for an immediate sync.
 - **Kanban → SQL:** Dragging a card to a new column calls `PATCH /orders/{id}/status` and updates the database. Admin, Billing, and Rep roles can update order status.
@@ -100,7 +104,7 @@ Production notes:
 - `NEXTAUTH_SECRET` is required for the dashboard in production.
 - `CORS_ALLOW_ORIGINS` and `TRUSTED_HOSTS` should be set to your real domains before internet exposure.
 - The frontend is pinned to `Next.js 16` and production builds run with `--webpack` for stable repeatable builds in this environment.
-- `DATABASE_URL` is a Render-managed per-service secret. Update it in Render for `core`, `trident`, `intake`, `ml`, `edi`, and `availity` rather than relying on stale local Postgres defaults.
+- `DATABASE_URL` in `.env` is picked up by Compose services (see `docker-compose.yml`). For the bundled Postgres, the default is `postgresql://poseidon:poseidon@postgres:5432/poseidon_db` from inside containers.
 - Live ingest now requires a real signed-in operator in production; service-account fallback is disabled unless explicitly enabled outside production.
 - Human dashboard logins are environment-managed and may be rotated independently of historical seed prompts. Do not rely on old docs that mention fixed credentials such as `admin@strykefox.com` / `StrykeFox2026!`.
 - `CORE_API_EMAIL` / `CORE_API_PASSWORD` are automation credentials for service-to-service and scripted ingest paths. They are not the canonical source of truth for operator-facing login instructions.

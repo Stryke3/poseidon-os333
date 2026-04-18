@@ -1,15 +1,22 @@
-# POSEIDON OS - PRODUCTION HARDENING
+# POSEIDON — Production hardening
 
-Run these steps after a successful `bash poseidon-deploy.sh`.
+**Canonical production:** self-hosted **Docker Compose** on a server or VM ([docker-compose.yml](docker-compose.yml)), with **nginx** as the HTTPS front door and the **Next.js dashboard** served from the `dashboard` service (or built into that image). See [README.md](README.md) for architecture and ports.
 
-## Deploy Root
+Optional: host only the **dashboard** on Vercel or another static/edge host while APIs run on your box — see [Optional: edge-hosted dashboard](#optional-edge-hosted-dashboard) below.
 
-The production web app lives in `frontend/`.
-All Vercel linking, env vars, builds, and logs should target that directory.
+Run preflight before any release:
 
-## Step 1 - Link And Deploy The Correct App
+```bash
+bash poseidon-deploy.sh
+```
 
-Before any release, run the repo-level readiness check:
+That runs `scripts/verify_deploy_readiness.sh` and reminds you how to bring the stack up.
+
+---
+
+## 1 — Readiness, backups, migrations
+
+Before go-live or cutover:
 
 ```bash
 bash scripts/verify_deploy_readiness.sh --strict-env
@@ -17,17 +24,105 @@ bash scripts/backup_postgres.sh
 bash scripts/backup_stateful_storage.sh
 ```
 
+Apply production schema migrations (adjust if your runbook differs):
+
+```bash
+bash scripts/run_production_migrations.sh
+```
+
+After migrations, rebuild or restart affected services, e.g.:
+
+```bash
+docker compose up -d --build
+```
+
+---
+
+## 2 — Self-hosted Compose (primary path)
+
+1. Copy [.env.template](.env.template) to `.env` at the **repo root** and fill real secrets. Never commit `.env`.
+2. On the target host:
+
+   ```bash
+   bash scripts/docker-up.sh
+   # or: docker compose up -d --build
+   ```
+
+3. Verify:
+
+   - `docker compose ps`
+   - `curl -fsS http://127.0.0.1:8001/ready` (Core — JSON should show `checks.database`, `checks.redis`, etc. as `ok` when wired correctly)
+   - Open the dashboard via nginx (e.g. `http://localhost/` locally, or your public hostname with TLS terminated at nginx or a reverse proxy).
+
+4. Keep backend URLs consistent with where services actually listen:
+
+   - Root `.env`: `POSEIDON_DATABASE_URL` or `DATABASE_URL`, `REDIS_URL`, `INTERNAL_API_KEY`, MinIO vars, Core/JWT secrets, etc.
+   - Dashboard container env: `POSEIDON_API_URL` / `CORE_API_URL` must point at the **Core** base URL as seen from that container (typically `http://core:8001` inside Compose).
+
+Credential notes:
+
+- Treat `CORE_API_EMAIL` / `CORE_API_PASSWORD` as **automation** credentials for ingest and service workflows.
+- Do not publish fixed human login passwords in runbooks. Operator accounts should be managed in your environment and rotated without doc edits.
+
+---
+
+## 3 — Security headers and Next.js config
+
+Security headers are defined in [frontend/next.config.js](frontend/next.config.js). They apply to any production build of the dashboard (Compose image or optional Vercel deploy).
+
+[frontend/vercel.json](frontend/vercel.json) is for **optional** Vercel rewrites (e.g. `/api/*` → Core). On Compose + nginx, routing is usually defined in [nginx/nginx.conf](nginx/nginx.conf).
+
+---
+
+## 4 — Backup and restore discipline
+
+PostgreSQL before cutover, migrations, or bulk import:
+
+```bash
+bash scripts/backup_postgres.sh
+bash scripts/restore_postgres.sh backups/postgres/<file>.dump
+```
+
+Stateful platform snapshot (MinIO, Redis persistence, Trident artifacts, etc.):
+
+```bash
+bash scripts/backup_stateful_storage.sh
+bash scripts/restore_stateful_storage.sh backups/stateful/<timestamp>
+```
+
+---
+
+## 5 — Ongoing redeploy
+
+```bash
+bash poseidon-deploy.sh
+```
+
+Preferred flow:
+
+1. `bash scripts/verify_deploy_readiness.sh` (add `--strict-env` when enforcing production gates).
+2. `docker compose up -d --build` on the target host with a real `.env`.
+3. Local dev: `frontend/.env.local` with `CORE_API_URL=http://127.0.0.1:8001` when Core is in Compose with ports published.
+
+---
+
+## Optional: edge-hosted dashboard
+
+Use this only if you intentionally split **dashboard** (Vercel / edge) from **APIs** (your Compose host or public API URLs).
+
+The deployable Next app still lives under **`frontend/`**. Linking, env vars, builds, and logs target that directory.
+
+### Link and deploy (Vercel CLI)
+
 ```bash
 cd frontend
 vercel link
 vercel --prod
 ```
 
-If `frontend/.vercel/project.json` already exists, the app is already linked.
+If `frontend/.vercel/project.json` already exists, the project is linked.
 
-## Step 2 - Custom Domain
-
-Add your production domain to the linked Vercel project:
+### Custom domain (example)
 
 ```bash
 cd frontend
@@ -35,236 +130,79 @@ vercel domains add poseidon.strykefoxmedical.com
 vercel domains inspect poseidon.strykefoxmedical.com
 ```
 
-DNS records:
+Example DNS (subdomain):
 
-| Type | Name | Value | TTL |
-|---|---|---|---|
+| Type  | Name   | Value               | TTL  |
+| ----- | ------ | ------------------- | ---- |
 | CNAME | poseidon | cname.vercel-dns.com | Auto |
 
-If you use the apex/root domain instead of a subdomain:
-
-| Type | Name | Value | TTL |
-|---|---|---|---|
-| A | @ | 76.76.21.21 | Auto |
-
-Verify propagation:
+Verify:
 
 ```bash
 dig poseidon.strykefoxmedical.com CNAME +short
 ```
 
-## Step 3 - Production Environment Variables
-
-Add production variables against the `frontend/` Vercel project:
+### Environment variables (Vercel)
 
 ```bash
 cd frontend
 vercel env add NEXT_PUBLIC_APP_URL production
-# value: https://poseidon.strykefoxmedical.com
+# e.g. https://poseidon.strykefoxmedical.com
 
 vercel env add NEXT_PUBLIC_APP_ENV production
-# value: production
-```
+# production
 
-If you want the frontend to call the hosted APIs directly on Vercel, also add:
-
-```bash
-cd frontend
 vercel env add NEXT_PUBLIC_CORE_API_URL production
-# value: https://api.strykefox.com
+# e.g. https://api.strykefox.com
 
 vercel env add NEXT_PUBLIC_TRIDENT_API_URL production
-# value: https://trident.strykefox.com
+# e.g. https://trident.strykefox.com
 
-# If the dashboard is on Vercel but Availity runs behind your nginx path proxy, point the browser at that path:
-vercel env add NEXT_PUBLIC_AVAILITY_SERVICE_URL production
-# value: https://dashboard.strykefox.com/availity-api
+# If Availity is proxied behind your nginx path on another host:
+# vercel env add NEXT_PUBLIC_AVAILITY_SERVICE_URL production
+# e.g. https://dashboard.example.com/availity-api
 ```
 
-Redeploy after changing env vars:
+Redeploy after env changes:
 
 ```bash
 cd frontend
 vercel --prod --yes
 ```
 
-For the self-hosted services in this repo, complete `/.env` before go-live:
+### Full self-hosted secret checklist (Compose `.env`)
 
-- `SECRET_KEY`
-- `POSTGRES_PASSWORD`
-- `REDIS_PASSWORD`
-- `MINIO_ACCESS_KEY`
-- `MINIO_SECRET_KEY`
-- `CORE_API_EMAIL`
-- `CORE_API_PASSWORD`
-- `AVAILITY_CLIENT_ID`
-- `AVAILITY_CLIENT_SECRET`
-- `AVAILITY_TOKEN_URL`
-- `AVAILITY_ELIGIBILITY_URL`
-- `AVAILITY_CLAIMS_URL`
-- `AVAILITY_DEFAULT_PROVIDER_NPI`
-- `AVAILITY_BILLING_TIN`
-- `DROPBOX_SIGN_REQUEST_URL`
-- `DROPBOX_SIGN_API_KEY`
-- `DROPBOX_SIGN_WEBHOOK_SECRET`
-- `GMAIL_OAUTH_CLIENT_ID`
-- `GMAIL_OAUTH_CLIENT_SECRET`
-- `GMAIL_OAUTH_REFRESH_TOKEN`
+Complete root `.env` for services whether or not the dashboard is on Vercel, including where applicable:
 
-Credential guidance:
+- `SECRET_KEY`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`
+- `CORE_API_EMAIL`, `CORE_API_PASSWORD`
+- `AVAILITY_CLIENT_ID`, `AVAILITY_CLIENT_SECRET`, `AVAILITY_TOKEN_URL`, `AVAILITY_ELIGIBILITY_URL`, `AVAILITY_CLAIMS_URL`, `AVAILITY_DEFAULT_PROVIDER_NPI`, `AVAILITY_BILLING_TIN`
+- `DROPBOX_SIGN_*`, `GMAIL_OAUTH_*` if used
 
-- Treat `CORE_API_EMAIL` / `CORE_API_PASSWORD` as automation credentials for ingest and service workflows.
-- Do not publish fixed human login passwords in deployment prompts or runbooks. Production operator credentials should be managed separately and rotated without requiring doc edits.
-- If an older prompt still references `admin@strykefox.com` with a static password, consider that guidance stale until the live environment is revalidated.
+### Manual checks (any dashboard host)
 
-## Step 4 - Security Hardening
+- HTTPS without redirect loops; security headers present (`curl -I https://your-dashboard-host`)
+- No critical console errors; styles load
+- `/api/*` and other BFF routes resolve (Compose via nginx; Vercel via `vercel.json` rewrites)
 
-Security headers are now defined in [frontend/next.config.js](/Volumes/WORKSPACE/poseidon%202/frontend/next.config.js).
-
-Current hardening includes:
-
-- `X-Frame-Options`
-- `X-Content-Type-Options`
-- `Referrer-Policy`
-- `Permissions-Policy`
-- `Content-Security-Policy`
-- `Cross-Origin-Opener-Policy`
-- `Cross-Origin-Resource-Policy`
-- `Origin-Agent-Cluster`
-
-The Vercel routing file at [frontend/vercel.json](/Volumes/WORKSPACE/poseidon%202/frontend/vercel.json) was also updated so Next.js handles app routing while API-prefixed paths can still proxy to the hosted backend services.
-
-## Step 5 - Production Verification
-
-```bash
-cd frontend
-vercel ls
-vercel inspect <deployment-url>
-vercel logs <deployment-url>
-```
-
-Manual checks:
-
-- Page loads over HTTPS without redirect loops
-- Security headers are present in the response
-- No browser console errors
-- Fonts render correctly
-- Dark background styles load immediately
-- `/api/*` resolves to Core
-- `/trident-api/*`, `/intake-api/*`, and `/ml-api/*` resolve correctly if used
-
-Header check example:
-
-```bash
-curl -I https://poseidon.strykefoxmedical.com
-```
-
-## Step 6 - Render Alignment
-
-Production is GitHub + Render first.
-
-- Keep [render.yaml](/Volumes/WORKSPACE/poseidon%202/render.yaml) as the canonical deployment definition.
-- Keep backend `DATABASE_URL` values in Render service settings, since they are intentionally marked `sync: false` in the blueprint.
-- Use Render service health, logs, and deploy history for runtime verification instead of older local Docker assumptions.
-
-## Step 6.5 - Database Migrations
-
-Run all production schema migrations before or during cutover:
-
-```bash
-bash scripts/run_production_migrations.sh
-```
-
-That helper applies:
-
-- `001_add_pod_document_id.sql`
-- `002_email_workflow_assignment.sql`
-- `003_workflow_automation.sql`
-- `004_fulfillment_billing_workflow.sql`
-
-After migrations, trigger or confirm fresh deploys for the affected Render services instead of relying on a full local Compose restart.
-
-## Step 6.75 - Backup And Restore Discipline
-
-Take a PostgreSQL backup before cutover, before migrations, and before any bulk import:
-
-```bash
-bash scripts/backup_postgres.sh
-```
-
-To restore a captured dump:
-
-```bash
-bash scripts/restore_postgres.sh backups/postgres/<file>.dump
-```
-
-Capture the rest of the platform state too before major changes:
-
-```bash
-bash scripts/backup_stateful_storage.sh
-```
-
-That snapshot includes:
-
-- MinIO object data
-- Redis persistence data
-- Trident model artifacts
-
-To restore one of those snapshots:
-
-```bash
-bash scripts/restore_stateful_storage.sh backups/stateful/<timestamp>
-```
-
-## Step 7 - Ongoing Redeploy
-
-Use the root deploy script:
-
-```bash
-bash poseidon-deploy.sh
-```
-
-Preferred production flow:
-
-- targets `frontend/` as the deploy root
-- validates the repo before shipping
-- runs `scripts/verify_deploy_readiness.sh` before shipping
-- validates the Next.js production build
-- requires an explicit `frontend/.env.local`
-- deploys from the already linked frontend project when available
-- uses the webpack production build path on Next.js 16 for deterministic CI and local verification
-- leaves backend runtime ownership to Render instead of trying to rebuild a local Docker production clone
+---
 
 ## Troubleshooting
 
-If the site 404s on Vercel:
+**Compose / Core**
+
+- `curl http://127.0.0.1:8001/ready` — fix `DATABASE_URL` / `REDIS_URL` / MinIO until checks are `ok`.
+- `docker compose logs core`, `docker compose logs dashboard`, `docker compose logs nginx`.
+
+**Vercel-only (edge dashboard)**
+
+- 404 or wrong domain: `cd frontend && vercel ls` and `vercel alias set <deployment-url> <your-domain>`.
+- Wrong env: `vercel env ls`, remove/re-add, then `vercel --prod --yes`.
+- Build fails locally: `cd frontend && NODE_ENV=production npm run build`.
+
+**DNS**
 
 ```bash
-cd frontend
-vercel ls
-vercel alias set <deployment-url> poseidon.strykefoxmedical.com
-```
-
-If env vars are wrong:
-
-```bash
-cd frontend
-vercel env ls
-vercel env rm VARIABLE_NAME production
-vercel env add VARIABLE_NAME production
-vercel --prod --yes
-```
-
-If local works but Vercel build fails:
-
-```bash
-cd frontend
-NODE_ENV=production npm run build
-```
-
-If the domain does not resolve:
-
-```bash
-dig poseidon.strykefoxmedical.com
-nslookup poseidon.strykefoxmedical.com
+dig your-dashboard-host.example.com
+nslookup your-dashboard-host.example.com
 ```

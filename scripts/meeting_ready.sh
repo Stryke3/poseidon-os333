@@ -64,13 +64,13 @@ else
   warn "Strict env validation skipped (pass --strict-env to enforce production gates)"
 fi
 
-log "Running Render-first repo validation"
+log "Running repo validation (build + compose config)"
 bash scripts/verify_deploy_readiness.sh
 ok "Repo validation passed"
 
 echo ""
-printf "${GREEN}Meeting-ready: repo validation passed and production ownership lives in Render.${NC}\n"
+printf "${GREEN}Meeting-ready: validation passed. Bring up Docker when you are ready.${NC}\n"
 echo "Next:"
-echo "  1. Push the current branch to GitHub"
-echo "  2. Confirm Render service env vars and health checks"
-echo "  3. Review Render deploy logs for core, dashboard, and sibling services"
+echo "  1. bash scripts/docker-up.sh   # or: docker compose up -d --build"
+echo "  2. Open http://localhost/ (nginx → dashboard) and confirm http://127.0.0.1:8001/ready"
+echo "  3. docker compose logs -f --tail=80 core dashboard"

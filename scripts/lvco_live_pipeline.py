@@ -8,7 +8,7 @@ Usage (repo root, .env loaded):
   python3 scripts/lvco_live_pipeline.py --skip-ingest --limit 300
 
 Requires admin-capable token (same login env vars as ingest) and INTERNAL_API_KEY for import.
-Set CORE_BASE_URL like ingest_lvco (e.g. https://dashboard.strykefox.com/api/core on Render).
+Set CORE_BASE_URL like ingest_lvco (e.g. http://127.0.0.1:8001 or http://localhost/api/core).
 Materialize: TRIDENT_API_URL must be set on Core (or compose default).
 """
 

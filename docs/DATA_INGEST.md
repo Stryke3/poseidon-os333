@@ -31,9 +31,7 @@ bash scripts/ingest_lvco.sh --file /path/to/file.csv
 - **URL (`CORE_BASE_URL`) — must reach Core `/auth/login` and `/orders/import`, not NextAuth:**
   - **Local nginx in front of Core:** `http://localhost/api` → requests go to `.../api/auth/login` and `.../api/orders/import` (rewritten to Core).
   - **Direct Core:** `http://127.0.0.1:8001` → `.../auth/login`, `.../orders/import`.
-  - **Render (Core private, dashboard public):** use the dashboard **Core proxy** prefix:
-    `CORE_BASE_URL=https://dashboard.strykefox.com/api/core`
-    so login hits `.../api/core/auth/login` (forwards to Core) instead of `.../api/auth/login` (NextAuth).
+  - **Dashboard Core proxy (same host as the UI):** when nginx sends `/api/` to Next.js, use the BFF prefix that forwards to Core, e.g. `CORE_BASE_URL=http://localhost/api/core` so login hits `/api/core/auth/login` (proxies to Core) instead of `/api/auth/*` (NextAuth).
 - **XLSX:** install `openpyxl` once: `pip install openpyxl` (or `python3 -m pip install openpyxl`).
 
 Column mapping matches the dashboard live ingest route (`frontend/src/app/api/ingest/live/route.ts`): patient name, payer, HCPCS/CPT, ICD, DOB, etc.

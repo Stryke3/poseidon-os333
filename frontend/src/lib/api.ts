@@ -95,7 +95,13 @@ export async function queryTrident(
     body: JSON.stringify({ prompt, context }),
   })
 
-  const data = (await res.json().catch(() => ({}))) as { response?: string; error?: string }
+  const data = (await res.json().catch(() => ({}))) as {
+    response?: string
+    error?: string
+    digestSource?: string
+    fallbackTemplate?: string
+    digestHint?: string
+  }
   if (!res.ok) {
     throw new Error(data.error || `Trident request failed (${res.status})`)
   }

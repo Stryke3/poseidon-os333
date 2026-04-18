@@ -16,11 +16,9 @@ Environment (after optional .env load from repo root):
 Optional XLSX: pip install openpyxl
 
 CORE_BASE_URL (canonical):
-  - Docker / nginx in front of Core: http://localhost/api  → POST .../api/auth/login, .../api/orders/import
-  - Direct Core process: http://127.0.0.1:8001  → POST .../auth/login, .../orders/import
-  - Render (Core private, dashboard public): https://dashboard.strykefox.com/api/core
-      → POST .../api/core/auth/login and .../api/core/orders/import (Next.js proxies to Core; not NextAuth).
-  Do NOT set CORE_BASE_URL to https://.../api alone — that sends login to /api/auth/login (NextAuth) and fails.
+  - nginx + Next BFF (Core proxy): http://localhost/api/core  → POST .../api/core/auth/login, .../api/core/orders/import
+  - Direct Core: http://127.0.0.1:8001  → POST .../auth/login, .../orders/import
+  Do NOT set CORE_BASE_URL to http://localhost/api alone — that sends login to /api/auth/login (NextAuth) and fails.
 """
 
 from __future__ import annotations
@@ -374,8 +372,9 @@ def get_token(base: str) -> str:
         err_text = str(exc).lower()
         if "nextauth" in err_text:
             print(
-                "Login hit NextAuth instead of Core. Set CORE_BASE_URL to the Core API origin, or on Render use:\n"
-                "  CORE_BASE_URL=https://dashboard.strykefox.com/api/core\n"
+                "Login hit NextAuth instead of Core. Examples:\n"
+                "  CORE_BASE_URL=http://127.0.0.1:8001\n"
+                "  CORE_BASE_URL=http://localhost/api/core   # dashboard BFF → Core\n"
                 "(see frontend /api/core/auth/login proxy).",
                 file=sys.stderr,
             )

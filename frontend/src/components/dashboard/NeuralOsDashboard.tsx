@@ -7,6 +7,7 @@ import { signOut, useSession } from "next-auth/react"
 
 import CommunicationsPanel from "@/components/dashboard/CommunicationsPanel"
 import { queryTrident } from "@/lib/api"
+import { RenderDigestText } from "@/lib/render-digest"
 import type { AccountRecord, KanbanCard, KanbanColumn } from "@/lib/data"
 
 /* ── types ─────────────────────────────────────────── */
@@ -600,8 +601,8 @@ export default function NeuralOsDashboard({
                 </div>
               </div>
               <div className="w-px self-stretch bg-white/10" />
-              <div className="max-h-24 min-w-[300px] max-w-md overflow-y-auto text-sm leading-6 text-slate-300">
-                {tridentResponse}
+              <div className="max-h-56 min-w-[320px] max-w-xl overflow-y-auto text-sm leading-6 text-slate-300">
+                <RenderDigestText text={tridentResponse} />
               </div>
               <button
                 className="flex-shrink-0 rounded-lg border border-white/10 px-2 py-2 text-xs text-slate-400 transition hover:text-white"

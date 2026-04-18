@@ -22,8 +22,23 @@ interface LiveUser {
 const NEXTAUTH_SECRET = getRequiredEnv("NEXTAUTH_SECRET")
 const APP_ENV = (process.env.NODE_ENV || "development").toLowerCase()
 
+/** Browser session cookie lifetime (seconds). Must be ≤ Core JWT (JWT_EXPIRY_HOURS). */
+function sessionMaxAgeSeconds(): number {
+  const raw = process.env.NEXTAUTH_SESSION_MAX_AGE?.trim()
+  if (raw) {
+    const n = Number.parseInt(raw, 10)
+    if (Number.isFinite(n) && n > 60) return n
+  }
+  return APP_ENV === "production" ? 7 * 24 * 60 * 60 : 8 * 60 * 60
+}
+
 async function authenticateAgainstCore(email: string, password: string) {
-  const coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL")
+  let coreApiUrl: string
+  try {
+    coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL")
+  } catch {
+    return null
+  }
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 8000)
 
@@ -49,9 +64,8 @@ async function authenticateAgainstCore(email: string, password: string) {
     if (res.status === 401) return null
     return null
   } catch {
-    if (APP_ENV === "production") {
-      throw new Error("Authentication dependency unavailable.")
-    }
+    // Always return null so NextAuth surfaces CredentialsSignin; the login page then
+    // calls /api/core-status to explain unreachable Core vs DB vs Redis vs bad password.
     return null
   } finally {
     clearTimeout(timeout)
@@ -74,12 +88,14 @@ export const authOptions: NextAuthOptions = {
 
         const data = await authenticateAgainstCore(email, password)
 
-        if (!data?.access_token || !data.role) return null
+        if (!data?.access_token) return null
+        const roleRaw = data.role
+        if (roleRaw == null || String(roleRaw).trim() === "") return null
 
         const user: LiveUser = {
           id: data.user_id || credentials.email,
           email: credentials.email,
-          role: data.role,
+          role: roleRaw as AppRole,
           accessToken: data.access_token,
           orgId: data.org_id,
           permissions: data.permissions || [],
@@ -94,7 +110,7 @@ export const authOptions: NextAuthOptions = {
   ],
   session: {
     strategy: "jwt",
-    maxAge: 8 * 60 * 60,
+    maxAge: sessionMaxAgeSeconds(),
   },
   pages: {
     signIn: "/login",

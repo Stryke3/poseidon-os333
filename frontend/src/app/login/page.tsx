@@ -14,7 +14,18 @@ type View = "login" | "forgot" | "reset" | "reset-success"
 
 type CoreStatusBody = {
   reachable?: boolean
-  databaseOk?: boolean
+  databaseOk?: boolean | null
+  checks?: Record<string, string> | null
+  ready?: boolean
+  readyHttpStatus?: number | null
+  configError?: string | null
+}
+
+function coreFullyHealthy(coreStatus?: CoreStatusBody) {
+  if (!coreStatus || coreStatus.reachable !== true || coreStatus.ready !== true) return false
+  const c = coreStatus.checks
+  if (!c) return coreStatus.databaseOk === true
+  return c.database === "ok" && c.redis === "ok" && c.minio === "ok"
 }
 
 function sanitizeCallbackUrl(value: string | null | undefined) {
@@ -25,11 +36,27 @@ function sanitizeCallbackUrl(value: string | null | undefined) {
 }
 
 function buildAuthErrorMessage(coreStatus?: CoreStatusBody) {
+  if (coreStatus?.configError) {
+    return `${coreStatus.configError} Set POSEIDON_API_URL or CORE_API_URL to your Core base URL (Docker Compose: http://core:8001).`
+  }
   if (coreStatus?.reachable === false) {
-    return "This app cannot reach the Core API (login server). Check the Core service health and service URL in Render, then confirm the frontend is pointing at the correct Core base URL."
+    return "This app cannot reach the Core API (login server). Wherever Core is hosted, confirm it is running and that this dashboard’s CORE_API_URL / POSEIDON_API_URL points at that Core base URL (then redeploy the dashboard if you changed env)."
+  }
+  const c = coreStatus?.checks
+  if (c && typeof c.database === "string" && c.database !== "ok") {
+    return "Core cannot reach Postgres. With Docker Compose, set POSEIDON_DATABASE_URL in the root .env to your provider’s URL (add ?sslmode=require if the provider requires TLS). Plain DATABASE_URL in .env is for host tools (psql, backups), not Core. For bundled Postgres only, leave POSEIDON_DATABASE_URL unset, then: docker compose up -d postgres && docker compose up -d --force-recreate core."
+  }
+  if (c && typeof c.redis === "string" && c.redis !== "ok") {
+    return "Core is running but Redis is not healthy. On the Core host, set REDIS_URL to your Redis instance (Docker: redis:6379 with password). Redeploy Core after changing env."
+  }
+  if (c && typeof c.minio === "string" && c.minio !== "ok") {
+    return "Core is running but object storage (MinIO) is not healthy. On the Core host, verify MINIO_* env vars match your MinIO service. Redeploy Core after changing env."
   }
   if (coreStatus?.databaseOk === false) {
-    return "Core is running but cannot reach the database. Check the Core service DATABASE_URL in Render and confirm the managed Postgres instance is healthy."
+    return "Core cannot reach the database. Set POSEIDON_DATABASE_URL (Compose) or DATABASE_URL (bare-metal / platform-injected) where Core runs, redeploy Core, then verify GET /ready shows checks.database=ok."
+  }
+  if (coreFullyHealthy(coreStatus)) {
+    return "Invalid email or password. Core and dependencies look healthy — if this is a new database, apply scripts/init.sql (or your migrations) and sign in with the seeded operator (see the “Default admin user” section in that file), then change the password."
   }
   if (process.env.NODE_ENV !== "production") {
     return "Invalid email or password. For a fresh local DB, use the seed operator emails from scripts/init.sql (initial password in that file) or Forgot Password."

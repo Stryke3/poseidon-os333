@@ -1,6 +1,8 @@
 """
 Verify orders.claim_strategy with Core before EDI claim submission.
 """
+from __future__ import annotations
+
 import logging
 import os
 from typing import Any
@@ -12,6 +14,10 @@ log = logging.getLogger("edi.core_client")
 
 CORE_API_URL = os.getenv("CORE_API_URL", os.getenv("POSEIDON_API_URL", "http://core:8001")).rstrip("/")
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "").strip()
+
+
+def _truthy_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes")
 
 
 async def fetch_order_claim_authority(order_id: str, correlation_id: str | None) -> dict[str, Any]:
@@ -35,6 +41,12 @@ async def fetch_order_claim_authority(order_id: str, correlation_id: str | None)
 
 
 async def ensure_edi_claim_strategy(order_id: str, correlation_id: str | None) -> None:
+    if _truthy_env("EDI_SKIP_CLAIM_AUTHORITY_CHECK"):
+        log.warning(
+            "EDI_SKIP_CLAIM_AUTHORITY_CHECK is set; skipping Core claim-authority (order_id=%s)",
+            order_id,
+        )
+        return
     data = await fetch_order_claim_authority(order_id, correlation_id)
     strat = (data.get("claim_strategy") or "").strip().upper()
     if strat != "EDI":

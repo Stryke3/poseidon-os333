@@ -101,11 +101,17 @@ log "Auditing container image pinning"
   bash scripts/check_container_pins.sh >/tmp/poseidon-container-pins.out
 )
 
-if [[ -f "${ROOT_DIR}/render.yaml" ]]; then
-  log "Render blueprint detected"
+if [[ -f "${ROOT_DIR}/docker-compose.yml" ]]; then
+  log "Docker Compose definition detected (canonical full-stack runtime)"
 else
-  fail "Missing render.yaml"
+  fail "Missing docker-compose.yml"
 fi
+
+log "Validating Compose file"
+(
+  cd "$ROOT_DIR"
+  docker compose config -q
+)
 
 log "Compiling Python services for syntax validation"
 (

@@ -1010,6 +1010,13 @@ CREATE TABLE IF NOT EXISTS remittance_service_lines (
 CREATE INDEX IF NOT EXISTS idx_rsl_claim ON remittance_service_lines(remittance_claim_id);
 CREATE INDEX IF NOT EXISTS idx_rsl_hcpcs ON remittance_service_lines(hcpcs_code);
 
+CREATE TABLE IF NOT EXISTS stedi_835_import_ids (
+    stedi_transaction_id TEXT PRIMARY KEY,
+    batch_id            UUID NOT NULL REFERENCES remittance_batches(id) ON DELETE CASCADE,
+    imported_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_stedi_835_import_batch ON stedi_835_import_ids(batch_id);
+
 CREATE TABLE IF NOT EXISTS edi_audit_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     entity_type     VARCHAR(30) NOT NULL,

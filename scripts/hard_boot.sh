@@ -1,8 +1,14 @@
-#!/bin/sh
+#!/usr/bin/env bash
+# Destructive local reset: stops Compose, removes named volumes, rebuilds, starts stack.
+# Requires Docker. Do not run against any environment you cannot afford to wipe.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 
-set -eu
+echo "[poseidon] hard_boot: docker compose down -v (removes postgres/redis/minio volumes)"
+docker compose down -v
 
-echo "[poseidon] scripts/hard_boot.sh is deprecated."
-echo "[poseidon] Production is GitHub + Render first; do not reset local Docker state as a deploy step."
-echo "[poseidon] Use 'bash poseidon-deploy.sh' for local validation, then push to GitHub and verify the Render deploy."
-exit 1
+echo "[poseidon] hard_boot: docker compose up -d --build"
+docker compose up -d --build
+
+echo "[poseidon] hard_boot: done. Wait for healthchecks, then http://localhost/ and http://127.0.0.1:8001/ready"

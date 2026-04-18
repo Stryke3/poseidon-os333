@@ -38,8 +38,16 @@ export function getRequiredEnv(name: string): string {
 
 export function getServiceBaseUrl(name: string): string {
   const value = getRequiredEnv(name).replace(/\/$/, "")
-  if (isProductionRuntime() && isDisallowedHost(value)) {
-    throw new Error(`Environment variable ${name} cannot use localhost in production.`)
+  // Server-side calls to Core on loopback are valid for local / Docker Desktop. Opt in to strict
+  // checks for public deployments: POSEIDON_ENFORCE_NO_LOCALHOST=true
+  if (
+    isProductionRuntime() &&
+    isDisallowedHost(value) &&
+    process.env.POSEIDON_ENFORCE_NO_LOCALHOST === "true"
+  ) {
+    throw new Error(
+      `Environment variable ${name} cannot use localhost in production when POSEIDON_ENFORCE_NO_LOCALHOST is set.`,
+    )
   }
   return value
 }

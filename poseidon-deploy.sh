@@ -8,32 +8,31 @@ fail() { echo -e "  ${RED}❌${NC} $1"; }
 
 echo ""
 echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}  POSEIDON — RENDER-FIRST DEPLOY${NC}"
+echo -e "${CYAN}  POSEIDON — LOCAL / DOCKER PREFLIGHT${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
 echo ""
 
 cd "$(dirname "$0")"
 
 if [ "$#" -gt 0 ]; then
-    log "Ignoring legacy arguments; this script now runs Render-first validation only"
+    log "Extra arguments ignored: $*"
 fi
 
-log "Render-first preflight..."
+log "Running repo validation (frontend production build + Python compile + compose config)..."
 bash scripts/verify_deploy_readiness.sh
 ok "Repo validation passed"
 
 echo ""
 echo -e "${GREEN}══════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}  LOCAL VALIDATION COMPLETE${NC}"
+echo -e "${GREEN}  PREFLIGHT COMPLETE${NC}"
 echo -e "${GREEN}══════════════════════════════════════════════════════${NC}"
 echo ""
-echo "  Production source of truth:"
-echo "    Code:        GitHub"
-echo "    Runtime:     Render"
-echo "    Services:    render.yaml"
+echo "  Runtime:     Docker Compose (see docker-compose.yml)"
 echo ""
-echo "  Next steps:"
-echo "    1. Push the current branch to GitHub"
-echo "    2. Verify Render env vars for each backend service, especially DATABASE_URL"
-echo "    3. Confirm health and logs in the Render dashboard after deploy"
+echo "  Bring up the full stack:"
+echo "    bash scripts/docker-up.sh"
+echo "    # or: docker compose up -d --build"
+echo ""
+echo "  Then open (via nginx): http://localhost/  (dashboard)"
+echo "  Core readiness:        http://127.0.0.1:8001/ready"
 echo ""

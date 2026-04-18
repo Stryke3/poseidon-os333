@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib.parse import urlparse
 
 import redis.asyncio as aioredis
 from fastapi import FastAPI, HTTPException, Request, status
@@ -32,6 +33,10 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("poseidon")
+
+# Operator JWT lifetime (Core /auth/login only). Shorter in non-production dev.
+_APP_ENV_RAW = os.getenv("ENVIRONMENT", "production").lower()
+_DEFAULT_JWT_EXPIRY_HOURS = "168" if _APP_ENV_RAW == "production" else "8"
 
 PLACEHOLDER_PREFIXES = (
     "CHANGE_ME",
@@ -52,6 +57,45 @@ def _csv_env(name: str, default: str = "") -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _normalize_database_url(url: str) -> str:
+    """
+    Managed Postgres (Neon, RDS, many cloud providers) typically requires TLS.
+    Pasted URLs sometimes omit sslmode; without it, /ready reports database: error and auth fails.
+    """
+    u = (url or "").strip()
+    if not u:
+        return u
+    lowered = u.lower()
+    if "sslmode=" in lowered:
+        return u
+    try:
+        host = (urlparse(u).hostname or "").lower()
+    except Exception:
+        host = ""
+    # Local / compose service names — no implicit TLS (avoids breaking dev DBs).
+    if host in ("localhost", "127.0.0.1", "::1", "postgres") or host.endswith((".local", ".internal")):
+        return u
+    # Hostname-based detection (safer than matching the whole URL string).
+    host_needs_ssl = (
+        "render.com" in host
+        or host.startswith("dpg-")
+        or ".neon.tech" in host
+        or ".neon.build" in host
+        or "supabase.co" in host
+        or "amazonaws.com" in host  # RDS / many managed PG on AWS
+        or "azure.com" in host
+        or "digitalocean.com" in host
+        or "aiven.io" in host
+        or "cockroachlabs.cloud" in host
+        or "timescale.com" in host
+        or "elephantsql.com" in host
+    )
+    if not host_needs_ssl:
+        return u
+    join = "&" if "?" in u else "?"
+    return f"{u}{join}sslmode=require"
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -62,7 +106,7 @@ class Settings:
     is_production: bool = app_env == "production"
     secret_key: str = os.getenv("JWT_SECRET", os.getenv("SECRET_KEY", ""))
     jwt_algorithm: str = os.getenv("JWT_ALGORITHM", "HS256")
-    jwt_expiry_hours: int = int(os.getenv("JWT_EXPIRY_HOURS", "8"))
+    jwt_expiry_hours: int = int(os.getenv("JWT_EXPIRY_HOURS", _DEFAULT_JWT_EXPIRY_HOURS))
 
     # Database
     database_url: str = os.getenv("DATABASE_URL", "")
@@ -166,7 +210,7 @@ class Settings:
     @property
     def db_dsn(self) -> str:
         if self.database_url:
-            return self.database_url
+            return _normalize_database_url(self.database_url)
         return (
             f"host={self.db_host} port={self.db_port} "
             f"dbname={self.db_name} user={self.db_user} "
@@ -187,7 +231,7 @@ class Settings:
             "INTERNAL_API_KEY": self.internal_api_key,
             "MINIO_SECRET_KEY": self.minio_secret_key,
         }
-        # Managed providers (e.g. Render) supply full URLs; discrete passwords only needed otherwise.
+        # Managed providers often supply full URLs; discrete passwords only needed otherwise.
         if not self.database_url or _is_placeholder(self.database_url):
             hard_required["POSTGRES_PASSWORD"] = self.db_password
         if not self.redis_url_value or _is_placeholder(self.redis_url_value):

@@ -17,6 +17,7 @@ docker-data*
 *.log
 .cursor
 tmp
+stedi-audit-report/
 backups/
 data/*
 services/trident/Historical_Model_Data/

@@ -70,7 +70,7 @@ This document reflects the current repository state plus the minimum hardening s
 5. **Release gating**
    - Run `bash scripts/verify_deploy_readiness.sh --strict-env` before every production cutover.
    - Run `bash scripts/backup_postgres.sh` before migrations, bulk imports, or cutover.
-   - Keep CI green so frontend builds, Python syntax checks, and Render blueprint validation stay green before merge.
+   - Keep CI green so frontend builds, Python syntax checks, and `docker compose config` validation stay green before merge.
 
 ---
 

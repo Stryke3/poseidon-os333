@@ -15,7 +15,7 @@
   - **ML (8004):** Training store, denial-pattern analysis (CARC, payer, HCPCS, category), reimbursement estimate, weights recompute; consumes Redis queues and file drops.
 - **Shared state:** Postgres (single DB, org-scoped), Redis (pub/sub + queues), MinIO (object storage). No Google Sheets; no external spreadsheet dependency.
 - **Front-end:** Dashboard + Rep Kanban (responsive, status drag-and-drop). Served behind nginx with `/api`, `/trident-api`, `/intake-api`, `/ml-api` proxied to the four services.
-- **Deployment:** GitHub + Render blueprint deployment. Service definitions live in `render.yaml`, backend secrets are injected per service, and managed infrastructure replaces the old local-Compose-first production story.
+- **Deployment:** **Docker Compose** at the repo root. Postgres, Redis, MinIO, all app services, and nginx ship together; secrets come from `.env` on the host. Optional external DB/Redis URLs are supported via the same variables.
 
 ### 1.2 Data Model (Why It’s Structured This Way)
 

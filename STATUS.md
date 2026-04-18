@@ -1,6 +1,6 @@
 # POSEIDON Status
 
-Last updated: 2026-03-22
+Last updated: 2026-04-10
 
 ## Current state (backend)
 
@@ -12,14 +12,12 @@ Last updated: 2026-03-22
 - Dashboard is **Next.js App Router** under `frontend/src/app/` (e.g. `page.tsx` → `DashboardShell`).
 - Live data is loaded server-side in **`frontend/src/lib/dashboard-data.ts`** via **`getLiveDashboardData()`**: authenticated fetches to Core **`/orders`** and **`/denials`** (plus communications/integrations with graceful fallback). No sample-data fallback when the API returns successfully with empty lists—empty DB → empty kanban and zeroed pipeline counts. Hard failures on the orders request (non-401/403) surface as errors (no silent sample deck).
 - Client ingest: **`frontend/src/components/ingest/LiveIngestDropzone.tsx`** posts to **`/api/ingest/live`** for CSV → Core import.
-- Production frontend deploy verified on **March 22, 2026** to `https://dashboard.strykefox.com`, including `/login`, `/api/health`, protected session issuance, and authenticated admin API access.
-- Historical prompt credentials for `admin@strykefox.com` are no longer reliable documentation for production login. The live environment is using environment-managed accounts, and the verified production session path currently authenticates through the configured service account flow.
 
 ## Stack verification (this workspace)
 
-- The current deployment model is **GitHub + Render**, with service configuration defined in [render.yaml](/Volumes/WORKSPACE/poseidon%202/render.yaml).
-- Backend services expect `DATABASE_URL` and other runtime secrets from Render-managed env vars, not from a local `postgres` service in Compose.
-- `scripts/verify_deploy_readiness.sh` now serves as a repo/build validation step rather than proof that a local Docker stack is the canonical runtime.
+- **Canonical runtime:** **Docker Compose** at repo root (`docker-compose.yml`): Postgres, Redis, MinIO, Python services, Node dashboard, nginx.
+- **`DATABASE_URL`**, **`REDIS_URL`**, **`NEXTAUTH_SECRET`**, and other secrets are supplied via **`.env`** (from `.env.template`); Compose wires service DNS names (`postgres`, `core`, `redis`, etc.).
+- `scripts/verify_deploy_readiness.sh` validates the **Next.js production build**, Python `compileall`, **pinned container images**, and **`docker compose config`**.
 
 ## Spreadsheet assets present in repo
 
@@ -35,10 +33,9 @@ Last updated: 2026-03-22
 - Row-level SQL validation against production-like data volumes.
 - External integrations (Availity, Stedi, Dropbox Sign, SMTP) with real credentials.
 - Authenticated exercise of **`GET /worklist/protocols`** against a populated DB (endpoint behavior confirmed for auth gate only from CLI).
-- Canonical human operator credentials and password-reset runbook have not yet been rewritten into a single definitive admin-facing document.
 
 ## Next actions
 
 1. Populate **`data/lvco/`** (or supply absolute path) and run ingest into orders/denials.
 2. Call **`GET /worklist/protocols`** with a valid token and confirm queue contents.
-3. Publish a single production runbook for operator login and password rotation so prompts and docs stop drifting from live credentials.
+3. Keep **`.env`** aligned with wherever Postgres actually runs (Compose default vs external URL + `sslmode=require`).

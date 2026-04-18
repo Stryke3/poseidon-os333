@@ -26,9 +26,12 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY package.json package-lock.json ./
+COPY docker-entrypoint-database-url.sh /usr/local/bin/docker-entrypoint-database-url.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint-database-url.sh
 EXPOSE 8005
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD curl -fsS http://127.0.0.1:8005/live || exit 1
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint-database-url.sh"]
 CMD ["sh", "-c", "set -e; npx prisma migrate deploy || { \
   npx prisma migrate resolve --applied 001_availity_tables || true; \
   npx prisma migrate resolve --applied 002_availity_cuid_datetime || true; \

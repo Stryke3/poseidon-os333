@@ -4,6 +4,8 @@ Handles 837P submission via Stedi Healthcare API.
 Stedi accepts JSON, handles X12 serialization, routes to clearinghouse.
 Docs: https://www.stedi.com/docs/healthcare
 """
+from __future__ import annotations
+
 import os
 import uuid
 import logging

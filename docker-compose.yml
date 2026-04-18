@@ -1,6 +1,15 @@
 # =============================================================================
 # POSEIDON Healthcare RCM Platform — StrykeFox
 # Production Docker Compose
+#
+# Local run (no cloud DB): start Docker, then from repo root:
+#   ./scripts/docker-up.sh
+# Or: copy .env.template to .env, then  docker compose up -d --build
+# Compose defaults: Postgres on :5432, DB poseidon/poseidon, Redis password
+# localredis, INTERNAL_API_KEY poseidon-local-internal-key, EDI dry-run ON.
+# DB for app containers: use POSEIDON_DATABASE_URL to override bundled Postgres.
+# Do not rely on DATABASE_URL from .env for Compose — that broke many setups (stale cloud URLs).
+# Override in .env for production (especially INTERNAL_API_KEY).
 # =============================================================================
 
 networks:
@@ -11,6 +20,7 @@ volumes:
   redis_data:
   minio_data:
   training_data:
+  postgres_data:
 
 services:
 
@@ -22,13 +32,13 @@ services:
     image: redis:7.4.8-alpine
     container_name: poseidon_redis
     restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    command: redis-server --requirepass ${POSEIDON_REDIS_PASSWORD:-localredis}
     volumes:
       - redis_data:/data
     networks:
       - poseidon_net
     healthcheck:
-      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${POSEIDON_REDIS_PASSWORD:-localredis}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -39,8 +49,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+      MINIO_ROOT_USER: ${POSEIDON_MINIO_ACCESS_KEY:-poseidon}
+      MINIO_ROOT_PASSWORD: ${POSEIDON_MINIO_SECRET_KEY:-poseidonlocal}
     volumes:
       - minio_data:/data
     networks:
@@ -50,6 +60,28 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: poseidon_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSEIDON_POSTGRES_USER:-poseidon}
+      POSTGRES_PASSWORD: ${POSEIDON_POSTGRES_PASSWORD:-poseidon}
+      POSTGRES_DB: ${POSEIDON_POSTGRES_DB:-poseidon_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - poseidon_net
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   # ---------------------------------------------------------------------------
   # APPLICATION SERVICES
@@ -65,10 +97,24 @@ services:
     environment:
       SERVICE_NAME: core
       PORT: 8001
+      # Shared base defaults ENVIRONMENT to production; placeholder .env secrets then abort startup.
+      ENVIRONMENT: ${ENVIRONMENT:-development}
       EDI_API_URL: ${EDI_API_URL:-http://edi:8006}
+      DATABASE_URL: ${POSEIDON_DATABASE_URL:-postgresql://poseidon:poseidon@postgres:5432/poseidon_db}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-poseidon-local-internal-key}
+      MINIO_ENDPOINT: ${POSEIDON_MINIO_ENDPOINT:-minio:9000}
+      MINIO_PUBLIC_ENDPOINT: ${POSEIDON_MINIO_PUBLIC_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${POSEIDON_MINIO_ACCESS_KEY:-poseidon}
+      MINIO_SECRET_KEY: ${POSEIDON_MINIO_SECRET_KEY:-poseidonlocal}
+      MINIO_BUCKET: ${POSEIDON_MINIO_BUCKET:-poseidon-docs}
+      MINIO_SECURE: ${POSEIDON_MINIO_SECURE:-false}
+      REDIS_PASSWORD: ${POSEIDON_REDIS_PASSWORD:-localredis}
+      REDIS_URL: ${POSEIDON_REDIS_URL:-redis://:localredis@redis:6379/0}
     volumes:
       - ./data:/app/data
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       minio:
@@ -95,6 +141,16 @@ services:
     environment:
       SERVICE_NAME: trident
       PORT: 8002
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: ${POSEIDON_DATABASE_URL:-postgresql://poseidon:poseidon@postgres:5432/poseidon_db}
+      REDIS_PASSWORD: ${POSEIDON_REDIS_PASSWORD:-localredis}
+      REDIS_URL: ${POSEIDON_REDIS_URL:-redis://:localredis@redis:6379/0}
+      MINIO_ENDPOINT: ${POSEIDON_MINIO_ENDPOINT:-minio:9000}
+      MINIO_PUBLIC_ENDPOINT: ${POSEIDON_MINIO_PUBLIC_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${POSEIDON_MINIO_ACCESS_KEY:-poseidon}
+      MINIO_SECRET_KEY: ${POSEIDON_MINIO_SECRET_KEY:-poseidonlocal}
+      MINIO_BUCKET: ${POSEIDON_MINIO_BUCKET:-poseidon-docs}
+      MINIO_SECURE: ${POSEIDON_MINIO_SECURE:-false}
     volumes:
       - ./data:/app/data
       - ./services/trident/Historical_Model_Data:/app/Historical_Model_Data
@@ -102,6 +158,8 @@ services:
     networks:
       - poseidon_net
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -121,11 +179,23 @@ services:
     environment:
       SERVICE_NAME: intake
       PORT: 8003
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: ${POSEIDON_DATABASE_URL:-postgresql://poseidon:poseidon@postgres:5432/poseidon_db}
+      REDIS_PASSWORD: ${POSEIDON_REDIS_PASSWORD:-localredis}
+      REDIS_URL: ${POSEIDON_REDIS_URL:-redis://:localredis@redis:6379/0}
+      MINIO_ENDPOINT: ${POSEIDON_MINIO_ENDPOINT:-minio:9000}
+      MINIO_PUBLIC_ENDPOINT: ${POSEIDON_MINIO_PUBLIC_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${POSEIDON_MINIO_ACCESS_KEY:-poseidon}
+      MINIO_SECRET_KEY: ${POSEIDON_MINIO_SECRET_KEY:-poseidonlocal}
+      MINIO_BUCKET: ${POSEIDON_MINIO_BUCKET:-poseidon-docs}
+      MINIO_SECURE: ${POSEIDON_MINIO_SECURE:-false}
     volumes:
       - ./data:/app/data
     networks:
       - poseidon_net
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -145,12 +215,24 @@ services:
     environment:
       SERVICE_NAME: ml
       PORT: 8004
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: ${POSEIDON_DATABASE_URL:-postgresql://poseidon:poseidon@postgres:5432/poseidon_db}
+      REDIS_PASSWORD: ${POSEIDON_REDIS_PASSWORD:-localredis}
+      REDIS_URL: ${POSEIDON_REDIS_URL:-redis://:localredis@redis:6379/0}
+      MINIO_ENDPOINT: ${POSEIDON_MINIO_ENDPOINT:-minio:9000}
+      MINIO_PUBLIC_ENDPOINT: ${POSEIDON_MINIO_PUBLIC_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${POSEIDON_MINIO_ACCESS_KEY:-poseidon}
+      MINIO_SECRET_KEY: ${POSEIDON_MINIO_SECRET_KEY:-poseidonlocal}
+      MINIO_BUCKET: ${POSEIDON_MINIO_BUCKET:-poseidon-docs}
+      MINIO_SECURE: ${POSEIDON_MINIO_SECURE:-false}
     volumes:
       - ./data:/app/data
       - training_data:/app/models
     networks:
       - poseidon_net
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -170,14 +252,20 @@ services:
     environment:
       SERVICE_NAME: edi
       PORT: 8006
-      # EDI service expects a single DATABASE_URL env var.
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${POSEIDON_DATABASE_URL:-postgresql://poseidon:poseidon@postgres:5432/poseidon_db}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-poseidon-local-internal-key}
+      MINIO_ENDPOINT: ${POSEIDON_MINIO_ENDPOINT:-minio:9000}
+      MINIO_PUBLIC_ENDPOINT: ${POSEIDON_MINIO_PUBLIC_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${POSEIDON_MINIO_ACCESS_KEY:-poseidon}
+      MINIO_SECRET_KEY: ${POSEIDON_MINIO_SECRET_KEY:-poseidonlocal}
+      MINIO_BUCKET: ${POSEIDON_MINIO_BUCKET:-poseidon-docs}
+      MINIO_SECURE: ${POSEIDON_MINIO_SECURE:-false}
       STEDI_API_KEY: ${STEDI_API_KEY:-}
       ISA_SENDER_ID: ${ISA_SENDER_ID:-STRYKEFOX      }
       ISA_RECEIVER_ID: ${ISA_RECEIVER_ID:-030240928      }
       ISA_SENDER_QUAL: ${ISA_SENDER_QUAL:-ZZ}
       ISA_RECEIVER_QUAL: ${ISA_RECEIVER_QUAL:-ZZ}
-      EDI_DRY_RUN: ${EDI_DRY_RUN:-false}
+      EDI_DRY_RUN: ${EDI_DRY_RUN:-true}
       SUBMISSION_METHOD: ${SUBMISSION_METHOD:-stedi_api}
       ISA_TEST_INDICATOR: ${ISA_TEST_INDICATOR:-P}
       BILLING_NPI: ${BILLING_NPI:-1821959420}
@@ -189,8 +277,14 @@ services:
       AVAILITY_SFTP_PASS: ${AVAILITY_SFTP_PASS:-}
       CORE_API_URL: ${CORE_API_URL:-http://core:8001}
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
+      core:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8006:8006"
     networks:
       - poseidon_net
     healthcheck:
@@ -210,7 +304,10 @@ services:
     environment:
       SERVICE_NAME: availity
       PORT: 8005
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${POSEIDON_DATABASE_URL:-postgresql://poseidon:poseidon@postgres:5432/poseidon_db}
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - poseidon_net
     healthcheck:
@@ -236,12 +333,30 @@ services:
     environment:
       SERVICE_NAME: dashboard
       PORT: 3000
-      # NextAuth server-side login (must reach Core on the compose network)
+      # Required by NextAuth; default keeps local Compose working if .env omits it (override in .env for real use).
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-poseidon-local-dev-nextauth-secret-min-32-chars-ok}
+      # NextAuth: trust nginx X-Forwarded-* so the session origin matches the browser URL
+      # (e.g. http://127.0.0.1 vs http://localhost). See next-auth utils/detect-origin.js.
+      AUTH_TRUST_HOST: ${AUTH_TRUST_HOST:-true}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost}
+      # NextAuth + BFF: server-side service URLs (compose DNS names)
       CORE_API_URL: ${CORE_API_URL:-http://core:8001}
+      POSEIDON_API_URL: ${POSEIDON_API_URL:-http://core:8001}
+      TRIDENT_API_URL: ${TRIDENT_API_URL:-http://trident:8002}
+      INTAKE_API_URL: ${INTAKE_API_URL:-http://intake:8003}
+      ML_API_URL: ${ML_API_URL:-http://ml:8004}
       # Server-side proxy for admin Availity routes (/api/integrations/availity/*)
       AVAILITY_SERVICE_URL: ${AVAILITY_SERVICE_URL:-http://availity:8005}
       # EDI service proxy (837P/835)
       EDI_API_URL: ${EDI_API_URL:-http://edi:8006}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-poseidon-local-internal-key}
+      # Trident Ask panel: LLM digest (set in .env for production-style local runs)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TRIDENT_DIGEST_OPENAI_MODEL: ${TRIDENT_DIGEST_OPENAI_MODEL:-gpt-4o-mini}
+      TRIDENT_DIGEST_ANTHROPIC_MODEL: ${TRIDENT_DIGEST_ANTHROPIC_MODEL:-claude-3-5-haiku-20241022}
+      TRIDENT_DIGEST_PROVIDER: ${TRIDENT_DIGEST_PROVIDER:-auto}
+      TRIDENT_DIGEST_LLM: ${TRIDENT_DIGEST_LLM:-}
       # Matia merge (optional): set MATIA_INTEGRATION_ENABLED=true and MATIA_API_URL=http://nginx/matia-api
       MATIA_API_URL: ${MATIA_API_URL:-}
       MATIA_PIPELINE_PATH: ${MATIA_PIPELINE_PATH:-/pipeline}
@@ -254,6 +369,8 @@ services:
     depends_on:
       - core
       - trident
+      - intake
+      - ml
       - availity
       - edi
     healthcheck:

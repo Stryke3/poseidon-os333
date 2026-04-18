@@ -46,12 +46,24 @@ type CoreOrderCreateResponse = {
 }
 
 const INTAKE_API_URL = process.env.INTAKE_API_URL?.trim().replace(/\/$/, "") || ""
-const INTAKE_FALLBACK_URLS = [
+
+/** Docker Compose / local dev defaults when INTAKE_API_URL is unset. */
+const DEFAULT_INTAKE_FALLBACK_URLS = [
   "http://intake:8003",
   "http://intake-yyft:10000",
-  "https://poseidon-intake.onrender.com",
   "https://intake.strykefox.com",
 ]
+
+function intakeCandidateBases(): string[] {
+  if (INTAKE_API_URL) {
+    return [INTAKE_API_URL]
+  }
+  const extra =
+    process.env.INTAKE_API_FALLBACK_URLS?.split(",")
+      .map((s) => s.trim().replace(/\/$/, ""))
+      .filter(Boolean) ?? []
+  return [...DEFAULT_INTAKE_FALLBACK_URLS, ...extra]
+}
 const INTAKE_REQUEST_TIMEOUT_MS = (() => {
   const parsed = Number(process.env.INTAKE_REQUEST_TIMEOUT_MS || "60000")
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 60000
@@ -368,8 +380,7 @@ async function parsePdfDocument(file: File, req: NextRequest): Promise<ParsedPdf
 
   const candidateBaseUrls = Array.from(
     new Set(
-      // Prefer explicitly configured intake endpoint. Only use built-in fallbacks when unset.
-      (INTAKE_API_URL ? [INTAKE_API_URL] : INTAKE_FALLBACK_URLS)
+      intakeCandidateBases()
         .map((url) => url.trim().replace(/\/$/, ""))
         .filter(Boolean),
     ),

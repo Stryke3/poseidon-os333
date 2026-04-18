@@ -51,7 +51,7 @@ const env = parsed.data;
 const isProduction = (env.NODE_ENV ?? "").toLowerCase() === "production";
 if (isProduction) {
     if (!env.AVAILITY_CLIENT_ID || !env.AVAILITY_CLIENT_SECRET) {
-        throw new Error("Missing required production secrets: AVAILITY_CLIENT_ID and AVAILITY_CLIENT_SECRET.");
+        console.warn("Availity OAuth secrets are missing; OAuth-backed endpoints will fail until AVAILITY_CLIENT_ID/SECRET are set.");
     }
 }
 const llmEnabled = String(process.env.MANUAL_EXTRACTION_LLM ?? "").toLowerCase() === "true";

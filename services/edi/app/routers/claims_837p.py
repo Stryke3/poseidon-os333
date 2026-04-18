@@ -10,6 +10,8 @@ Endpoints:
   POST /api/v1/claims/validate/{order_id}      — Dry-run validation only
   GET  /api/v1/claims/submissions              — List submissions with filters
 """
+from __future__ import annotations
+
 import json
 import logging
 import os
