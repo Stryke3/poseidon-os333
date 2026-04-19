@@ -38,10 +38,10 @@ AI (Claude) code shortcuts for this project: see [.cursor/CURSOR_SHORTCUTS.md](.
 
 ## Deployment model
 
-**Canonical full stack:** [docker-compose.yml](docker-compose.yml) — Postgres, Redis, MinIO, Core, Trident, Intake, ML, EDI, Availity, Dashboard, and nginx on one machine (typically your office server or a single VM).
+**Canonical production:** [docker-compose.yml](docker-compose.yml) on a single DigitalOcean droplet, with nginx as the only public ingress.
 
-- **Secrets:** live in your root `.env` (never commit real `.env`). Start from [.env.template](.env.template).
-- **Optional cloud:** you can still point `DATABASE_URL` / `REDIS_URL` at managed providers; the codebase does not require any specific hoster.
+- **Secrets:** live in root `.env` (never commit real `.env`). Start from [.env.template](.env.template).
+- **Database wiring:** app containers use `POSEIDON_DATABASE_URL` when set; leave it unset for bundled compose Postgres.
 
 ## Quick start (local full stack)
 
@@ -60,11 +60,9 @@ bash scripts/docker-up.sh
 
 Destructive reset (wipes Compose volumes including the local DB): `bash scripts/hard_boot.sh`
 
-## Mobile build & optional edge deploy
+## Mobile build
 
-The dashboard is **mobile-friendly** (responsive layout, touch-friendly kanban, safe-area support). **Production by default:** ship it with **Docker Compose + nginx** (same as the rest of the stack). For go-live hardening, backups, and migrations, see **[PRODUCTION_HARDENING.md](PRODUCTION_HARDENING.md)**.
-
-**Optional:** host only the dashboard on **Vercel**, **Firebase**, or a Firestarter-style static pipeline — see **[firestarter/README.md](firestarter/README.md)**. Use `frontend/` as the deploy root; `firebase.json` and `frontend/vercel.json` are there for those flows.
+The dashboard is **mobile-friendly** (responsive layout, touch-friendly kanban, safe-area support). Production is DO droplet + compose + nginx. For go-live hardening and cutover, see **[PRODUCTION_HARDENING.md](PRODUCTION_HARDENING.md)**.
 
 ## Dashboard — CRM meets EMR
 
