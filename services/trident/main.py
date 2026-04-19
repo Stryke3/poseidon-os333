@@ -817,6 +817,55 @@ async def _lookup_learned_rate(conn, payer_id: str, hcpcs_code: str) -> dict[str
     return dict(row) if row else None
 
 
+async def _lookup_learned_aggregate(
+    conn,
+    feature_scope: str,
+    *,
+    payer_id: str | None = None,
+    hcpcs_code: str | None = None,
+    icd10_code: str | None = None,
+    physician_id: str | None = None,
+    site_code: str | None = None,
+    carc_code: str | None = None,
+) -> dict[str, Any] | None:
+    """
+    Read the current (latest successful) learned aggregate for a given
+    feature combination. Returns None if no aggregate row matches the
+    scope+keys. This queries the `trident_learned_aggregates_current` view
+    which was introduced by migration 018_trident_learning_aggregates.sql.
+    """
+    try:
+        row = await fetch_one(
+            conn,
+            """
+            SELECT sample_count, denial_count, paid_count, appeal_count, appeal_wins,
+                   denial_rate, appeal_win_rate, avg_paid, median_paid,
+                   avg_days_to_pay, collection_probability
+            FROM trident_learned_aggregates_current
+            WHERE feature_scope = $1
+              AND (payer_id IS NOT DISTINCT FROM $2)
+              AND (hcpcs_code IS NOT DISTINCT FROM $3)
+              AND (icd10_code IS NOT DISTINCT FROM $4)
+              AND (physician_id IS NOT DISTINCT FROM $5)
+              AND (site_code IS NOT DISTINCT FROM $6)
+              AND (carc_code IS NOT DISTINCT FROM $7)
+            ORDER BY sample_count DESC
+            LIMIT 1
+            """,
+            feature_scope,
+            payer_id,
+            hcpcs_code,
+            icd10_code,
+            physician_id,
+            site_code,
+            carc_code,
+        )
+    except Exception:
+        # Migration 018 may not be applied yet; do not break scoring.
+        return None
+    return dict(row) if row else None
+
+
 async def _trident_score(conn, payload: CanonicalScoreRequest) -> dict[str, Any]:
     rules = [dict(row) for row in await fetch_all(
         conn,
@@ -851,12 +900,70 @@ async def _trident_score(conn, payload: CanonicalScoreRequest) -> dict[str, Any]
 
     med_score = float(engine._medical_necessity_score(payload.icd10_codes, payload.hcpcs_codes))
     modifiers = [rule.get("modifier_recommendation") for rule in rules if rule.get("modifier_recommendation")]
-    learned = await _lookup_learned_rate(conn, payload.payer_id, payload.hcpcs_codes[0] if payload.hcpcs_codes else "")
-    expected_reimbursement = float((learned or {}).get("avg_paid") or 0)
+    primary_hcpcs = payload.hcpcs_codes[0] if payload.hcpcs_codes else ""
+    primary_icd = payload.icd10_codes[0] if payload.icd10_codes else None
+
+    # Rule-based baseline: from model or, if unavailable, from trident_rules
+    # or the hardcoded PAYER_RULES baseline.
+    rule_based_probability = float(denial_probability)
+
+    # Learned historical adjustment (migration 018 / bootstrap pipeline).
+    learned_rate_row = await _lookup_learned_rate(conn, payload.payer_id, primary_hcpcs)
+    learned_payer_hcpcs = await _lookup_learned_aggregate(
+        conn, "payer_hcpcs", payer_id=payload.payer_id, hcpcs_code=primary_hcpcs
+    )
+    learned_payer_dx = None
+    if primary_icd:
+        learned_payer_dx = await _lookup_learned_aggregate(
+            conn, "payer_dx", payer_id=payload.payer_id, icd10_code=primary_icd
+        )
+    learned_lag = await _lookup_learned_aggregate(
+        conn, "payer_lag", payer_id=payload.payer_id, hcpcs_code=primary_hcpcs
+    )
+
+    # Build the learned_adjustment: a weighted blend of learned denial rates
+    # from the various scopes, weighted by sample_count. If no learned data
+    # is present, the adjustment is 0 and scoring falls back to rule-based.
+    weighted_num = 0.0
+    weighted_den = 0.0
+    features_used: list[str] = []
+    for scope_name, row in (
+        ("payer_hcpcs", learned_payer_hcpcs),
+        ("payer_dx", learned_payer_dx),
+    ):
+        if not row:
+            continue
+        sc = int(row.get("sample_count") or 0)
+        dr = row.get("denial_rate")
+        if sc <= 0 or dr is None:
+            continue
+        weighted_num += float(dr) * sc
+        weighted_den += sc
+        features_used.append(f"{scope_name}(n={sc})")
+
+    if weighted_den > 0:
+        learned_denial_rate = weighted_num / weighted_den
+        # Blend: 70% learned history, 30% rule-based baseline when we have signal.
+        blended_probability = 0.7 * learned_denial_rate + 0.3 * rule_based_probability
+        learned_adjustment = blended_probability - rule_based_probability
+        # Confidence grows with sample size, capped at 0.99.
+        confidence = min(0.99, weighted_den / (weighted_den + 50.0))
+    else:
+        blended_probability = rule_based_probability
+        learned_adjustment = 0.0
+        confidence = 0.35 if learned_rate_row else 0.10
+
+    expected_reimbursement = float((learned_payer_hcpcs or learned_rate_row or {}).get("avg_paid") or 0)
+    collection_probability = None
+    avg_days_to_pay = None
+    if learned_lag:
+        collection_probability = learned_lag.get("collection_probability")
+        avg_days_to_pay = learned_lag.get("avg_days_to_pay")
+
     risk_factors: list[str] = []
     if med_score < 0.65:
         risk_factors.append("medical_necessity_risk")
-    if float(denial_probability) > 0.55:
+    if float(blended_probability) > 0.55:
         risk_factors.append("high_denial_probability")
     if timely and payload.dos:
         try:
@@ -867,6 +974,9 @@ async def _trident_score(conn, payload: CanonicalScoreRequest) -> dict[str, Any]
             pass
     if not rules:
         risk_factors.append("limited_training_rules")
+    if weighted_den == 0:
+        risk_factors.append("no_learned_history")
+
     alternatives = [
         {"hcpcs_code": rule.get("hcpcs_code"), "avg_reimbursement": float(rule.get("avg_reimbursement") or 0)}
         for rule in rules
@@ -875,9 +985,15 @@ async def _trident_score(conn, payload: CanonicalScoreRequest) -> dict[str, Any]
     alternatives.sort(key=lambda item: item["avg_reimbursement"], reverse=True)
     return {
         "medical_necessity_score": round(med_score * 100, 2),
-        "denial_probability": round(float(denial_probability), 4),
+        "denial_probability": round(float(blended_probability), 4),
+        "rule_based_probability": round(rule_based_probability, 4),
+        "learned_adjustment": round(learned_adjustment, 4),
+        "confidence": round(confidence, 3),
+        "features_used": features_used,
         "recommended_modifiers": sorted(set(modifiers)),
         "expected_reimbursement": expected_reimbursement,
+        "collection_probability": collection_probability,
+        "avg_days_to_pay": avg_days_to_pay,
         "risk_factors": risk_factors,
         "bundling_analysis": {"should_bundle": len(payload.hcpcs_codes) > 1, "codes": payload.hcpcs_codes},
         "alternative_codes": alternatives[:5],
@@ -900,6 +1016,43 @@ async def v1_trident_retrain(request: Request):
         artifact = await _train_trident_model(conn, "manual")
         await _refresh_learned_rates(conn)
     return _serialize(artifact)
+
+
+@app.post("/api/v1/trident/ingest-historical-model-data")
+async def v1_trident_ingest_historical_model_data(
+    request: Request,
+    dry_run: bool = False,
+    replace: bool = False,
+    retrain_after: bool = False,
+):
+    """
+    Parse all tabular files under Historical_Model_Data (recursive), insert rows into payment_outcomes
+    for Trident training. Charge-detail workbooks use structured normalization; other xlsx/csv use
+    flexible column mapping (payer + HCPCS required per row).
+
+    Use replace=true to delete prior rows with source=historical_model_data before insert.
+    Use retrain_after=true to run the same retrain + learned_rates refresh as POST /api/v1/trident/retrain
+    after a successful insert (skipped on dry_run or when zero rows inserted).
+    """
+    from historical_training_ingest import ingest_historical_model_data_to_payment_outcomes
+
+    db = request.app.state.db_pool
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+    result = await ingest_historical_model_data_to_payment_outcomes(
+        db,
+        base_dir=HISTORICAL_DATA_DIR,
+        dry_run=dry_run,
+        replace=replace,
+    )
+    if retrain_after and not dry_run and int(result.get("rows_inserted") or 0) > 0:
+        async with db.connection() as conn:
+            artifact = await _train_trident_model(conn, "historical_import")
+            await _refresh_learned_rates(conn)
+        result["retrain"] = _serialize(artifact)
+    elif retrain_after and not dry_run:
+        result["retrain"] = {"skipped": "no_rows_inserted"}
+    return result
 
 
 @app.post("/api/v1/trident/feedback")
@@ -1051,6 +1204,121 @@ async def v1_trident_learning_sync(request: Request):
     await redis.set("trident:learning:last_success_at", datetime.now(timezone.utc).isoformat())
     await redis.set("trident:learning:last_result", json.dumps(_serialize(result)), ex=max(settings.trident_learning_interval_minutes * 240, 600))
     return _serialize(result)
+
+
+@app.post("/api/v1/trident/bootstrap-history")
+async def v1_trident_bootstrap_history(request: Request):
+    """
+    Trigger a bootstrap run from historical records. Produces versioned
+    aggregates in `trident_learned_aggregates`. Idempotent per version; each
+    call creates a new version_id.
+
+    This endpoint intentionally runs synchronously on the request so ops can
+    observe completion. For very large corpora prefer running the CLI:
+
+        python3 scripts/bootstrap_trident_from_history.py
+
+    which supports --dry-run and --only scope filters.
+    """
+    db = request.app.state.db_pool
+    run_id = str(uuid.uuid4())
+    async with db.connection() as conn:
+        # Snapshot source counts first.
+        counts: dict[str, int] = {}
+        for table in ("payment_outcomes", "denials", "orders", "appeals", "claim_submissions"):
+            try:
+                row = await fetch_one(conn, f"SELECT COUNT(*) AS count FROM {table}")
+                counts[table] = int((row or {}).get("count") or 0)
+            except Exception:
+                counts[table] = 0
+        await exec_write(
+            conn,
+            """
+            INSERT INTO trident_history_bootstrap_runs (run_id, status, source_snapshot, triggered_by)
+            VALUES ($1, 'running', $2::jsonb, 'api')
+            """,
+            run_id,
+            json.dumps(counts),
+        )
+
+        # Reuse a minimal subset of bootstrap scopes inline. The CLI script
+        # does the same thing at higher fidelity and is the preferred path.
+        scopes_run: list[str] = []
+        try:
+            await exec_write(
+                conn,
+                """
+                INSERT INTO trident_learned_aggregates (
+                    version_id, org_id, feature_scope, payer_id, hcpcs_code,
+                    sample_count, denial_count, paid_count, denial_rate, avg_paid, collection_probability
+                )
+                SELECT $1, org_id, 'payer_hcpcs', payer_id, hcpcs_code,
+                       COUNT(*),
+                       SUM(CASE WHEN COALESCE(is_denial, false) THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN COALESCE(is_denial, false) THEN 0 ELSE 1 END),
+                       AVG(CASE WHEN COALESCE(is_denial, false) THEN 1.0 ELSE 0.0 END)::numeric(6,4),
+                       AVG(COALESCE(paid_amount, 0))::numeric(12,2),
+                       (SUM(CASE WHEN COALESCE(is_denial, false) THEN 0 ELSE 1 END)::numeric
+                           / NULLIF(COUNT(*)::numeric, 0))::numeric(6,4)
+                FROM payment_outcomes
+                WHERE payer_id IS NOT NULL AND hcpcs_code IS NOT NULL
+                GROUP BY org_id, payer_id, hcpcs_code
+                """,
+                run_id,
+            )
+            scopes_run.append("payer_hcpcs")
+            await exec_write(
+                conn,
+                """
+                INSERT INTO trident_learned_aggregates (
+                    version_id, org_id, feature_scope, payer_id, icd10_code,
+                    sample_count, denial_count, denial_rate
+                )
+                SELECT $1, org_id, 'payer_dx', payer_id, icd10_code,
+                       COUNT(*),
+                       SUM(CASE WHEN COALESCE(is_denial, false) THEN 1 ELSE 0 END),
+                       AVG(CASE WHEN COALESCE(is_denial, false) THEN 1.0 ELSE 0.0 END)::numeric(6,4)
+                FROM payment_outcomes
+                WHERE payer_id IS NOT NULL AND icd10_code IS NOT NULL
+                GROUP BY org_id, payer_id, icd10_code
+                """,
+                run_id,
+            )
+            scopes_run.append("payer_dx")
+
+            await _refresh_learned_rates(conn)
+
+            await exec_write(
+                conn,
+                """
+                UPDATE trident_history_bootstrap_runs
+                SET status = 'success', completed_at = NOW()
+                WHERE run_id = $1
+                """,
+                run_id,
+            )
+            status = "success"
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("bootstrap-history failed")
+            await exec_write(
+                conn,
+                """
+                UPDATE trident_history_bootstrap_runs
+                SET status = 'failed', completed_at = NOW(), error_detail = $1
+                WHERE run_id = $2
+                """,
+                str(exc)[:500],
+                run_id,
+            )
+            status = "failed"
+
+    return {
+        "run_id": run_id,
+        "status": status,
+        "source_snapshot": counts,
+        "scopes_run": scopes_run,
+        "note": "For full feature coverage use scripts/bootstrap_trident_from_history.py",
+    }
 
 
 @app.get("/api/v1/trident/code-map")

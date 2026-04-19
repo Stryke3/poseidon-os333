@@ -8,3 +8,6 @@ pdfplumber==0.11.4
 python-multipart==0.0.19
 httpx==0.28.0
 openpyxl==3.1.5
+
+# Optional Sentry (SENTRY_DSN activates).
+sentry-sdk[fastapi]==2.16.0

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 import time
@@ -24,15 +25,67 @@ from fastapi.responses import JSONResponse
 from psycopg_pool import AsyncConnectionPool
 
 # ---------------------------------------------------------------------------
-# Logging
+# Logging + request-id context
 # ---------------------------------------------------------------------------
+
+# ContextVar holds the per-request correlation / request id. Every log record
+# emitted inside an async request handler picks this up automatically via the
+# filter below.
+_request_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "poseidon_request_id", default="-"
+)
+
+
+class _RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:  # pragma: no cover
+        record.request_id = _request_id_ctx.get()
+        return True
+
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    format="%(asctime)s | %(levelname)-8s | %(name)s | req=%(request_id)s | %(message)s",
 )
+_root_logger = logging.getLogger()
+if not any(isinstance(f, _RequestIdFilter) for f in _root_logger.filters):
+    _root_logger.addFilter(_RequestIdFilter())
 logger = logging.getLogger("poseidon")
+
+
+# ---------------------------------------------------------------------------
+# Optional Sentry instrumentation
+# ---------------------------------------------------------------------------
+#
+# Wrapped in a try/except on import so services that have never installed
+# sentry-sdk still boot. Failure to initialize Sentry is never fatal — it is
+# logged and the process continues.
+
+def _maybe_init_sentry(service_name: str) -> None:
+    dsn = os.getenv("SENTRY_DSN", "").strip()
+    if not dsn:
+        return
+    try:
+        import sentry_sdk  # type: ignore
+        from sentry_sdk.integrations.fastapi import FastApiIntegration  # type: ignore
+        from sentry_sdk.integrations.asyncio import AsyncioIntegration  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        logger.warning("SENTRY_DSN set but sentry-sdk not installed: %s", exc)
+        return
+    try:
+        sentry_sdk.init(
+            dsn=dsn,
+            environment=os.getenv("SENTRY_ENVIRONMENT", os.getenv("ENVIRONMENT", "production")),
+            release=os.getenv("SERVICE_COMMIT", None),
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0") or 0.0),
+            integrations=[FastApiIntegration(), AsyncioIntegration()],
+            # PHI safety: never send request bodies or PII.
+            send_default_pii=False,
+        )
+        sentry_sdk.set_tag("service", service_name)
+        logger.info("Sentry initialized for service=%s", service_name)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Sentry init failed: %s", exc)
 
 # Operator JWT lifetime (Core /auth/login only). Shorter in non-production dev.
 _APP_ENV_RAW = os.getenv("ENVIRONMENT", "production").lower()
@@ -376,6 +429,9 @@ def create_app(
     version: str = "1.0.0",
     description: str = "",
 ) -> FastAPI:
+    # Fire Sentry init as early as possible so startup errors are captured.
+    _maybe_init_sentry(service_name=os.getenv("SERVICE_NAME") or title)
+
     app = FastAPI(
         title=title,
         version=version,
@@ -400,16 +456,28 @@ def create_app(
             "X-Internal-API-Key",
             "X-Requested-With",
             "X-Correlation-ID",
+            "X-Request-ID",
             "Idempotency-Key",
         ],
     )
 
     @app.middleware("http")
     async def correlation_id_middleware(request: Request, call_next):
-        cid = (request.headers.get("X-Correlation-ID") or "").strip() or str(uuid.uuid4())
+        # Accept both legacy X-Correlation-ID and the standard X-Request-ID.
+        cid = (
+            request.headers.get("X-Request-ID")
+            or request.headers.get("X-Correlation-ID")
+            or ""
+        ).strip() or str(uuid.uuid4())
         request.state.correlation_id = cid
-        response = await call_next(request)
+        request.state.request_id = cid
+        token = _request_id_ctx.set(cid)
+        try:
+            response = await call_next(request)
+        finally:
+            _request_id_ctx.reset(token)
         response.headers["X-Correlation-ID"] = cid
+        response.headers["X-Request-ID"] = cid
         return response
 
     # Request timing middleware

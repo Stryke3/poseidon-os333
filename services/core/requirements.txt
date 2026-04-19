@@ -11,3 +11,7 @@ python-multipart==0.0.19
 minio==7.2.12
 reportlab==4.1.0
 pdfplumber==0.11.4
+# Optional observability. Activated only when SENTRY_DSN is set. Importing
+# is guarded inside services/shared/base.py so absence never breaks boot,
+# but pinning the dep here keeps the image reproducible when the DSN is on.
+sentry-sdk[fastapi]==2.16.0

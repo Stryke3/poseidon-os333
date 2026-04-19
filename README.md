@@ -38,10 +38,15 @@ AI (Claude) code shortcuts for this project: see [.cursor/CURSOR_SHORTCUTS.md](.
 
 ## Deployment model
 
-**Canonical production:** [docker-compose.yml](docker-compose.yml) on a single DigitalOcean droplet, with nginx as the only public ingress.
+**Canonical production:** [docker-compose.yml](docker-compose.yml) on a single DigitalOcean droplet, with nginx as the only public ingress. No other deployment target is supported.
 
-- **Secrets:** live in root `.env` (never commit real `.env`). Start from [.env.template](.env.template).
+- **Secrets:** live in root `.env` (never commit real `.env`). Start from [.env.template](.env.template). Rotation procedure: [docs/SECRET_ROTATION_RUNBOOK.md](docs/SECRET_ROTATION_RUNBOOK.md).
 - **Database wiring:** app containers use `POSEIDON_DATABASE_URL` when set; leave it unset for bundled compose Postgres.
+- **Schema ownership:** [docs/SCHEMA_OWNERSHIP.md](docs/SCHEMA_OWNERSHIP.md) documents which service owns which tables across the Python + Prisma migration systems.
+- **Operational runbook:** [docs/OPERATIONS_STATUS.md](docs/OPERATIONS_STATUS.md) is the single-page ops map for incidents.
+- **Cutover:** `bash scripts/do_prod_cutover_do_only.sh` runs every gate (repo audit → env validation → build → migrate → up → healthcheck).
+- **Repo regression guard:** `bash scripts/audit_no_render_left.sh` fails if any tracked file regresses a Render reference.
+- **Trident historical learning:** `python3 scripts/bootstrap_trident_from_history.py` bootstraps Trident's learned aggregates from the production DB corpus. See [docs/OPERATIONS_STATUS.md](docs/OPERATIONS_STATUS.md) §4 for verification queries.
 
 ## Quick start (local full stack)
 
@@ -207,7 +212,15 @@ POST   /train                 → Submit outcome for learning
 GET    /model/status          → Model state
 GET    /api/v1/trident/learning-status → Continuous learning status + corpus counts
 POST   /api/v1/trident/learning-sync   → Recompute learned rates and optionally retrain
+POST   /api/v1/trident/bootstrap-history → One-shot bootstrap of versioned learned aggregates from historical DB
 ```
+
+Trident `score` responses now include:
+
+- `rule_based_probability` — baseline from payer rules / model
+- `learned_adjustment` — delta applied from learned historical aggregates
+- `confidence` — scales with sample size of the learned corpus
+- `features_used` — which learned scopes contributed (e.g. `payer_hcpcs(n=312)`)
 
 ### Intake
 ```

@@ -5507,6 +5507,15 @@ async def update_order_status(
                     }
                 ),
             )
+            await audit_log(
+                conn,
+                user["org_id"],
+                user.get("sub") or "system",
+                f"status:{order['status']}->{new_status.value}",
+                "orders",
+                order_id,
+                _client_ip(request),
+            )
             has_days_in_status = await fetch_one(
                 conn,
                 """
@@ -5579,6 +5588,15 @@ async def assign_order(
                 "SELECT id, email, first_name, last_name FROM users WHERE id = $1",
                 assigned_to,
             )
+        await audit_log(
+            conn,
+            user["org_id"],
+            user.get("sub") or "system",
+            "assign",
+            "orders",
+            order_id,
+            _client_ip(request),
+        )
 
     return {
         "order_id": order_id,
@@ -5987,6 +6005,15 @@ async def update_order_fulfillment(
             },
             user_id=context.get("assigned_to"),
             order_id=order_id,
+        )
+        await audit_log(
+            conn,
+            user["org_id"],
+            user.get("sub") or "system",
+            "fulfillment_placed",
+            "orders",
+            order_id,
+            _client_ip(request),
         )
 
     await redis.publish("notifications.created", json.dumps({"order_id": order_id, "type": "order_placed"}))
@@ -7189,6 +7216,15 @@ async def billing_submit_claim(
                     "body": result["body"],
                     "summary": summary,
                 },
+            )
+            await audit_log(
+                conn,
+                user["org_id"],
+                user.get("sub") or "system",
+                f"claim_submit:{payload.claim_type}",
+                "orders",
+                payload.order_id,
+                _client_ip(request),
             )
         redis = get_redis(request)
         await redis.publish("trident.learning_events", json.dumps({

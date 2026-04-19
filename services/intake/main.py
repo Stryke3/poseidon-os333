@@ -33,6 +33,7 @@ from psycopg.rows import dict_row  # type: ignore[import-untyped]
 _shared_dir = Path("/app/shared") if Path("/app/shared").exists() else (Path(__file__).resolve().parent.parent / "shared")
 sys.path.insert(0, str(_shared_dir))
 from base import create_app, get_redis, logger, settings
+from denial_csv_ingest import ingest_denial_rows, parse_csv_bytes, parse_xlsx_bytes
 
 # ---------------------------------------------------------------------------
 app = create_app(
@@ -833,24 +834,44 @@ async def ingest_denial_file(
     save_path = DENIALS_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{filename}"
     save_path.write_bytes(content)
 
-    rows_processed = 0
-    if filename.lower().endswith(".csv"):
-        text = content.decode("utf-8", errors="replace")
-        reader = csv.DictReader(io.StringIO(text))
-        rows_processed = sum(1 for _ in reader)
+    lower = filename.lower()
+    raw_rows: list[dict[str, Any]] = []
+    if lower.endswith(".csv"):
+        raw_rows = parse_csv_bytes(content)
+    elif lower.endswith((".xlsx", ".xlsm")):
+        raw_rows = parse_xlsx_bytes(content)
+
+    rows_parsed = len(raw_rows)
+    persist: dict[str, Any] | None = None
+    pool = getattr(request.app.state, "db_pool", None)
+    if raw_rows and pool is not None:
+        try:
+            persist = await ingest_denial_rows(pool, raw_rows, filename=filename)
+        except Exception as exc:
+            logger.exception("Denial file DB persist failed: %s", exc)
+            persist = {"error": str(exc)[:500]}
+    elif raw_rows and pool is None:
+        persist = {"error": "database pool not configured; rows saved to disk only"}
 
     redis = get_redis(request)
-    await redis.rpush("intake:denial_file_uploaded", json.dumps({
-        "file": filename,
-        "path": str(save_path),
-        "rows": rows_processed,
-    }))
+    await redis.rpush(
+        "intake:denial_file_uploaded",
+        json.dumps(
+            {
+                "file": filename,
+                "path": str(save_path),
+                "rows_parsed": rows_parsed,
+                "persisted_to_payment_outcomes": persist,
+            }
+        ),
+    )
 
     return {
         "status": "ingested",
         "file": filename,
-        "rows_detected": rows_processed,
+        "rows_parsed": rows_parsed,
         "saved_to": str(save_path),
+        "payment_outcomes": persist,
         "queued_for_ml": True,
     }
 

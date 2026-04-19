@@ -71,5 +71,6 @@ echo \"Remote compose health checks passed.\"
 echo
 echo "Deployment command sequence completed."
 echo "Next:"
-echo "  1) Update DNS records away from Render targets."
+echo "  1) Update DNS to the DO droplet."
 echo "  2) Run: bash scripts/audit_no_render_pointers.sh"
+echo "  3) Run: bash scripts/audit_no_render_left.sh"

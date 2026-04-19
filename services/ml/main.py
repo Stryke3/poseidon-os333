@@ -356,8 +356,16 @@ async def start_queue_consumer():
 
 async def _consume_training_queue():
     await asyncio.sleep(3)  # let startup settle
+    import os
+
+    import httpx
     import redis.asyncio as aioredis
+
     r = aioredis.from_url(settings.redis_url, decode_responses=True)
+    trident_url = (
+        os.getenv("TRIDENT_SERVICE_URL") or os.getenv("TRIDENT_API_URL") or "http://trident:8002"
+    ).rstrip("/")
+    auto_retrain = os.getenv("TRIDENT_RETRAIN_AFTER_DENIAL_IMPORT", "false").lower() == "true"
     logger.info("ML queue consumer started")
     while True:
         try:
@@ -365,8 +373,16 @@ async def _consume_training_queue():
             if item:
                 _, payload = item
                 data = json.loads(payload)
-                logger.info("ML queue item: %s", list(data.keys()))
-                # Future: route to appropriate handler
+                logger.info("ML queue item keys=%s", list(data.keys()))
+                po = data.get("persisted_to_payment_outcomes") or {}
+                inserted = po.get("inserted") if isinstance(po, dict) else None
+                if inserted and auto_retrain:
+                    try:
+                        async with httpx.AsyncClient(timeout=600.0) as client:
+                            resp = await client.post(f"{trident_url}/api/v1/trident/retrain")
+                            logger.info("Trident retrain after denial import: status=%s", resp.status_code)
+                    except Exception as exc:
+                        logger.warning("Trident retrain trigger failed: %s", exc)
         except Exception as e:
             logger.warning("Queue consumer error: %s", e)
         await asyncio.sleep(0.1)

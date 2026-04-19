@@ -1,8 +1,15 @@
 const pg = require("pg");
 const XLSX = require("xlsx");
 
-const CONN =
-  "postgresql://neondb_owner:npg_x8CiDQyjMS5p@ep-shy-cherry-akxipuq8-pooler.c-3.us-west-2.aws.neon.tech/neondb?sslmode=require";
+// Secret must be supplied via environment. Never commit a DB URL.
+// Valid env vars (in priority order): POSEIDON_DATABASE_URL, DATABASE_URL.
+const CONN = process.env.POSEIDON_DATABASE_URL || process.env.DATABASE_URL;
+if (!CONN) {
+  console.error(
+    "Missing DB URL. Set POSEIDON_DATABASE_URL or DATABASE_URL before running this seed script.",
+  );
+  process.exit(1);
+}
 const DME_ORG = "00000000-0000-0000-0000-000000000001";
 const ADMIN = "00000000-0000-0000-0000-000000000099";
 

@@ -6,3 +6,7 @@ redis[asyncio]==5.2.0
 numpy==2.2.0
 scikit-learn==1.6.0
 httpx==0.28.0
+openpyxl==3.1.5
+
+# Optional Sentry (SENTRY_DSN activates).
+sentry-sdk[fastapi]==2.16.0
