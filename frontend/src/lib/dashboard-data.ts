@@ -957,10 +957,6 @@ export async function getLiveDashboardData() {
 
   if (!ordersRes || !ordersRes.ok) {
     const statusCode = ordersRes?.status
-    if (statusCode === 401 || statusCode === 403) {
-      redirect("/login?session_expired=true")
-    }
-
     console.warn(
       `Dashboard data unavailable from core orders endpoint${
         statusCode ? ` (status ${statusCode})` : ""

@@ -11,6 +11,18 @@ import {
   type FaxLogEntry,
   type OcrResult,
 } from "@/lib/fax-api";
+import {
+  buildCanonicalIntakePatientBody,
+  faxIntakeToFormLike,
+  formatIntakeCanonicalResult,
+} from "@/lib/intake-canonical-payload";
+import {
+  buildTridentSnapshotForStorage,
+  canRequestTridentScore,
+  patientAgeFromIsoDob,
+  tridentInterpretation,
+  type TridentScoreApiResponse,
+} from "@/lib/trident-score";
 
 // ── Constants ──
 
@@ -249,6 +261,13 @@ export default function StrykeFoxFaxSystem() {
   const [faxLogLoading, setFaxLogLoading] = useState(false);
   const [intakeMode, setIntakeMode] = useState<"new" | "existing">("new");
   const [intakeSaving, setIntakeSaving] = useState(false);
+  const [faxTridentUi, setFaxTridentUi] = useState<
+    | null
+    | { status: "loading" }
+    | { status: "skipped"; reason: string }
+    | { status: "error"; message: string }
+    | { status: "ok"; score: TridentScoreApiResponse }
+  >(null);
   const [configSaved, setConfigSaved] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ocrFileRef = useRef<HTMLInputElement>(null);
@@ -360,7 +379,7 @@ export default function StrykeFoxFaxSystem() {
     setOcrResult(null);
 
     try {
-      // Try server-side OCR first (Intake parse-document). Accept even when raw text is
+      // Try server-side OCR first (Intake via /api/fax/ocr → BFF). Accept even when raw text is
       // empty — scanned PDFs often have no extractable text server-side.
       const serverResult = await processOcr(file);
 
@@ -559,133 +578,130 @@ export default function StrykeFoxFaxSystem() {
 
   const handleSaveIntake = async () => {
     setIntakeSaving(true);
+    setFaxTridentUi(null);
     try {
-      if (
-        intakeMode === "new" &&
-        ocrResult?.source === "client" &&
-        typeof ocrResult.confidence === "number" &&
-        ocrResult.confidence < 0.55
-      ) {
-        setSendResult({
-          type: "error",
-          message:
-            "OCR confidence is too low for automatic chart creation. Verify identity or route to manual review.",
-        });
-        setIntakeSaving(false);
-        return;
-      }
       const parseCodes = (value: string) =>
         value
           .split(/[,\s]+/)
           .map((c) => c.trim().toUpperCase())
           .filter(Boolean);
+
       const patientIdem =
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
           ? crypto.randomUUID()
           : `fax-intake-p-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-      const patientPayload = {
-        first_name: patientIntake.firstName.trim(),
-        last_name: patientIntake.lastName.trim(),
-        dob: patientIntake.dob.trim(),
-        insurance_id: patientIntake.insuranceId.trim() || null,
-        payer_id: patientIntake.payerId.trim() || null,
-        diagnosis_codes: parseCodes(patientIntake.icd10Codes),
-        phone: patientIntake.phone.trim() || null,
-        address:
-          patientIntake.address.trim().length > 0
-            ? { line1: patientIntake.address.trim() }
-            : null,
-      };
-      const patchPayload = Object.fromEntries(
-        Object.entries(patientPayload).filter(([, value]) => {
-          if (value === null || value === undefined) return false;
-          if (typeof value === "string") return value.trim().length > 0;
-          if (Array.isArray(value)) return value.length > 0;
-          if (typeof value === "object") return Object.keys(value as object).length > 0;
-          return true;
-        }),
-      );
 
-      const endpoint =
-        intakeMode === "existing" && patientIntake.existingChartId
-          ? `/api/patients/${patientIntake.existingChartId}`
-          : "/api/patients";
-
-      const method = intakeMode === "existing" ? "PATCH" : "POST";
-
-      const res = await fetch(endpoint, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": patientIdem,
-        },
-        body: JSON.stringify(intakeMode === "existing" ? patchPayload : patientPayload),
-      });
-
-      const patientResponse = await res.json().catch(() => ({} as { patient_id?: string; detail?: string; status?: string }));
-      if (res.ok || (res.status === 409 && Boolean(patientResponse.patient_id))) {
-        const patientId = patientResponse.patient_id || patientIntake.existingChartId || null;
-        let orderId: string | null = null;
-        const hcpcsCodes = parseCodes(patientIntake.hcpcsCodes);
+      /** New chart → single POST to canonical Intake (same path as /intake/new). */
+      if (intakeMode === "new") {
         if (
-          intakeMode === "new" &&
-          patientId &&
-          hcpcsCodes.length > 0 &&
-          patientIntake.payerId.trim() &&
-          patientIntake.physicianNpi.trim()
+          !patientIntake.firstName.trim() ||
+          !patientIntake.lastName.trim() ||
+          !patientIntake.dob.trim()
         ) {
-          const orderRes = await fetch("/api/orders", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Idempotency-Key":
-                typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-                  ? crypto.randomUUID()
-                  : `fax-intake-o-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-            },
-            body: JSON.stringify({
-              patient_id: patientId,
-              hcpcs_codes: hcpcsCodes,
-              referring_physician_npi: patientIntake.physicianNpi.trim(),
-              payer_id: patientIntake.payerId.trim(),
-              priority: "standard",
-              source_channel: "fax",
-              source_reference: "strykefox-fax-ocr",
-              intake_payload: {
-                patient_input: {
-                  first_name: patientIntake.firstName.trim(),
-                  last_name: patientIntake.lastName.trim(),
-                  dob: patientIntake.dob.trim(),
-                  phone: patientIntake.phone.trim() || null,
-                },
-                coding: {
-                  icd10_codes: parseCodes(patientIntake.icd10Codes),
-                  hcpcs_codes: hcpcsCodes,
-                },
-                workflow: {
-                  intake_state: "normalization_complete",
-                  source: "fax_ocr",
-                },
-              },
-              source: "fax_ocr",
-            }),
+          setSendResult({
+            type: "error",
+            message: "First name, last name, and date of birth are required.",
           });
-          if (orderRes.ok) {
-            const orderData = await orderRes.json().catch(() => ({} as { order_id?: string }));
-            orderId = orderData.order_id || null;
-          }
+          return;
         }
+
+        const icd10Codes = parseCodes(patientIntake.icd10Codes);
+        const hcpcsCodes = parseCodes(patientIntake.hcpcsCodes);
+        const formLike = faxIntakeToFormLike(patientIntake);
+        const parseConfidence =
+          ocrResult?.source === "client" && typeof ocrResult.confidence === "number"
+            ? ocrResult.confidence
+            : undefined;
+
+        const body = buildCanonicalIntakePatientBody(
+          formLike,
+          icd10Codes,
+          hcpcsCodes,
+          [],
+          {
+            parse_confidence: parseConfidence,
+            orderSource: "fax_ocr",
+          },
+        );
+
+        const res = await fetch("/api/intake/patient", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": patientIdem,
+          },
+          body: JSON.stringify(body),
+        });
+
+        const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        if (!res.ok) {
+          const msg =
+            (typeof data.detail === "string" && data.detail) ||
+            (typeof data.message === "string" && data.message) ||
+            (typeof data.error === "string" && data.error) ||
+            "Intake save failed";
+          setSendResult({ type: "error", message: msg });
+          return;
+        }
+
         setSendResult({
           type: "success",
-          message:
-            intakeMode === "new"
-              ? orderId
-                ? `Patient chart created and case ${orderId.slice(0, 8)} opened`
-                : res.status === 409
-                  ? "Matched existing patient chart (record enriched)"
-                  : "Patient chart created successfully"
-              : "Patient chart updated successfully",
+          message: formatIntakeCanonicalResult(data),
         });
+        const orderIdFromIntake = typeof data.order_id === "string" ? data.order_id : null;
+        const icd10ForScore = parseCodes(patientIntake.icd10Codes);
+        const hcpcsForScore = parseCodes(patientIntake.hcpcsCodes);
+        if (
+          canRequestTridentScore({
+            payerId: patientIntake.payerId,
+            icd10Codes: icd10ForScore,
+            hcpcsCodes: hcpcsForScore,
+          })
+        ) {
+          setFaxTridentUi({ status: "loading" });
+          void fetch("/api/trident/score", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              icd10_codes: icd10ForScore,
+              hcpcs_codes: hcpcsForScore,
+              payer_id: patientIntake.payerId.trim(),
+              physician_npi: patientIntake.physicianNpi.trim() || undefined,
+              patient_age: patientAgeFromIsoDob(patientIntake.dob.trim()),
+              dos: new Date().toISOString().slice(0, 10),
+            }),
+          })
+            .then(async (r) => {
+              const j = (await r.json().catch(() => ({}))) as TridentScoreApiResponse;
+              if (!r.ok) {
+                setFaxTridentUi({
+                  status: "error",
+                  message:
+                    (typeof j.detail === "string" && j.detail) ||
+                    (typeof j.error === "string" && j.error) ||
+                    `Trident score failed (${r.status})`,
+                });
+                return;
+              }
+              setFaxTridentUi({ status: "ok", score: j });
+              if (orderIdFromIntake) {
+                void fetch(`/api/orders/${orderIdFromIntake}/trident-snapshot`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ snapshot: buildTridentSnapshotForStorage(j) }),
+                }).catch(() => {});
+              }
+            })
+            .catch(() => {
+              setFaxTridentUi({ status: "error", message: "Could not reach Trident score service." });
+            });
+        } else {
+          setFaxTridentUi({
+            status: "skipped",
+            reason:
+              "Trident preview needs payer, ICD-10, and HCPCS. Add fields and save again after enrichment.",
+          });
+        }
         setPatientIntake({
           firstName: "",
           lastName: "",
@@ -700,23 +716,88 @@ export default function StrykeFoxFaxSystem() {
           address: "",
           existingChartId: "",
         });
-      } else {
-        setSendResult({
-          type: "error",
-          message:
-            (patientResponse as { detail?: string; error?: string }).detail ||
-            (patientResponse as { detail?: string; error?: string }).error ||
-            "Failed to save patient chart",
-        });
+        return;
       }
+
+      /** Existing chart → Core PATCH (not Intake canonical). */
+      if (intakeMode === "existing" && patientIntake.existingChartId) {
+        const patientPayload = {
+          first_name: patientIntake.firstName.trim(),
+          last_name: patientIntake.lastName.trim(),
+          dob: patientIntake.dob.trim(),
+          insurance_id: patientIntake.insuranceId.trim() || null,
+          payer_id: patientIntake.payerId.trim() || null,
+          diagnosis_codes: parseCodes(patientIntake.icd10Codes),
+          phone: patientIntake.phone.trim() || null,
+          address:
+            patientIntake.address.trim().length > 0
+              ? { line1: patientIntake.address.trim() }
+              : null,
+        };
+        const patchPayload = Object.fromEntries(
+          Object.entries(patientPayload).filter(([, value]) => {
+            if (value === null || value === undefined) return false;
+            if (typeof value === "string") return value.trim().length > 0;
+            if (Array.isArray(value)) return value.length > 0;
+            if (typeof value === "object")
+              return Object.keys(value as object).length > 0;
+            return true;
+          }),
+        );
+
+        const res = await fetch(`/api/patients/${patientIntake.existingChartId}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": patientIdem,
+          },
+          body: JSON.stringify(patchPayload),
+        });
+
+        const patientResponse = await res.json().catch(() => ({} as { detail?: string }));
+        if (res.ok) {
+          setSendResult({
+            type: "success",
+            message: "Patient chart updated successfully",
+          });
+          setPatientIntake({
+            firstName: "",
+            lastName: "",
+            dob: "",
+            mrn: "",
+            insuranceId: "",
+            payerId: "",
+            physicianNpi: "",
+            icd10Codes: "",
+            hcpcsCodes: "",
+            phone: "",
+            address: "",
+            existingChartId: "",
+          });
+        } else {
+          setSendResult({
+            type: "error",
+            message:
+              (patientResponse as { detail?: string }).detail ||
+              "Failed to update patient chart",
+          });
+        }
+        return;
+      }
+
+      setSendResult({
+        type: "error",
+        message: "Choose New or Existing chart mode before saving.",
+      });
     } catch {
       setSendResult({
         type: "error",
-        message: "Unable to reach patient service",
+        message: "Unable to reach intake service",
       });
+    } finally {
+      setIntakeSaving(false);
+      setTimeout(() => setSendResult(null), 8000);
     }
-    setIntakeSaving(false);
-    setTimeout(() => setSendResult(null), 6000);
   };
 
   // ── Config Save ──
@@ -831,11 +912,56 @@ export default function StrykeFoxFaxSystem() {
               {sendResult.message}
             </span>
             <button
-              onClick={() => setSendResult(null)}
+              onClick={() => {
+                setSendResult(null);
+                setFaxTridentUi(null);
+              }}
               className="text-lg leading-none opacity-60 hover:opacity-100"
             >
               \u00D7
             </button>
+          </div>
+        </div>
+      )}
+
+      {faxTridentUi && (
+        <div className="max-w-5xl mx-auto px-4 mt-2">
+          <div className="rounded-xl border border-teal-200 bg-teal-50/80 px-4 py-3 text-xs text-slate-800">
+            <p className="mb-1 font-bold uppercase tracking-wide text-teal-800">Trident (learned signal)</p>
+            {faxTridentUi.status === "loading" && (
+              <p className="text-slate-600">Scoring with historical aggregates…</p>
+            )}
+            {faxTridentUi.status === "skipped" && (
+              <p className="text-slate-600">{faxTridentUi.reason}</p>
+            )}
+            {faxTridentUi.status === "error" && (
+              <p className="text-red-700">{faxTridentUi.message}</p>
+            )}
+            {faxTridentUi.status === "ok" && (() => {
+              const s = faxTridentUi.score;
+              const { confidenceTier, historyTier } = tridentInterpretation(s);
+              return (
+                <div className="space-y-1 font-mono text-[11px]">
+                  <div>
+                    <span className="text-slate-500">learned_adjustment </span>
+                    {typeof s.learned_adjustment === "number" ? s.learned_adjustment.toFixed(4) : "—"}
+                  </div>
+                  <div>
+                    <span className="text-slate-500">confidence </span>
+                    {typeof s.confidence === "number" ? s.confidence.toFixed(3) : "—"}
+                  </div>
+                  <div className="break-all">
+                    <span className="text-slate-500">features_used </span>
+                    {Array.isArray(s.features_used) && s.features_used.length
+                      ? s.features_used.join(", ")
+                      : "—"}
+                  </div>
+                  <p className="border-t border-teal-200 pt-2 font-sans text-[11px] text-slate-600">
+                    {confidenceTier} · {historyTier}
+                  </p>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

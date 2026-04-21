@@ -1,7 +1,18 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
+
+import {
+  buildCanonicalIntakePatientBody,
+  formatIntakeCanonicalResult,
+} from "@/lib/intake-canonical-payload"
+import {
+  buildTridentSnapshotForStorage,
+  canRequestTridentScore,
+  patientAgeFromIsoDob,
+  tridentInterpretation,
+  type TridentScoreApiResponse,
+} from "@/lib/trident-score"
 
 type FormState = {
   first_name: string
@@ -78,6 +89,10 @@ function parseCodes(value: string) {
     .filter(Boolean)
 }
 
+function safeLower(s: string | null | undefined): string {
+  return (s ?? "").toLowerCase()
+}
+
 type CodingRecommendation = {
   hcpcs_code: string
   score?: number | null
@@ -104,14 +119,21 @@ type PhysicianOption = {
   fax?: string
 }
 
+type TridentUiState =
+  | null
+  | { status: "loading" }
+  | { status: "skipped"; reason: string }
+  | { status: "error"; message: string }
+  | { status: "ok"; score: TridentScoreApiResponse }
+
 export default function PatientIntakeForm() {
-  const router = useRouter()
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [swoFile, setSwoFile] = useState<File | null>(null)
   const [supportingFiles, setSupportingFiles] = useState<File[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null)
+  const [tridentUi, setTridentUi] = useState<TridentUiState>(null)
   const [doctorLookupStatus, setDoctorLookupStatus] = useState<string | null>(null)
   const [recommendations, setRecommendations] = useState<CodingRecommendation[]>([])
   const [recommendationStatus, setRecommendationStatus] = useState<string | null>(null)
@@ -148,7 +170,7 @@ export default function PatientIntakeForm() {
     const f = payerFilter.trim().toLowerCase()
     if (!f) return payerOptions
     return payerOptions.filter(
-      (p) => p.id.toLowerCase().includes(f) || p.name.toLowerCase().includes(f),
+      (p) => safeLower(p?.id).includes(f) || safeLower(p?.name).includes(f),
     )
   }, [payerFilter, payerOptions])
 
@@ -162,38 +184,42 @@ export default function PatientIntakeForm() {
 
   const icd10ForSelect = useMemo(() => {
     const f = icd10Filter.trim().toLowerCase()
-    if (!f) return icd10Options
-    return icd10Options.filter(
-      (item) => item.code.toLowerCase().includes(f) || item.description.toLowerCase().includes(f),
+    const rows = icd10Options.filter((item) => item?.code)
+    if (!f) return rows
+    return rows.filter(
+      (item) =>
+        safeLower(item.code).includes(f) || safeLower(item.description).includes(f),
     )
   }, [icd10Filter, icd10Options])
 
   const hcpcsForSelect = useMemo(() => {
     const f = hcpcsFilter.trim().toLowerCase()
-    if (!f) return hcpcsOptions
-    return hcpcsOptions.filter(
+    const rows = hcpcsOptions.filter((item) => item?.code)
+    if (!f) return rows
+    return rows.filter(
       (item) =>
-        item.code.toLowerCase().includes(f) ||
-        item.description.toLowerCase().includes(f) ||
-        (item.long_description || "").toLowerCase().includes(f),
+        safeLower(item.code).includes(f) ||
+        safeLower(item.description).includes(f) ||
+        safeLower(item.long_description).includes(f),
     )
   }, [hcpcsFilter, hcpcsOptions])
 
   const physiciansForSelect = useMemo(() => {
     const f = physicianFilter.trim().toLowerCase()
-    if (!f) return physicianOptions
-    return physicianOptions.filter(
+    const rows = physicianOptions.filter((item) => item?.npi)
+    if (!f) return rows
+    return rows.filter(
       (item) =>
-        item.full_name.toLowerCase().includes(f) ||
-        item.npi.toLowerCase().includes(f) ||
-        (item.specialty || "").toLowerCase().includes(f),
+        safeLower(item.full_name).includes(f) ||
+        safeLower(item.npi).includes(f) ||
+        safeLower(item.specialty).includes(f),
     )
   }, [physicianFilter, physicianOptions])
 
   useEffect(() => {
     let cancelled = false
     setPayersStatus("Loading payer directory…")
-    fetch("/api/reference/payers", { cache: "no-store" })
+    fetch("/api/reference/payers", { cache: "no-store", credentials: "include" })
       .then(async (res) => {
         const data = (await res.json().catch(() => ({}))) as {
           payers?: PayerOption[]
@@ -203,7 +229,9 @@ export default function PatientIntakeForm() {
         if (!res.ok) {
           throw new Error(data.detail || data.error || "Failed to load payers")
         }
-        const list = Array.isArray(data.payers) ? data.payers : []
+        const list = (Array.isArray(data.payers) ? data.payers : []).filter(
+          (p): p is PayerOption => Boolean(p && typeof p.id === "string" && p.id.trim().length > 0),
+        )
         if (!cancelled) {
           setPayerOptions(list)
           setPayersStatus(list.length ? null : "No payers in directory — enter payer ID manually.")
@@ -235,7 +263,10 @@ export default function PatientIntakeForm() {
     }
     setIcd10Status("Loading ICD-10 suggestions…")
     const timer = setTimeout(() => {
-      fetch(`/api/reference/icd10?query=${encodeURIComponent(query)}`, { cache: "no-store" })
+      fetch(`/api/reference/icd10?query=${encodeURIComponent(query)}`, {
+        cache: "no-store",
+        credentials: "include",
+      })
         .then(async (res) => {
           const data = (await res.json().catch(() => ({}))) as {
             items?: Icd10Option[]
@@ -246,7 +277,9 @@ export default function PatientIntakeForm() {
             throw new Error(data.detail || data.error || "Failed to load ICD-10 suggestions")
           }
           if (!cancelled) {
-            const list = Array.isArray(data.items) ? data.items : []
+            const list = (Array.isArray(data.items) ? data.items : []).filter(
+              (row): row is Icd10Option => Boolean(row && typeof row.code === "string" && row.code.trim().length > 0),
+            )
             setIcd10Options(list)
             setIcd10Status(list.length ? null : "No ICD-10 matches found.")
           }
@@ -274,7 +307,10 @@ export default function PatientIntakeForm() {
     }
     setHcpcsStatus("Loading HCPCS suggestions…")
     const timer = setTimeout(() => {
-      fetch(`/api/reference/hcpcs?query=${encodeURIComponent(query)}`, { cache: "no-store" })
+      fetch(`/api/reference/hcpcs?query=${encodeURIComponent(query)}`, {
+        cache: "no-store",
+        credentials: "include",
+      })
         .then(async (res) => {
           const data = (await res.json().catch(() => ({}))) as {
             items?: HcpcsOption[]
@@ -285,7 +321,9 @@ export default function PatientIntakeForm() {
             throw new Error(data.detail || data.error || "Failed to load HCPCS suggestions")
           }
           if (!cancelled) {
-            const list = Array.isArray(data.items) ? data.items : []
+            const list = (Array.isArray(data.items) ? data.items : []).filter(
+              (row): row is HcpcsOption => Boolean(row && typeof row.code === "string" && row.code.trim().length > 0),
+            )
             setHcpcsOptions(list)
             setHcpcsStatus(list.length ? null : "No HCPCS matches found.")
           }
@@ -313,7 +351,10 @@ export default function PatientIntakeForm() {
     }
     setPhysicianStatus("Searching physician directory…")
     const timer = setTimeout(() => {
-      fetch(`/api/reference/physicians?query=${encodeURIComponent(query)}`, { cache: "no-store" })
+      fetch(`/api/reference/physicians?query=${encodeURIComponent(query)}`, {
+        cache: "no-store",
+        credentials: "include",
+      })
         .then(async (res) => {
           const data = (await res.json().catch(() => ({}))) as {
             items?: PhysicianOption[]
@@ -324,7 +365,10 @@ export default function PatientIntakeForm() {
             throw new Error(data.detail || data.error || "Failed to load physician suggestions")
           }
           if (!cancelled) {
-            const list = Array.isArray(data.items) ? data.items : []
+            const list = (Array.isArray(data.items) ? data.items : []).filter(
+              (row): row is PhysicianOption =>
+                Boolean(row?.npi != null && String(row.npi).trim().length > 0),
+            )
             setPhysicianOptions(list)
             setPhysicianStatus(list.length ? null : "No physician matches found.")
           }
@@ -389,6 +433,7 @@ export default function PatientIntakeForm() {
     setDoctorLookupStatus("Looking up physician...")
     const res = await fetch(`/api/physicians/lookup?npi=${encodeURIComponent(npi)}`, {
       cache: "no-store",
+      credentials: "include",
     }).catch(() => null)
     if (!res) {
       setDoctorLookupStatus("Unable to reach physician directory.")
@@ -424,6 +469,7 @@ export default function PatientIntakeForm() {
     setRecommendationStatus("Fetching coding recommendations...")
     const res = await fetch("/api/intake/coding-recommendations", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         payer_id: payerId,
@@ -442,7 +488,8 @@ export default function PatientIntakeForm() {
       detail?: string
     }
     if (!res.ok) {
-      setRecommendationStatus(data.detail || data.error || "Recommendation lookup failed.")
+      const d = data.detail || data.error || "Recommendation lookup failed."
+      setRecommendationStatus(d === "unexpected_error" ? "Coding recommendations unavailable (service error)." : d)
       return
     }
     const next = Array.isArray(data.recommendations) ? data.recommendations : []
@@ -469,6 +516,7 @@ export default function PatientIntakeForm() {
     docForm.set("file", file)
     const uploadRes = await fetch(`/api/patients/${patientId}/orders/${orderId}/documents`, {
       method: "POST",
+      credentials: "include",
       body: docForm,
     })
     if (!uploadRes.ok) {
@@ -491,170 +539,142 @@ export default function PatientIntakeForm() {
         setSubmitError("Date of birth is required")
         return
       }
-      if (!form.payer_id.trim()) {
-        setSubmitError("Payer is required")
-        return
-      }
-      if (!form.insurance_id.trim()) {
-        setSubmitError("Insurance / Member ID is required")
-        return
-      }
-      if (icd10Codes.length === 0) {
-        setSubmitError("At least one ICD-10 code is required")
-        return
-      }
-      if (hcpcsCodes.length === 0) {
-        setSubmitError("At least one HCPCS/device code is required")
-        return
-      }
-      if (!form.referring_npi.trim()) {
-        setSubmitError("Referring physician NPI is required")
-        return
-      }
 
       setSubmitting(true)
-      const patientIdempotencyKey =
+      const idempotencyKey =
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
           ? crypto.randomUUID()
-          : `idem-p-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
-      const orderIdempotencyKey =
-        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? crypto.randomUUID()
-          : `idem-o-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
-      let createdPatientId: string | null = null
+          : `idem-intake-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
+
       try {
-        const patientPayload = {
-          first_name: form.first_name.trim(),
-          last_name: form.last_name.trim(),
-          dob: form.dob.trim(),
-          email: form.email || undefined,
-          phone: form.phone || undefined,
-          payer_id: form.payer_id.trim(),
-          insurance_id: form.insurance_id.trim(),
-          diagnosis_codes: icd10Codes,
-          address: {
-            provider_contact: {
-              name: form.doctor_name.trim() || null,
-              phone: form.doctor_phone.trim() || null,
-              fax: form.doctor_fax.trim() || null,
-              email: form.doctor_email.trim() || null,
-              npi: form.referring_npi.trim() || null,
-            },
-          },
-        }
+        const body = buildCanonicalIntakePatientBody(form, icd10Codes, hcpcsCodes, payerOptions)
 
-        const patientRes = await fetch("/api/patients", {
+        const intakeRes = await fetch("/api/intake/patient", {
           method: "POST",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
-            "Idempotency-Key": patientIdempotencyKey,
+            "Idempotency-Key": idempotencyKey,
           },
-          body: JSON.stringify(patientPayload),
+          body: JSON.stringify(body),
         })
 
-        const patientData = await patientRes.json().catch(() => ({}))
-        if (!patientRes.ok && patientRes.status !== 409) {
-          throw new Error(
-            (patientData as { detail?: string; error?: string }).detail ||
-              (patientData as { error?: string }).error ||
-              "Failed to create patient",
-          )
+        const data = (await intakeRes.json().catch(() => ({}))) as Record<string, unknown>
+        if (!intakeRes.ok) {
+          const raw =
+            (typeof data.detail === "string" && data.detail) ||
+            (typeof data.message === "string" && data.message) ||
+            (typeof data.error === "string" && data.error) ||
+            `Intake failed (${intakeRes.status})`
+          const msg =
+            raw === "unexpected_error"
+              ? "Intake service error (check intake logs). If this persists, try again or contact support."
+              : raw
+          throw new Error(msg)
         }
 
-        createdPatientId = (patientData as { patient_id?: string }).patient_id || null
-        if (!createdPatientId) {
-          throw new Error("Patient created but ID was not returned")
+        const createdPatientId = typeof data.patient_id === "string" ? data.patient_id : null
+        const orderId = typeof data.order_id === "string" ? data.order_id : null
+        const reviewQueued = Boolean(data.review_queued)
+
+        const uploadErrors: string[] = []
+        if (orderId && createdPatientId) {
+          try {
+            if (swoFile) {
+              await uploadDocument(createdPatientId, orderId, "swo", swoFile)
+            }
+            for (const file of supportingFiles) {
+              await uploadDocument(createdPatientId, orderId, "other", file)
+            }
+          } catch (uploadErr) {
+            const u = uploadErr instanceof Error ? uploadErr.message : "Attachment upload failed"
+            uploadErrors.push(u)
+          }
         }
 
-        const orderPayload = {
-          patient_id: createdPatientId,
-          hcpcs_codes: hcpcsCodes,
-          referring_physician_npi: form.referring_npi.trim(),
-          payer_id: form.payer_id.trim(),
-          insurance_auth_number: form.insurance_auth_number.trim() || undefined,
-          notes: form.notes.trim() || undefined,
-          priority: form.priority,
-          source_channel: "manual",
-          intake_payload: {
-            patient_input: {
-              first_name: form.first_name.trim(),
-              last_name: form.last_name.trim(),
-              dob: form.dob.trim(),
-              email: form.email.trim() || null,
-              phone: form.phone.trim() || null,
-            },
-            coding: {
-              icd10_codes: icd10Codes,
-              hcpcs_codes: hcpcsCodes,
-              device_description: form.device_description.trim() || null,
-            },
-            provider_contact: {
-              name: form.doctor_name.trim() || null,
-              phone: form.doctor_phone.trim() || null,
-              fax: form.doctor_fax.trim() || null,
-              email: form.doctor_email.trim() || null,
-              npi: form.referring_npi.trim() || null,
-            },
-            workflow: {
-              swo_expected: true,
-              order_status: "intake",
-              delivery_status: "pending",
-            },
-          },
-          source_reference: "frontend-intake",
-          vertical: "dme",
-          product_category: form.device_description.trim() || "manual-intake",
-          source: "manual",
+        let successMsg = formatIntakeCanonicalResult(data)
+        if (reviewQueued && !orderId && (swoFile || supportingFiles.length > 0)) {
+          successMsg += " Attachments were not uploaded (no order yet — add coverage/coding/NPI for a full order)."
+        }
+        if (uploadErrors.length > 0) {
+          successMsg += ` Document upload note: ${uploadErrors.join("; ")}`
+        }
+        setSubmitSuccess(successMsg)
+        setTridentUi(null)
+
+        const payerForScore = form.payer_id.trim()
+        const npiForScore = form.referring_npi.trim()
+        const dobForScore = form.dob.trim()
+        if (canRequestTridentScore({ payerId: payerForScore, icd10Codes, hcpcsCodes })) {
+          setTridentUi({ status: "loading" })
+          const scoreBody = {
+            icd10_codes: icd10Codes,
+            hcpcs_codes: hcpcsCodes,
+            payer_id: payerForScore,
+            physician_npi: npiForScore || undefined,
+            patient_age: patientAgeFromIsoDob(dobForScore),
+            dos: new Date().toISOString().slice(0, 10),
+          }
+          void fetch("/api/trident/score", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(scoreBody),
+          })
+            .then(async (r) => {
+              const j = (await r.json().catch(() => ({}))) as TridentScoreApiResponse
+              if (!r.ok) {
+                setTridentUi({
+                  status: "error",
+                  message:
+                    (typeof j.detail === "string" && j.detail) ||
+                    (typeof j.error === "string" && j.error) ||
+                    `Trident score failed (${r.status})`,
+                })
+                return
+              }
+              setTridentUi({ status: "ok", score: j })
+              if (orderId) {
+                void fetch(`/api/orders/${orderId}/trident-snapshot`, {
+                  method: "POST",
+                  credentials: "include",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ snapshot: buildTridentSnapshotForStorage(j) }),
+                }).catch(() => {})
+              }
+            })
+            .catch(() => {
+              setTridentUi({ status: "error", message: "Could not reach Trident score service." })
+            })
+        } else {
+          setTridentUi({
+            status: "skipped",
+            reason:
+              "Trident risk preview needs a payer, at least one ICD-10, and one HCPCS. Add those fields and save again, or open the patient from the queue after enrichment.",
+          })
         }
 
-        const orderRes = await fetch("/api/orders", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Idempotency-Key": orderIdempotencyKey,
-          },
-          body: JSON.stringify(orderPayload),
-        })
-        const orderData = await orderRes.json().catch(() => ({}))
-        if (!orderRes.ok) {
-          throw new Error(
-            (orderData as { detail?: string; error?: string }).detail ||
-              (orderData as { error?: string }).error ||
-              "Failed to create order",
-          )
+        if (!reviewQueued || orderId) {
+          setForm(EMPTY_FORM)
+          setSwoFile(null)
+          setSupportingFiles([])
         }
-        const orderId = (orderData as { order_id?: string }).order_id
-        if (!orderId) {
-          throw new Error("Order created but ID was not returned")
-        }
-
-        if (swoFile) {
-          await uploadDocument(createdPatientId, orderId, "swo", swoFile)
-        }
-        for (const file of supportingFiles) {
-          await uploadDocument(createdPatientId, orderId, "other", file)
-        }
-
-        setSubmitSuccess(`Patient and intake order created (${orderId.slice(0, 8)})`)
-        setForm(EMPTY_FORM)
-        setSwoFile(null)
-        setSupportingFiles([])
-        setTimeout(() => router.push("/intake"), 1000)
       } catch (err) {
         const baseMessage = err instanceof Error ? err.message : "Failed to submit intake"
-        const message = createdPatientId
-          ? `${baseMessage} Patient record was created (${createdPatientId.slice(0, 8)}), but intake order creation did not finish.`
-          : baseMessage
-        setSubmitError(message)
+        setSubmitError(baseMessage)
       } finally {
         setSubmitting(false)
       }
     },
-    [form, hcpcsCodes, icd10Codes, router, supportingFiles, swoFile, uploadDocument],
+    [form, hcpcsCodes, icd10Codes, payerOptions, supportingFiles, swoFile, uploadDocument],
   )
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      <p className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-xs leading-relaxed text-slate-300">
+        Submits to the Intake service. Minimum: name and date of birth. For a full billable order, add payer, member ID,
+        ICD-10, HCPCS, and referring NPI; otherwise the patient is saved and the case is queued for review.
+      </p>
       <div className="rounded-2xl border border-white/10 bg-black/10 p-5">
         <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.2em] text-accent-blue">
           Patient
@@ -689,7 +709,7 @@ export default function PatientIntakeForm() {
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <FieldLabel label="Insurance payer" required />
+            <FieldLabel label="Insurance payer" />
             {!payersHydrated ? (
               <p className="mt-1 text-sm text-slate-500">{payersStatus}</p>
             ) : payerOptions.length > 0 ? (
@@ -707,9 +727,10 @@ export default function PatientIntakeForm() {
                   <option value="">Select insurance payer…</option>
                   {payersForSelect.map((p) => {
                     const pi = p.availity_payer_id?.trim() || p.id
+                    const label = (p.name || p.id).trim()
                     return (
                       <option key={p.id} value={p.id}>
-                        {p.name} — Availity PI {pi} · Poseidon {p.id}
+                        {label} — Availity PI {pi} · Poseidon {p.id}
                       </option>
                     )
                   })}
@@ -761,7 +782,7 @@ export default function PatientIntakeForm() {
             </p>
           </div>
           <div>
-            <FieldLabel label="Insurance / Member ID" required />
+            <FieldLabel label="Insurance / Member ID" />
             <FieldInput value={form.insurance_id} onChange={(v) => updateField("insurance_id", v)} placeholder="MBR-123456" />
           </div>
         </div>
@@ -773,7 +794,7 @@ export default function PatientIntakeForm() {
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <FieldLabel label="Diagnosis Codes (ICD-10)" required />
+            <FieldLabel label="Diagnosis Codes (ICD-10)" />
             <FieldInput
               value={form.icd10_codes}
               onChange={(v) => updateField("icd10_codes", v)}
@@ -791,7 +812,7 @@ export default function PatientIntakeForm() {
                 <option value="">Add ICD-10 code from dropdown…</option>
                 {icd10ForSelect.map((item) => (
                   <option key={item.code} value={item.code}>
-                    {item.code} - {item.description}
+                    {item.code} - {item.description ?? ""}
                   </option>
                 ))}
               </select>
@@ -801,7 +822,7 @@ export default function PatientIntakeForm() {
             </p>
           </div>
           <div>
-            <FieldLabel label="HCPCS / Device Codes" required />
+            <FieldLabel label="HCPCS / Device Codes" />
             <FieldInput
               value={form.hcpcs_codes}
               onChange={(v) => updateField("hcpcs_codes", v)}
@@ -819,7 +840,7 @@ export default function PatientIntakeForm() {
                 <option value="">Add HCPCS code from dropdown…</option>
                 {hcpcsForSelect.map((item) => (
                   <option key={item.code} value={item.code}>
-                    {item.code} - {item.description}
+                    {item.code} - {item.description ?? ""}
                   </option>
                 ))}
               </select>
@@ -837,7 +858,7 @@ export default function PatientIntakeForm() {
             />
           </div>
           <div>
-            <FieldLabel label="Referring Physician NPI" required />
+            <FieldLabel label="Referring Physician NPI" />
             <FieldInput
               value={form.referring_npi}
               onChange={(v) => updateField("referring_npi", v)}
@@ -992,7 +1013,51 @@ export default function PatientIntakeForm() {
       )}
       {submitSuccess && (
         <div className="rounded-xl border border-accent-green/30 bg-accent-green/10 px-4 py-2.5 text-xs text-accent-green">
-          {submitSuccess} - sending to intake board...
+          {submitSuccess}
+          <a href="/intake" className="ml-2 underline underline-offset-2 hover:text-white">
+            Open intake board
+          </a>
+        </div>
+      )}
+
+      {tridentUi && (
+        <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/5 px-4 py-3 text-xs text-slate-200">
+          <p className="mb-2 font-semibold uppercase tracking-[0.15em] text-cyan-300/90">Trident (learned signal)</p>
+          {tridentUi.status === "loading" && <p className="text-slate-400">Scoring with historical aggregates…</p>}
+          {tridentUi.status === "skipped" && <p className="text-slate-400">{tridentUi.reason}</p>}
+          {tridentUi.status === "error" && (
+            <p className="text-accent-red/90">{tridentUi.message}</p>
+          )}
+          {tridentUi.status === "ok" && (() => {
+            const s = tridentUi.score
+            const adj = s.learned_adjustment
+            const conf = s.confidence
+            const feats = s.features_used
+            const { confidenceTier, historyTier } = tridentInterpretation(s)
+            return (
+              <div className="space-y-2 font-mono text-[11px] leading-relaxed">
+                <div className="grid gap-1 sm:grid-cols-2">
+                  <span className="text-slate-500">learned_adjustment</span>
+                  <span>{typeof adj === "number" ? adj.toFixed(4) : "—"}</span>
+                  <span className="text-slate-500">confidence</span>
+                  <span>{typeof conf === "number" ? conf.toFixed(3) : "—"}</span>
+                  <span className="text-slate-500">features_used</span>
+                  <span className="break-all text-slate-300">
+                    {Array.isArray(feats) && feats.length ? feats.join(", ") : "—"}
+                  </span>
+                  {typeof s.denial_probability === "number" && (
+                    <>
+                      <span className="text-slate-500">denial_probability</span>
+                      <span>{s.denial_probability.toFixed(4)}</span>
+                    </>
+                  )}
+                </div>
+                <p className="border-t border-white/10 pt-2 text-[11px] text-slate-400">
+                  {confidenceTier} · {historyTier}
+                </p>
+              </div>
+            )
+          })()}
         </div>
       )}
 
@@ -1008,6 +1073,7 @@ export default function PatientIntakeForm() {
             setSupportingFiles([])
             setSubmitError(null)
             setSubmitSuccess(null)
+            setTridentUi(null)
           }}
           className="rounded-xl border border-white/10 px-5 py-2.5 text-sm font-semibold text-slate-400 transition hover:border-white/20 hover:text-white"
         >

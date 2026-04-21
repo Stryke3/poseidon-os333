@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
   const upstream = new FormData()
   upstream.append("file", file)
 
-  const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/parse-document`, {
+  const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/upload`, {
     method: "POST",
     headers: {
       ...internalApiKeyHeaders(),
@@ -36,6 +36,10 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const data = await res.json()
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  if (data.kind === "pdf") {
+    const { kind: _kind, ...rest } = data
+    return NextResponse.json(rest, { status: res.status })
+  }
   return NextResponse.json(data, { status: res.status })
 }

@@ -26,7 +26,7 @@ import openpyxl
 import pdfplumber
 from fastapi import BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from psycopg.rows import dict_row  # type: ignore[import-untyped]
 
 # Shared module: Docker has /app/shared; local uses repo/services/shared
@@ -34,6 +34,7 @@ _shared_dir = Path("/app/shared") if Path("/app/shared").exists() else (Path(__f
 sys.path.insert(0, str(_shared_dir))
 from base import create_app, get_redis, logger, settings
 from denial_csv_ingest import ingest_denial_rows, parse_csv_bytes, parse_xlsx_bytes
+from intake_review_db import compute_intake_fingerprint, enqueue_intake_review_item, evaluate_parse_confidence
 
 # ---------------------------------------------------------------------------
 app = create_app(
@@ -1079,7 +1080,9 @@ async def patient_intake(request: Request, payload: LegacyPatientIntakePayload):
 # ---------------------------------------------------------------------------
 
 class IntakeInsurancePayload(BaseModel):
-    payer_name: str
+    """All optional for POC — missing insurance must not 422 the request."""
+
+    payer_name: str | None = None
     payer_id: str | None = None
     member_id: str | None = None
     group_number: str | None = None
@@ -1129,9 +1132,42 @@ class IntakePatientPayload(BaseModel):
     state: str | None = None
     zip_code: str | None = None
     territory_id: str | None = None
-    insurance: IntakeInsurancePayload
+    insurance: IntakeInsurancePayload | None = None
     physician: IntakePhysicianPayload | None = None
-    order: dict[str, Any]
+    order: dict[str, Any] = Field(default_factory=dict)
+    """OCR / parser confidence 0..1; below threshold queues review but still persists patient."""
+    parse_confidence: float | None = None
+
+
+POC_INTAKE_OCR_THRESHOLD = float(os.getenv("POC_INTAKE_OCR_THRESHOLD", "0.55"))
+
+
+def _has_insurance_name(ins: IntakeInsurancePayload | None) -> bool:
+    return bool(ins and (ins.payer_name or "").strip())
+
+
+def _missing_for_complete_order(payload: IntakePatientPayload) -> list[str]:
+    """Fields required to create a billable intake order (POC rules)."""
+    missing: list[str] = []
+    if not _has_insurance_name(payload.insurance):
+        missing.append("insurance.payer_name")
+    od = payload.order or {}
+    li = od.get("line_items") or []
+    if not any((x.get("hcpcs_code") or "").strip() for x in li if isinstance(x, dict)):
+        missing.append("order.line_items.hcpcs_code")
+    dx = od.get("diagnoses") or []
+    if not any((x.get("icd10_code") or "").strip() for x in dx if isinstance(x, dict)):
+        missing.append("order.diagnoses.icd10_code")
+    phy = payload.physician
+    if not phy or not (phy.npi or "").strip():
+        missing.append("physician.npi")
+    return missing
+
+
+def _review_fingerprint(org_id: str, idempotency_key: str | None, payload_hash: str) -> str:
+    return compute_intake_fingerprint(
+        {"org_id": org_id, "idempotency_key": idempotency_key or "", "payload_hash": payload_hash}
+    )
 
 
 class EligibilityRequestPayload(BaseModel):
@@ -1308,63 +1344,24 @@ async def _run_prior_auth_check(conn, org_id: str, payload: PriorAuthRequestPayl
 
 
 async def _auto_process_order(conn, org_id: str, order_id: str, patient_id: str, insurance_id: str | None, payer_id: str, hcpcs_codes: list[str], icd10_codes: list[str]):
+    """
+    Best-effort Availity eligibility + payer auth rules. Failures must NOT roll back the intake
+    transaction (patient + order rows are already inserted); callers commit after this returns.
+    """
     try:
-        eligibility_result = await _run_eligibility_check(
-            conn,
-            EligibilityRequestPayload(order_id=order_id, patient_id=patient_id, insurance_id=insurance_id, payer_id=payer_id),
-        )
-        await _record_workflow_event(conn, org_id, "eligibility.auto_checked", {"order_id": order_id, "status": eligibility_result["status"]}, order_id=order_id)
-    except HTTPException as exc:
-        await exec_write(
-            conn,
-            """
-            UPDATE orders
-            SET status = 'eligibility_failed',
-                eligibility_status = 'error',
-                updated_at = NOW()
-            WHERE id = $1
-            """,
-            order_id,
-        )
-        await _record_workflow_event(
-            conn,
-            org_id,
-            "eligibility.auto_check_failed",
-            {"order_id": order_id, "detail": str(exc.detail)},
-            order_id=order_id,
-        )
-        return
-
-    requirement = await fetch_one(
-        conn,
-        """
-        SELECT COUNT(*) AS count
-        FROM payer_auth_requirements
-        WHERE payer_id = $1 AND hcpcs_code = ANY($2) AND requires_auth = true
-        """,
-        payer_id,
-        hcpcs_codes or [""],
-    )
-    if int((requirement or {}).get("count") or 0) > 0:
         try:
-            await _run_prior_auth_check(
+            eligibility_result = await _run_eligibility_check(
                 conn,
-                org_id,
-                PriorAuthRequestPayload(
-                    order_id=order_id,
-                    payer_id=payer_id,
-                    hcpcs_codes=hcpcs_codes,
-                    icd10_codes=icd10_codes,
-                    requested_units=1,
-                ),
+                EligibilityRequestPayload(order_id=order_id, patient_id=patient_id, insurance_id=insurance_id, payer_id=payer_id),
             )
-            await _record_workflow_event(conn, org_id, "prior_auth.auto_checked", {"order_id": order_id, "payer_id": payer_id}, order_id=order_id)
+            await _record_workflow_event(conn, org_id, "eligibility.auto_checked", {"order_id": order_id, "status": eligibility_result["status"]}, order_id=order_id)
         except HTTPException as exc:
             await exec_write(
                 conn,
                 """
                 UPDATE orders
-                SET status = 'pending_auth',
+                SET status = 'eligibility_failed',
+                    eligibility_status = 'error',
                     updated_at = NOW()
                 WHERE id = $1
                 """,
@@ -1373,21 +1370,110 @@ async def _auto_process_order(conn, org_id: str, order_id: str, patient_id: str,
             await _record_workflow_event(
                 conn,
                 org_id,
-                "prior_auth.auto_check_failed",
+                "eligibility.auto_check_failed",
                 {"order_id": order_id, "detail": str(exc.detail)},
                 order_id=order_id,
             )
+            return
+
+        requirement = await fetch_one(
+            conn,
+            """
+            SELECT COUNT(*) AS count
+            FROM payer_auth_requirements
+            WHERE payer_id = $1 AND hcpcs_code = ANY($2) AND requires_auth = true
+            """,
+            payer_id,
+            hcpcs_codes or [""],
+        )
+        if int((requirement or {}).get("count") or 0) > 0:
+            try:
+                await _run_prior_auth_check(
+                    conn,
+                    org_id,
+                    PriorAuthRequestPayload(
+                        order_id=order_id,
+                        payer_id=payer_id,
+                        hcpcs_codes=hcpcs_codes,
+                        icd10_codes=icd10_codes,
+                        requested_units=1,
+                    ),
+                )
+                await _record_workflow_event(conn, org_id, "prior_auth.auto_checked", {"order_id": order_id, "payer_id": payer_id}, order_id=order_id)
+            except HTTPException as exc:
+                await exec_write(
+                    conn,
+                    """
+                    UPDATE orders
+                    SET status = 'pending_auth',
+                        updated_at = NOW()
+                    WHERE id = $1
+                    """,
+                    order_id,
+                )
+                await _record_workflow_event(
+                    conn,
+                    org_id,
+                    "prior_auth.auto_check_failed",
+                    {"order_id": order_id, "detail": str(exc.detail)},
+                    order_id=order_id,
+                )
+    except Exception as exc:
+        logger.exception("Auto eligibility/auth pipeline failed for order %s (patient/order kept; review manually).", order_id)
+        try:
+            await _record_workflow_event(
+                conn,
+                org_id,
+                "intake.auto_pipeline_failed",
+                {"order_id": order_id, "patient_id": patient_id, "detail": str(exc)[:500]},
+                order_id=order_id,
+            )
+        except Exception:
+            logger.exception("Could not record intake.auto_pipeline_failed event")
 
 
 @app.post("/api/v1/intake/patient", status_code=201)
 async def v1_patient_intake(payload: IntakePatientPayload, background_tasks: BackgroundTasks, request: Request):
+    """
+    Canonical POC intake: patient + optional insurance + optional order.
+    - Missing insurance does not 422.
+    - Incomplete or low-confidence payloads create/update patient and enqueue intake_review_queue (idempotent).
+    - Complete payloads create an order and run auto eligibility/auth like before.
+    """
     db = request.app.state.db_pool
     idempotency_key = _request_idempotency_key(request)
     normalized_snapshot = payload.model_dump()
     payload_hash = _json_hash(normalized_snapshot)
+
+    ocr_queue, ocr_reason, ocr_detail = evaluate_parse_confidence(
+        payload.parse_confidence, POC_INTAKE_OCR_THRESHOLD, []
+    )
+    missing_order_fields = _missing_for_complete_order(payload)
+    incomplete = ocr_queue or bool(missing_order_fields)
+
+    if ocr_queue:
+        final_reason = ocr_reason
+        final_detail = ocr_detail
+    elif missing_order_fields:
+        final_reason = "missing_fields"
+        final_detail = "required for order: " + ",".join(missing_order_fields)
+    else:
+        final_reason = ""
+        final_detail = None
+    if incomplete and not final_reason:
+        final_reason = "missing_fields"
+        final_detail = final_detail or "incomplete intake"
+
+    missing_for_review = list(missing_order_fields)
+    if ocr_queue and payload.parse_confidence is not None:
+        missing_for_review.append("parse_confidence")
+    missing_for_review = list(dict.fromkeys(missing_for_review))
+
     async with db.connection() as conn:
         await conn.execute("BEGIN")
         try:
+            review_fp = _review_fingerprint(payload.org_id, idempotency_key, payload_hash)
+
             if idempotency_key:
                 existing_order = await fetch_one(
                     conn,
@@ -1411,6 +1497,33 @@ async def v1_patient_intake(payload: IntakePatientPayload, background_tasks: Bac
                         "order_id": str(existing_order["id"]),
                         "idempotent_replay": True,
                     }
+
+            existing_review = await fetch_one(
+                conn,
+                """
+                SELECT id, patient_id
+                FROM intake_review_queue
+                WHERE org_id = $1::uuid
+                  AND source = 'intake_patient'
+                  AND source_fingerprint = $2
+                LIMIT 1
+                """,
+                payload.org_id,
+                review_fp,
+            )
+            if existing_review and existing_review.get("patient_id"):
+                await conn.execute("COMMIT")
+                return {
+                    "patient_id": str(existing_review["patient_id"]),
+                    "insurance_id": None,
+                    "physician_id": None,
+                    "order_id": None,
+                    "review_queued": True,
+                    "review_id": str(existing_review["id"]),
+                    "reason_code": final_reason or "missing_fields",
+                    "missing_fields": missing_for_review,
+                    "idempotent_replay": True,
+                }
 
             existing_patient = await fetch_one(
                 conn,
@@ -1464,28 +1577,105 @@ async def v1_patient_intake(payload: IntakePatientPayload, background_tasks: Bac
                     ),
                 )
 
-            insurance_id = str(uuid.uuid4())
-            await exec_write(
+            await _record_workflow_event(
                 conn,
-                """
-                INSERT INTO patient_insurances (
-                    id, patient_id, payer_name, payer_id, member_id, group_number,
-                    subscriber_name, subscriber_dob, relationship, is_primary
-                )
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-                """,
-                insurance_id,
-                patient_id,
-                payload.insurance.payer_name,
-                payload.insurance.payer_id,
-                payload.insurance.member_id,
-                payload.insurance.group_number,
-                payload.insurance.subscriber_name,
-                payload.insurance.subscriber_dob,
-                payload.insurance.relationship,
-                payload.insurance.is_primary,
+                payload.org_id,
+                "intake.received",
+                {
+                    "patient_id": patient_id,
+                    "payload_hash": payload_hash,
+                    "idempotency_key": idempotency_key,
+                    "parse_confidence": payload.parse_confidence,
+                    "incomplete": incomplete,
+                },
+                order_id=None,
             )
 
+            insurance_id = None
+            if _has_insurance_name(payload.insurance):
+                ins = payload.insurance
+                insurance_id = str(uuid.uuid4())
+                await exec_write(
+                    conn,
+                    """
+                    INSERT INTO patient_insurances (
+                        id, patient_id, payer_name, payer_id, member_id, group_number,
+                        subscriber_name, subscriber_dob, relationship, is_primary
+                    )
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                    """,
+                    insurance_id,
+                    patient_id,
+                    (ins.payer_name or "").strip() or "UNKNOWN",
+                    ins.payer_id,
+                    ins.member_id,
+                    ins.group_number,
+                    ins.subscriber_name,
+                    ins.subscriber_dob,
+                    ins.relationship,
+                    ins.is_primary,
+                )
+
+            if incomplete:
+                review_payload = {
+                    "normalized": normalized_snapshot,
+                    "missing_order_fields": missing_order_fields,
+                    "parse_confidence": payload.parse_confidence,
+                }
+                rid = await enqueue_intake_review_item(
+                    conn,
+                    org_id=payload.org_id,
+                    source="intake_patient",
+                    source_id=idempotency_key,
+                    source_fingerprint=review_fp,
+                    artifact_type="patient_intake",
+                    reason_code=final_reason or "missing_fields",
+                    reason_detail=final_detail,
+                    parse_confidence=payload.parse_confidence,
+                    missing_fields=missing_for_review or None,
+                    payload=review_payload,
+                    patient_id=patient_id,
+                    order_id=None,
+                    created_by=None,
+                )
+                if not rid:
+                    row = await fetch_one(
+                        conn,
+                        """
+                        SELECT id FROM intake_review_queue
+                        WHERE org_id = $1::uuid AND source = 'intake_patient' AND source_fingerprint = $2
+                        LIMIT 1
+                        """,
+                        payload.org_id,
+                        review_fp,
+                    )
+                    rid = str(row["id"]) if row else None
+                await _record_workflow_event(
+                    conn,
+                    payload.org_id,
+                    "intake.review_queued",
+                    {
+                        "patient_id": patient_id,
+                        "reason_code": final_reason,
+                        "review_id": rid,
+                        "missing_fields": missing_for_review,
+                    },
+                    order_id=None,
+                )
+                await conn.execute("COMMIT")
+                return {
+                    "patient_id": patient_id,
+                    "insurance_id": insurance_id,
+                    "physician_id": None,
+                    "order_id": None,
+                    "review_queued": True,
+                    "review_id": rid,
+                    "reason_code": final_reason,
+                    "missing_fields": missing_for_review,
+                    "idempotent_replay": False,
+                }
+
+            # --- Complete: payer name + order details validated by _missing_for_complete_order ---
             physician_id = None
             if payload.physician and payload.physician.npi:
                 existing_physician = await fetch_one(conn, "SELECT id FROM physicians WHERE npi = $1", payload.physician.npi)
@@ -1507,6 +1697,30 @@ async def v1_patient_intake(payload: IntakePatientPayload, background_tasks: Bac
                         payload.physician.facility_name,
                         json.dumps({}),
                     )
+
+            if not insurance_id:
+                ins = payload.insurance
+                insurance_id = str(uuid.uuid4())
+                await exec_write(
+                    conn,
+                    """
+                    INSERT INTO patient_insurances (
+                        id, patient_id, payer_name, payer_id, member_id, group_number,
+                        subscriber_name, subscriber_dob, relationship, is_primary
+                    )
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                    """,
+                    insurance_id,
+                    patient_id,
+                    (ins.payer_name or "").strip() or "UNKNOWN",
+                    ins.payer_id,
+                    ins.member_id,
+                    ins.group_number,
+                    ins.subscriber_name,
+                    ins.subscriber_dob,
+                    ins.relationship,
+                    ins.is_primary,
+                )
 
             order_id = str(uuid.uuid4())
             order_number = f"INTAKE-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{str(order_id)[:6].upper()}"
@@ -1593,25 +1807,37 @@ async def v1_patient_intake(payload: IntakePatientPayload, background_tasks: Bac
                 },
                 order_id=order_id,
             )
+            ins_payer = payload.insurance.payer_id or "unknown"
             await _auto_process_order(
                 conn,
                 payload.org_id,
                 order_id,
                 patient_id,
                 insurance_id,
-                payload.insurance.payer_id or "unknown",
+                ins_payer,
                 hcpcs_codes,
                 icd10_codes,
             )
             await conn.execute("COMMIT")
+        except HTTPException:
+            await conn.execute("ROLLBACK")
+            raise
         except Exception as exc:
             await conn.execute("ROLLBACK")
             logger.exception("Patient intake failed.")
             raise HTTPException(
                 status_code=500,
                 detail=f"Intake processing failed: {str(exc)[:200]}",
-            )
-    return {"patient_id": patient_id, "insurance_id": insurance_id, "physician_id": physician_id, "order_id": order_id, "idempotent_replay": False}
+            ) from exc
+
+    return {
+        "patient_id": patient_id,
+        "insurance_id": insurance_id,
+        "physician_id": physician_id,
+        "order_id": order_id,
+        "review_queued": False,
+        "idempotent_replay": False,
+    }
 
 
 @app.post("/api/v1/intake/batch")
@@ -1750,15 +1976,9 @@ def _extract_insurance(text: str) -> tuple[str, str]:
     return payer_name, member_id
 
 
-@app.post("/api/v1/intake/parse-document")
-async def v1_parse_document(
-    request: Request,
-    file: UploadFile = File(...),
-    _: bool = Depends(require_intake_internal_key),
-):
-    cid = getattr(request.state, "correlation_id", None)
-    logger.info("intake_parse_document correlation_id=%s filename=%s", cid, file.filename)
-    content = await file.read()
+def _parse_pdf_content(content: bytes, filename: str, correlation_id: str | None) -> dict[str, Any]:
+    """Shared PDF parse used by parse-document and upload endpoints."""
+    logger.info("intake_parse_document correlation_id=%s filename=%s", correlation_id, filename)
     text = _extract_pdf_text(content)
 
     patient_name = _extract_patient_name(text)
@@ -1819,6 +2039,52 @@ async def v1_parse_document(
         "raw_text_preview": text[:1500],
         "confidence": parse_confidence,
     }
+
+
+@app.post("/api/v1/intake/parse-document")
+async def v1_parse_document(
+    request: Request,
+    file: UploadFile = File(...),
+    _: bool = Depends(require_intake_internal_key),
+):
+    cid = getattr(request.state, "correlation_id", None)
+    content = await file.read()
+    return _parse_pdf_content(content, file.filename or "upload.pdf", cid)
+
+
+@app.post("/api/v1/intake/upload")
+async def v1_intake_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    _: bool = Depends(require_intake_internal_key),
+):
+    """Unified upload: PDF → parse payload; CSV/XLSX → row dicts. Used by Next.js BFF."""
+    cid = getattr(request.state, "correlation_id", None)
+    content = await file.read()
+    fn = (file.filename or "upload").lower()
+    logger.info("intake_upload correlation_id=%s filename=%s", cid, file.filename)
+
+    if fn.endswith(".pdf"):
+        data = _parse_pdf_content(content, file.filename or "upload.pdf", cid)
+        data["kind"] = "pdf"
+        return data
+
+    if fn.endswith(".csv"):
+        reader = csv.DictReader(io.StringIO(content.decode("utf-8", errors="replace")))
+        rows = list(reader)
+        return {"kind": "csv", "rows": rows}
+
+    if fn.endswith(".xlsx"):
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+        ws = wb.active
+        values = list(ws.iter_rows(values_only=True))
+        headers = [str(value or "").strip() for value in (values[0] if values else [])]
+        rows: list[dict[str, Any]] = []
+        for record in values[1:]:
+            rows.append({headers[i]: record[i] if i < len(record) else "" for i in range(len(headers))})
+        return {"kind": "csv", "rows": rows}
+
+    raise HTTPException(status_code=400, detail="Accepted formats: pdf, csv, xlsx")
 
 
 @app.post("/api/v1/intake/eob")

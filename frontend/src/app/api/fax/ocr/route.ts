@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     upstream.append("file", file);
 
     const INTAKE_API_URL = getServiceBaseUrl("INTAKE_API_URL");
-    const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/parse-document`, {
+    const res = await fetch(`${INTAKE_API_URL}/api/v1/intake/upload`, {
       method: "POST",
       headers: {
         ...internalApiKeyHeaders(),
@@ -45,7 +45,8 @@ export async function POST(req: NextRequest) {
     });
 
     if (res.ok) {
-      const data = await res.json();
+      const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      const { kind: _k, ...data } = raw;
       return NextResponse.json({
         success: true,
         source: "server",

@@ -13,7 +13,7 @@ import os
 import re
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, NamedTuple
@@ -2207,6 +2207,39 @@ class ClaimFromOrderRequest(BaseModel):
 
     order_id: str
     service_date: str | None = None  # YYYYMMDD; defaults to today
+
+
+class RevenueBootstrapLineItem(BaseModel):
+    hcpcs_code: str
+    quantity: int = 1
+    billed_amount: float | None = None
+
+
+class RevenueBootstrapPatient(BaseModel):
+    first_name: str
+    last_name: str
+    date_of_birth: str  # YYYY-MM-DD
+
+
+class RevenueBootstrapInsurance(BaseModel):
+    payer_name: str
+    member_id: str
+
+
+class RevenueBootstrapOrderBlock(BaseModel):
+    diagnoses: list[str] = []
+    line_items: list[RevenueBootstrapLineItem] = []
+    referring_npi: str = "1234567890"
+    date_of_service: str | None = None  # YYYY-MM-DD; default today
+
+
+class RevenueBootstrapRequest(BaseModel):
+    """One-shot demo order for backend claim runs (internal API key only)."""
+
+    org_id: str | None = None
+    patient: RevenueBootstrapPatient
+    insurance: RevenueBootstrapInsurance
+    order: RevenueBootstrapOrderBlock
 
 
 class ImportOrderPayload(BaseModel):
@@ -7011,6 +7044,52 @@ def _build_837_p_minimal(
     return "~".join(segments) + "~"
 
 
+def _normalize_claim_submit_response(order_id: str, raw: Any) -> dict[str, Any]:
+    """Map Availity + EDI proxy payloads to a stable operator-facing shape."""
+    if not isinstance(raw, dict):
+        return {
+            "status": "submitted",
+            "claim_id": None,
+            "order_id": order_id,
+            "edi_status": "unknown",
+        }
+    if raw.get("submission_id") is not None or str(raw.get("status") or "") in (
+        "submitted",
+        "accepted",
+        "dry_run",
+        "validation_failed",
+        "already_submitted",
+    ):
+        st = str(raw.get("status") or "")
+        cid = raw.get("submission_id")
+        ok = st in ("submitted", "accepted", "dry_run", "already_submitted")
+        out: dict[str, Any] = {
+            "status": "submitted" if ok else st,
+            "claim_id": str(cid) if cid else None,
+            "order_id": order_id,
+            "edi_status": st,
+        }
+        if raw.get("message"):
+            out["message"] = raw.get("message")
+        if raw.get("icn"):
+            out["icn"] = raw.get("icn")
+        return out
+    if raw.get("status_code") is not None:
+        sc = int(raw["status_code"])
+        return {
+            "status": "submitted" if sc < 400 else "error",
+            "claim_id": None,
+            "order_id": order_id,
+            "edi_status": f"availity_http_{sc}",
+        }
+    return {
+        "status": str(raw.get("status") or "submitted"),
+        "claim_id": raw.get("claim_id") or raw.get("submission_id"),
+        "order_id": order_id,
+        "edi_status": raw.get("edi_status") or raw.get("status"),
+    }
+
+
 async def submit_claim_for_order(
     request: Request,
     *,
@@ -7256,6 +7335,237 @@ async def billing_submit_claim_from_order(
         order_id=payload.order_id,
         service_date=payload.service_date,
     )
+
+
+@app.post("/api/v1/billing/submit-claim-from-order")
+async def api_v1_billing_submit_claim_from_order(
+    payload: ClaimFromOrderRequest,
+    request: Request,
+    user: dict = Depends(require_permissions("submit_claims")),
+):
+    """Canonical path: same as /billing/submit-claim-from-order with normalized JSON."""
+    raw = await submit_claim_for_order(
+        request,
+        org_id=str(user["org_id"]),
+        order_id=payload.order_id,
+        service_date=payload.service_date,
+    )
+    return _normalize_claim_submit_response(payload.order_id, raw)
+
+
+@app.post("/internal/revenue/bootstrap-order", status_code=201)
+async def internal_revenue_bootstrap_order(
+    payload: RevenueBootstrapRequest,
+    request: Request,
+    _: bool = Depends(require_internal_api_key()),
+):
+    """
+    Create patient + primary insurance + EDI-ready order in one transaction (no JWT).
+    Intended for scripts and same-day revenue execution paths.
+    """
+    db = request.app.state.db_pool
+    org_id = (payload.org_id or "").strip() or "00000000-0000-0000-0000-000000000001"
+
+    async with db.connection() as conn:
+        org = await fetch_one(conn, "SELECT id FROM organizations WHERE id = $1", org_id)
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        payer_row = await fetch_one(
+            conn,
+            """
+            SELECT id, name FROM payers
+            WHERE name ILIKE $1 OR UPPER(id) = UPPER($2)
+            ORDER BY CASE WHEN UPPER(id) = 'MEDICARE_DMERC' THEN 0 ELSE 1 END
+            LIMIT 1
+            """,
+            f"%{payload.insurance.payer_name.strip()}%",
+            payload.insurance.payer_name.strip().replace(" ", "_").upper(),
+        )
+        if not payer_row:
+            payer_row = await fetch_one(conn, "SELECT id, name FROM payers ORDER BY id ASC LIMIT 1")
+        if not payer_row:
+            raise HTTPException(status_code=500, detail="No payers configured in database")
+
+        payer_id = str(payer_row["id"])
+        creator = await fetch_one(
+            conn,
+            "SELECT id FROM users WHERE org_id = $1 ORDER BY created_at ASC NULLS LAST LIMIT 1",
+            org_id,
+        )
+        created_by = str(creator["id"]) if creator else None
+
+        patient_id = str(uuid.uuid4())
+        mrn = f"REV-{uuid.uuid4().hex[:8].upper()}"
+        addr1 = "1 POSEIDON REVENUE TEST WAY"
+        city, state, zip_code = "LAS VEGAS", "NV", "89117"
+        await exec_write(
+            conn,
+            """
+            INSERT INTO patients (
+                id, org_id, mrn, first_name, last_name, date_of_birth, dob, gender, phone, email,
+                address_line1, address_line2, city, state, zip_code,
+                insurance_id, payer_id, address, created_by
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+            """,
+            patient_id,
+            org_id,
+            mrn,
+            payload.patient.first_name.strip(),
+            payload.patient.last_name.strip(),
+            payload.patient.date_of_birth.strip(),
+            payload.patient.date_of_birth.strip(),
+            None,
+            None,
+            None,
+            addr1,
+            None,
+            city,
+            state,
+            zip_code,
+            payload.insurance.member_id.strip(),
+            payer_id,
+            json.dumps({"line1": addr1, "city": city, "state": state, "zip": zip_code}),
+            created_by,
+        )
+        ins_id = str(uuid.uuid4())
+        await exec_write(
+            conn,
+            """
+            INSERT INTO patient_insurances (
+                id, patient_id, payer_name, payer_id, member_id, relationship, is_primary, is_active
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            """,
+            ins_id,
+            patient_id,
+            str(payer_row.get("name") or payload.insurance.payer_name),
+            payer_id,
+            payload.insurance.member_id.strip(),
+            "self",
+            True,
+            True,
+        )
+
+        order_id = str(uuid.uuid4())
+        order_number = await _generate_order_number(conn, org_id)
+        ob = payload.order
+        line_items = ob.line_items or [RevenueBootstrapLineItem(hcpcs_code="L1833", quantity=1)]
+        diags = ob.diagnoses or ["M17.11"]
+        total_billed = sum(
+            (li.billed_amount if li.billed_amount is not None else 100.0) * max(li.quantity, 1)
+            for li in line_items
+        )
+        date_of_service = (ob.date_of_service or "").strip() or date.today().isoformat()
+        hcpcs_codes = [li.hcpcs_code for li in line_items]
+        npi = (ob.referring_npi or "1234567890").strip()[:10]
+
+        await exec_write(
+            conn,
+            """
+            INSERT INTO orders (
+                id, org_id, order_number, patient_id, physician_id, referring_physician_npi, assigned_rep_id, assigned_to,
+                status, product_category, vertical, source, source_channel, priority, territory_id,
+                place_of_service, clinical_notes, notes, clinical_data, total_billed, total_allowed, total_paid,
+                paid_amount, date_of_service, hcpcs_codes, payer_id, claim_strategy, created_by
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+            """,
+            order_id,
+            org_id,
+            order_number,
+            patient_id,
+            None,
+            npi,
+            None,
+            None,
+            "ready_to_submit",
+            "DME",
+            "dme",
+            "revenue_bootstrap",
+            "revenue_bootstrap",
+            "high",
+            None,
+            "12",
+            "Same-day revenue bootstrap order",
+            "Same-day revenue bootstrap order",
+            json.dumps({"bootstrap": True}),
+            total_billed,
+            0.0,
+            0.0,
+            0.0,
+            date_of_service,
+            json.dumps(hcpcs_codes),
+            payer_id,
+            "EDI",
+            created_by,
+        )
+        for i, code in enumerate(diags):
+            await exec_write(
+                conn,
+                """
+                INSERT INTO order_diagnoses (id, order_id, icd10_code, description, is_primary, sequence)
+                VALUES ($1,$2,$3,$4,$5,$6)
+                """,
+                str(uuid.uuid4()),
+                order_id,
+                code,
+                None,
+                i == 0,
+                i + 1,
+            )
+        for li in line_items:
+            amt = li.billed_amount if li.billed_amount is not None else 100.0
+            await exec_write(
+                conn,
+                """
+                INSERT INTO order_line_items (
+                    id, order_id, hcpcs_code, modifier, description, quantity,
+                    unit_price, billed_amount, allowed_amount, paid_amount
+                )
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                """,
+                str(uuid.uuid4()),
+                order_id,
+                li.hcpcs_code.strip().upper(),
+                None,
+                None,
+                max(li.quantity, 1),
+                amt,
+                amt,
+                0.0,
+                0.0,
+            )
+
+    asyncio.create_task(_score_order_with_trident(request, org_id, order_id))
+    return {
+        "patient_id": patient_id,
+        "order_id": order_id,
+        "order_number": order_number,
+        "mrn": mrn,
+        "claim_strategy": "EDI",
+    }
+
+
+@app.post("/internal/billing/submit-claim-from-order")
+async def internal_billing_submit_claim_from_order(
+    payload: ClaimFromOrderRequest,
+    request: Request,
+    _: bool = Depends(require_internal_api_key()),
+):
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        row = await fetch_one(conn, "SELECT org_id FROM orders WHERE id = $1", payload.order_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Order not found")
+    raw = await submit_claim_for_order(
+        request,
+        org_id=str(row["org_id"]),
+        order_id=payload.order_id,
+        service_date=payload.service_date,
+    )
+    return _normalize_claim_submit_response(payload.order_id, raw)
 
 
 # ---------------------------------------------------------------------------
@@ -7929,6 +8239,17 @@ class V1OrderPayload(BaseModel):
     status: str = "intake"
     diagnoses: list[V1DiagnosisPayload] = []
     line_items: list[V1LineItemPayload] = []
+    claim_strategy: str | None = None
+
+    @field_validator("claim_strategy")
+    @classmethod
+    def _v1_order_claim_strategy(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip().upper()
+        if s not in ("AVAILITY", "EDI"):
+            raise ValueError("claim_strategy must be AVAILITY or EDI")
+        return s
 
 
 class V1OrderPatchPayload(BaseModel):
@@ -8489,6 +8810,7 @@ async def v1_create_order(
         if not payer_id:
             payer = await fetch_one(conn, "SELECT id FROM payers ORDER BY id ASC LIMIT 1")
             payer_id = str(payer["id"]) if payer else None
+        claim_strategy = payload.claim_strategy or "EDI"
         await exec_write(
             conn,
             """
@@ -8496,9 +8818,9 @@ async def v1_create_order(
                 id, org_id, order_number, patient_id, physician_id, referring_physician_npi, assigned_rep_id, assigned_to,
                 status, product_category, vertical, source, source_channel, priority, territory_id,
                 place_of_service, clinical_notes, notes, clinical_data, total_billed, total_allowed, total_paid,
-                paid_amount, date_of_service, hcpcs_codes, payer_id, created_by
+                paid_amount, date_of_service, hcpcs_codes, payer_id, claim_strategy, created_by
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
             """,
             order_id,
             user["org_id"],
@@ -8526,6 +8848,7 @@ async def v1_create_order(
             payload.date_of_service,
             json.dumps(hcpcs_codes),
             payer_id,
+            claim_strategy,
             user["sub"],
         )
         for diagnosis in payload.diagnoses:
@@ -8751,6 +9074,56 @@ async def v1_patch_order(
         if payload.status:
             await _record_workflow_event(conn, user["org_id"], "order.status_changed", {"order_id": order_id, "from": order["status"], "to": payload.status}, order_id=order_id)
     return {"id": order_id, "status": payload.status or order["status"]}
+
+
+class V1TridentSnapshotPayload(BaseModel):
+    """Merge into orders.clinical_data['trident_snapshot'] (POC: persist post-intake Trident panel)."""
+
+    snapshot: dict[str, Any]
+
+
+@app.patch("/api/v1/orders/{order_id}/trident-snapshot")
+async def v1_patch_order_trident_snapshot(
+    order_id: str,
+    payload: V1TridentSnapshotPayload,
+    request: Request,
+    user: dict = Depends(require_any_permission("update_order_status", "create_patients")),
+):
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        row = await fetch_one(
+            conn,
+            "SELECT clinical_data FROM orders WHERE id = $1 AND org_id = $2",
+            order_id,
+            user["org_id"],
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Order not found")
+        raw_cd = row.get("clinical_data")
+        if raw_cd is None:
+            cd: dict[str, Any] = {}
+        elif isinstance(raw_cd, dict):
+            cd = dict(raw_cd)
+        else:
+            try:
+                cd = json.loads(raw_cd) if isinstance(raw_cd, str) else dict(raw_cd)
+            except (TypeError, ValueError):
+                cd = {}
+        prev = cd.get("trident_snapshot") if isinstance(cd.get("trident_snapshot"), dict) else {}
+        merged_snap = {
+            **prev,
+            **payload.snapshot,
+            "stored_at": datetime.now(timezone.utc).isoformat(),
+        }
+        cd["trident_snapshot"] = merged_snap
+        await exec_write(
+            conn,
+            "UPDATE orders SET clinical_data = $1::jsonb, updated_at = NOW() WHERE id = $2 AND org_id = $3",
+            json.dumps(cd),
+            order_id,
+            user["org_id"],
+        )
+    return {"id": order_id, "ok": True}
 
 
 @app.get("/api/v1/orders/{order_id}/documents")

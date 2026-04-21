@@ -1009,6 +1009,45 @@ async def v1_trident_score(payload: CanonicalScoreRequest, request: Request):
     return result
 
 
+@app.get("/api/v1/trident/learning-proof")
+async def v1_trident_learning_proof(request: Request):
+    """
+    Operator-facing proof that bootstrap + learned_rates populated DB tables.
+    Safe if migration 018 is missing (returns zeros / nulls).
+    """
+    db = request.app.state.db_pool
+    out: dict[str, Any] = {
+        "trident_learned_aggregates_current_rows": 0,
+        "learned_rates_rows": 0,
+        "latest_bootstrap_run": None,
+    }
+    async with db.connection() as conn:
+        try:
+            row = await fetch_one(conn, "SELECT COUNT(*) AS c FROM trident_learned_aggregates_current")
+            out["trident_learned_aggregates_current_rows"] = int((row or {}).get("c") or 0)
+        except Exception:
+            logger.exception("learning-proof: aggregates_current unavailable")
+        try:
+            row = await fetch_one(conn, "SELECT COUNT(*) AS c FROM learned_rates")
+            out["learned_rates_rows"] = int((row or {}).get("c") or 0)
+        except Exception:
+            pass
+        try:
+            latest = await fetch_one(
+                conn,
+                """
+                SELECT run_id, status, started_at, completed_at, records_written, source_snapshot, triggered_by
+                FROM trident_history_bootstrap_runs
+                ORDER BY started_at DESC
+                LIMIT 1
+                """,
+            )
+            out["latest_bootstrap_run"] = _serialize(dict(latest)) if latest else None
+        except Exception:
+            logger.exception("learning-proof: bootstrap runs unavailable")
+    return out
+
+
 @app.post("/api/v1/trident/retrain")
 async def v1_trident_retrain(request: Request):
     db = request.app.state.db_pool

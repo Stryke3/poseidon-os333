@@ -205,6 +205,37 @@ services:
       retries: 3
       start_period: 20s
 
+  # POSEIDON LITE: patient repository + compliance document generator (minimal API)
+  lite:
+    build:
+      context: ./services
+      dockerfile: lite/Dockerfile
+    container_name: poseidon_lite
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SERVICE_NAME: lite
+      PORT: 8010
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: ${POSEIDON_DATABASE_URL:-postgresql://poseidon:poseidon@postgres:5432/poseidon_db}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-poseidon-local-internal-key}
+      LITE_DATA_DIR: /app/data/lite_files
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8010:8010"
+    networks:
+      - poseidon_net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
   ml:
     build:
       context: ./services
@@ -349,6 +380,7 @@ services:
       AVAILITY_SERVICE_URL: ${AVAILITY_SERVICE_URL:-http://availity:8005}
       # EDI service proxy (837P/835)
       EDI_API_URL: ${EDI_API_URL:-http://edi:8006}
+      LITE_API_URL: ${LITE_API_URL:-http://lite:8010}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-poseidon-local-internal-key}
       # Trident Ask panel: LLM digest (set in .env for production-style local runs)
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -370,6 +402,7 @@ services:
       - core
       - trident
       - intake
+      - lite
       - ml
       - availity
       - edi

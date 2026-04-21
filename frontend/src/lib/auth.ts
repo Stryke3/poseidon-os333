@@ -61,6 +61,16 @@ async function authenticateAgainstCore(email: string, password: string) {
       }
     }
 
+    if (res.status !== 401) {
+      console.error(
+        JSON.stringify({
+          event: "core_login_http_error",
+          status: res.status,
+          coreApiUrl,
+        }),
+      )
+    }
+
     if (res.status === 401) return null
     return null
   } catch {
@@ -118,22 +128,23 @@ export const authOptions: NextAuthOptions = {
   },
   callbacks: {
     async jwt({ token, user }) {
-      if (user?.role) {
-        token.role = user.role
-        token.accessToken = user.accessToken
-        token.orgId = user.orgId
-        token.email = user.email
-        token.permissions = user.permissions || []
+      if (user) {
+        const u = user as LiveUser
+        if (u.role) token.role = u.role
+        if (u.accessToken) token.accessToken = u.accessToken
+        if (u.orgId) token.orgId = u.orgId
+        if (u.email) token.email = u.email
+        token.permissions = u.permissions || []
       }
       return token
     },
     async session({ session, token }) {
-      if (session.user && token.role) {
+      if (session.user) {
         session.user.id = token.sub || ""
-        session.user.role = token.role
-        session.user.accessToken = token.accessToken
-        session.user.orgId = token.orgId
-        session.user.email = token.email || session.user.email
+        if (token.role) session.user.role = token.role
+        if (token.accessToken) session.user.accessToken = token.accessToken as string
+        if (token.orgId) session.user.orgId = token.orgId as string
+        session.user.email = (token.email as string) || session.user.email || ""
         session.user.permissions = (token.permissions as string[]) || []
       }
       return session

@@ -13,12 +13,34 @@ interface LiveIngestDropzoneProps {
 
 interface IngestResponse {
   error?: string
+  detail?: string
+  message?: string
   ingestedPatients?: AccountRecord[]
   ingestedCards?: KanbanCard[]
   importResult?: {
     patients_created?: number
     orders_created?: number
   }
+}
+
+function messageFromHttpError(
+  data: IngestResponse | Record<string, unknown>,
+  raw: string,
+  status: number,
+) {
+  for (const key of ["error", "detail", "message"] as const) {
+    const v = data[key]
+    if (typeof v === "string" && v.trim()) return v.trim()
+  }
+  const trimmed = raw.trim()
+  if (trimmed) return trimmed.slice(0, 800)
+  return `Upload failed (${status}).`
+}
+
+function isLikelyNetworkFailure(e: unknown) {
+  if (e instanceof TypeError) return true
+  if (e instanceof DOMException && e.name === "AbortError") return true
+  return false
 }
 
 export default function LiveIngestDropzone({
@@ -49,25 +71,32 @@ export default function LiveIngestDropzone({
       const formData = new FormData()
       formData.append("file", file)
 
-      const res = await fetch("/api/ingest/live", {
-        method: "POST",
-        body: formData,
-      })
+      let res: Response
+      try {
+        res = await fetch("/api/intake/upload", {
+          method: "POST",
+          body: formData,
+          credentials: "include",
+        })
+      } catch (e) {
+        if (isLikelyNetworkFailure(e)) {
+          throw new Error(
+            "Network error: could not reach the dashboard. Check your connection and try again.",
+          )
+        }
+        throw e instanceof Error ? e : new Error(String(e))
+      }
 
       const raw = await res.text()
       let data: IngestResponse = {}
       try {
-        data = raw ? JSON.parse(raw) : {}
+        data = raw ? (JSON.parse(raw) as IngestResponse) : {}
       } catch {
         data = {}
       }
 
       if (!res.ok) {
-        const serverError =
-          typeof data.error === "string"
-            ? data.error
-            : raw || `Live ingest failed (${res.status}).`
-        throw new Error(serverError)
+        throw new Error(messageFromHttpError(data, raw, res.status))
       }
 
       onIngested({

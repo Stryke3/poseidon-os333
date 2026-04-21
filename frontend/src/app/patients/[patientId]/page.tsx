@@ -80,6 +80,17 @@ type OrderLineItemRow = {
   quantity?: number
 }
 
+/** Persisted from intake via Core `orders.clinical_data.trident_snapshot`. */
+type TridentSnapshotStored = {
+  learned_adjustment?: number | null
+  confidence?: number | null
+  features_used?: string[]
+  denial_probability?: number | null
+  medical_necessity_score?: number | null
+  interpretation?: string
+  stored_at?: string
+}
+
 type OrderBundle = {
   id: string
   status?: string
@@ -108,6 +119,8 @@ type OrderBundle = {
     cms1500?: ChartDocument | null
     pod?: ChartDocument | null
   }
+  /** Core order row JSONB; includes `trident_snapshot` after intake save. */
+  clinical_data?: { trident_snapshot?: TridentSnapshotStored } | Record<string, unknown> | null
   created_at?: string
   updated_at?: string
 }
@@ -320,6 +333,14 @@ function normalizePatientChartPayload(chart: PatientChartPayload): PatientChartP
     }
   }
   return { ...chart, notes, devices }
+}
+
+function tridentSnapshotFromOrder(order: OrderBundle): TridentSnapshotStored | null {
+  const cd = order.clinical_data
+  if (!cd || typeof cd !== "object") return null
+  const raw = (cd as { trident_snapshot?: unknown }).trident_snapshot
+  if (!raw || typeof raw !== "object") return null
+  return raw as TridentSnapshotStored
 }
 
 function formatProbability(p: number | undefined) {
@@ -564,6 +585,55 @@ export default async function PatientFilePage({
                           </table>
                         </div>
                       ) : null}
+                      {(() => {
+                        const snap = tridentSnapshotFromOrder(order)
+                        if (!snap) return null
+                        const feats = Array.isArray(snap.features_used) ? snap.features_used.filter(Boolean) : []
+                        return (
+                          <div className="mt-3 rounded-xl border border-cyan-400/35 bg-cyan-500/[0.12] px-3 py-3 text-xs text-slate-200">
+                            <p className="text-[10px] uppercase tracking-[0.2em] text-cyan-300">Trident (saved at intake)</p>
+                            {snap.interpretation ? (
+                              <p className="mt-2 text-sm font-medium leading-snug text-white">{snap.interpretation}</p>
+                            ) : null}
+                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
+                              <span>
+                                Learned adjustment:{" "}
+                                <span className="text-slate-200">
+                                  {snap.learned_adjustment != null && Number.isFinite(snap.learned_adjustment)
+                                    ? snap.learned_adjustment.toFixed(3)
+                                    : "—"}
+                                </span>
+                              </span>
+                              <span>
+                                Confidence:{" "}
+                                <span className="text-slate-200">
+                                  {snap.confidence != null && Number.isFinite(snap.confidence)
+                                    ? formatProbability(snap.confidence)
+                                    : "—"}
+                                </span>
+                              </span>
+                              <span>
+                                Denial probability:{" "}
+                                <span className="text-slate-200">
+                                  {snap.denial_probability != null && Number.isFinite(snap.denial_probability)
+                                    ? formatProbability(snap.denial_probability)
+                                    : "—"}
+                                </span>
+                              </span>
+                            </div>
+                            {feats.length > 0 ? (
+                              <p className="mt-2 text-[11px] text-slate-500">
+                                Features: <span className="text-slate-400">{feats.join(", ")}</span>
+                              </p>
+                            ) : (
+                              <p className="mt-2 text-[11px] text-slate-600">No aggregate feature tags for this score.</p>
+                            )}
+                            {snap.stored_at ? (
+                              <p className="mt-2 text-[10px] text-slate-600">Stored {formatDate(snap.stored_at)}</p>
+                            ) : null}
+                          </div>
+                        )
+                      })()}
                       {order.predictive_modeling ? (
                         <div className="mt-3 rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-3 text-xs text-slate-200">
                           <p className="text-[10px] uppercase tracking-[0.2em] text-violet-300">Predictive modeling</p>

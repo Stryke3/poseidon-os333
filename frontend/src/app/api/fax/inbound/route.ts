@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
           ? new Blob([new Uint8Array(fileBytes)], { type: filePart.type || "application/pdf" })
           : filePart;
       parseBody.append("file", uploadBlob, "inbound-fax.pdf");
-      const parsedRes = await fetch(`${intakeUrl}/api/v1/intake/parse-document`, {
+      const parsedRes = await fetch(`${intakeUrl}/api/v1/intake/upload`, {
         method: "POST",
         headers: {
           ...internalApiKeyHeaders(),
@@ -124,7 +124,13 @@ export async function POST(req: NextRequest) {
         body: parseBody,
       });
       if (parsedRes.ok) {
-        parsedIntake = (await parsedRes.json().catch(() => null)) as Record<string, unknown> | null;
+        const j = (await parsedRes.json().catch(() => null)) as Record<string, unknown> | null;
+        if (j && typeof j === "object" && j.kind === "pdf") {
+          const { kind: _kind, ...rest } = j;
+          parsedIntake = rest;
+        } else {
+          parsedIntake = j;
+        }
       }
     } catch {
       parsedIntake = null;
