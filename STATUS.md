@@ -1,9 +1,10 @@
 # POSEIDON Status
 
-Last updated: 2026-04-18 (hardening sprint)
+Last updated: 2026-04-22
 
 ## Deployment posture
 
+- **Render is not used for POSEIDON** (no new services, no deploys, no env config there). Legacy DNS or suspended services may still appear in old docs; `scripts/audit_no_render_left.sh` blocks reintroducing Render pointers in the repo.
 - **Canonical production target: DigitalOcean droplet + docker compose + nginx.**
 - Cutover scripts:
   - `scripts/do_prod_cutover_do_only.sh` — single-entrypoint DO cutover (preflight → build → migrate → up → healthcheck).

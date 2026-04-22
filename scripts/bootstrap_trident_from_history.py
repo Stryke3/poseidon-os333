@@ -120,7 +120,10 @@ def connect() -> psycopg.Connection:
     if not url:
         logger.error("Set POSEIDON_DATABASE_URL or DATABASE_URL to the target DB.")
         sys.exit(1)
-    if "sslmode=" not in url and any(host in url for host in (".neon.tech", "render.com", "amazonaws.com", "aiven.io")):
+    # Common managed-Postgres host markers (PaaS we still connect to: Neon, RDS, Aiven)
+    if "sslmode=" not in url and any(
+        m in url for m in (".neon.tech", "amazonaws.com", "aiven.io", "cockroachlabs.cloud")
+    ):
         sep = "&" if "?" in url else "?"
         url = f"{url}{sep}sslmode=require"
     conn = psycopg.connect(url, autocommit=False)

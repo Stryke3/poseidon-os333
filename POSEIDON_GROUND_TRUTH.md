@@ -2,6 +2,8 @@
 
 # POSEIDON — Ground Truth Inventory
 
+> **Deployment policy (current):** **Render is not in use** for this project. Canonical production is **DigitalOcean + docker compose + nginx** (`STATUS.md`, `PRODUCTION_HARDENING.md`). Section 9 below is a **point-in-time (2026-04-18) public-DNS/HTTP snapshot**; it may describe records or headers that pointed at a legacy managed host. Do not treat Render as an operational or deployment target.
+
 **Generated:** 2026-04-18
 **Scope:** Local repo at `/Volumes/WORKSPACE/poseidon 2`, local filesystem, git history reachable from that working tree, public internet. SSH to the droplet, direct Neon queries, DigitalOcean API, and Cloudflare API were **out of scope for this run**. Every assertion is one of:
 
@@ -67,7 +69,7 @@ That is **11 services** — not 9. The infrastructure trio (`redis`, `minio`, `p
 
 ### Additional compose fact `[CONFIRMED]`
 
-Every app service's `environment:` block sets `DATABASE_URL: ${POSEIDON_DATABASE_URL:-postgresql://poseidon:poseidon@postgres:5432/poseidon_db}` (lines 103, 145, 183, 219, 255, 307). Because Compose's `environment:` block overrides `env_file:`, the Neon URL in `.env` (`DATABASE_URL=...neon.tech...`, `.env` line 22) is **shadowed** unless `POSEIDON_DATABASE_URL` is separately set. `POSEIDON_DATABASE_URL` is not present in `.env` or `.env.template`. The header comment of `docker-compose.yml` (lines 10–11) explicitly warns about this: *"use POSEIDON_DATABASE_URL to override bundled Postgres. Do not rely on DATABASE_URL from .env for Compose — that broke many setups."* What the live Render or droplet environment resolves is `[UNKNOWN]` from this vantage.
+Every app service's `environment:` block sets `DATABASE_URL: ${POSEIDON_DATABASE_URL:-postgresql://poseidon:poseidon@postgres:5432/poseidon_db}` (lines 103, 145, 183, 219, 255, 307). Because Compose's `environment:` block overrides `env_file:`, the Neon URL in `.env` (`DATABASE_URL=...neon.tech...`, `.env` line 22) is **shadowed** unless `POSEIDON_DATABASE_URL` is separately set. `POSEIDON_DATABASE_URL` is not present in `.env` or `.env.template`. The header comment of `docker-compose.yml` (lines 10–11) explicitly warns about this: *"use POSEIDON_DATABASE_URL to override bundled Postgres. Do not rely on DATABASE_URL from .env for Compose — that broke many setups."* What a live **droplet or other production host** resolves is `[UNKNOWN]` from this vantage (see deployment policy: Render is not used).
 
 ---
 
@@ -374,6 +376,8 @@ No `~/.ssh/config` present. `ssh-add -l` output was truncated (the `timeout` com
 
 ## 9. Public surface (Phase 3) `[CONFIRMED]`
 
+*Historical snapshot only —* captured 2026-04-18. **Render is not a current deployment target;** use `STATUS.md` for canonical hosting.
+
 ### 9.1 DNS `[CONFIRMED]` (raw `dig +short` output)
 
 ```
@@ -400,13 +404,13 @@ strykefox.com            TXT    "v=spf1 include:_spf.google.com ~all", + two goo
 strykefox.com            NS     drake.ns.cloudflare.com, vivienne.ns.cloudflare.com   (Cloudflare DNS)
 ```
 
-**Key implications, not recommendations, just facts:**
+**Key implications (at snapshot time; DNS may have changed), not recommendations:**
 
 - Cloudflare is authoritative DNS for `strykefox.com`.
-- `api.strykefox.com` and `dashboard.strykefox.com` are CNAMEd into **Render** (`*.onrender.com`), specifically Render's GCP us-west1 region, then Cloudflare CDN-fronted. `[CONFIRMED]`
-- `trident.`, `intake.`, and `ml.` resolve directly to Cloudflare edge IPs (`104.21/172.67`), so the origins are proxied and invisible from DNS alone. `[INFERRED]` that origins are also Render based on the HTTP `rndr-id` headers seen on `dashboard.` (see 9.2), but this cannot be proven for trident/intake/ml while they return 502.
+- In this snapshot, `api.strykefox.com` and `dashboard.strykefox.com` CNAMEd into `*.onrender.com` (legacy managed host), then Cloudflare. **Do not use or extend Render;** production target is DO + compose per `STATUS.md`. `[CONFIRMED]` for snapshot DNS only
+- `trident.`, `intake.`, and `ml.` resolve directly to Cloudflare edge IPs (`104.21/172.67`), so the origins are proxied and invisible from DNS alone. `[INFERRED]` HTTP `rndr-id` on `dashboard` at the time; origins for subdomains are `[UNKNOWN]` when 502.
 - `edi.`, `availity.`, `status.` subdomains do **not** exist in DNS.
-- Apex `strykefox.com` is on Vercel, not Render.
+- Apex `strykefox.com` is on Vercel (not the same as the DO compose target for POSEIDON app services).
 
 ### 9.2 Liveness probes and openapi.json `[CONFIRMED]`
 
@@ -440,7 +444,7 @@ GET http://157.230.145.247/              → 404  (nginx/1.18.0 Ubuntu header, b
 GET https://157.230.145.247/ -k          → connect refused, port 443 closed
 ```
 
-Of the six production hosts, **only `dashboard.strykefox.com` is responding as a live app**. `api.strykefox.com` is explicitly suspended on Render. `trident/intake/ml` are 502 from Cloudflare (origin not responding). The droplet at `157.230.145.247` has port 80 open and returns a FastAPI JSON 404 via `nginx/1.18.0 (Ubuntu)` but port 443 is closed and `/` returns 404.
+Of the six public hosts probed, **only `dashboard.strykefox.com` responded as a live app in this run**. `api.strykefox.com` returned a “service suspended” page from a legacy host. `trident/intake/ml` were 502 from Cloudflare. The droplet at `157.230.145.247` has port 80 open and returns a FastAPI JSON 404 via `nginx/1.18.0 (Ubuntu)` but port 443 is closed and `/` returns 404.
 
 ### 9.3 TLS certificates `[CONFIRMED]` (`openssl s_client` + `openssl x509 -noout -issuer -subject -dates`)
 
@@ -451,7 +455,7 @@ Of the six production hosts, **only `dashboard.strykefox.com` is responding as a
 | trident.strykefox.com | Google Trust Services WE1 | `strykefox.com` (**apex**, not trident) | 2026-04-03 → 2026-07-02 |
 | intake.strykefox.com | Google Trust Services WE1 | `strykefox.com` (apex) | 2026-04-03 → 2026-07-02 |
 
-Google Trust Services is Render's default issuer. `api.` and `dashboard.` have their own subject-matching certs from Render. `trident.`, `intake.` (and by extension `ml.`, not tested) are served under the **apex `strykefox.com` cert** via Cloudflare — consistent with Cloudflare presenting the zone cert on proxied hostnames when the origin's cert subject doesn't match.
+Google Trust Services (common for managed and proxied edges). In this snapshot, `api.` and `dashboard.` had their own subject-matching certs. `trident.`, `intake.` (and by extension `ml.`, not tested) are served under the **apex `strykefox.com` cert** via Cloudflare — consistent with Cloudflare presenting the zone cert on proxied hostnames when the origin's cert subject doesn't match.
 
 ### 9.4 Response headers `[CONFIRMED]`
 
@@ -464,7 +468,7 @@ ml.strykefox.com:         server: cloudflare, cf-ray: ...-LAS
 strykefox.com:            server: Vercel
 ```
 
-All *.strykefox.com subdomains transit Cloudflare. The only response that still gets through to a healthy origin is `dashboard.` — and the `Rndr-Id` header confirms the origin is Render. No `/docs` or `/openapi.json` route is publicly exposed on any surface (FastAPI `docs` endpoints are not reachable because `api.` is suspended and the dashboard Next.js doesn't host them).
+All *.strykefox.com subdomains transit Cloudflare. The only response that still got through to a healthy app surface in this snapshot was `dashboard.`. For operational hosting, use the DO + compose model in `STATUS.md` — **not** Render. No `/docs` or `/openapi.json` route was publicly exposed in this run (e.g. `api.` was not serving API docs; dashboard is Next.js).
 
 ### 9.5 Droplet at `157.230.145.247` `[CONFIRMED]`
 
@@ -580,7 +584,7 @@ Several of these are Cursor/Claude project metadata paths (not full repo clones)
 - `./vercel.json`: `{"rootDirectory": "frontend"}`
 - `./frontend/vercel.json`: `{"framework":"nextjs","buildCommand":"npm run build","outputDirectory":".next","installCommand":"npm install --legacy-peer-deps","devCommand":"npm run dev"}`
 - `./firebase.json`: Firebase Hosting config with `public: frontend`, SPA rewrites `**` → `/index.html`
-- No `render.yaml` anywhere in the tree. `[CONFIRMED]` Render deployment is therefore configured via the Render dashboard, not IaC in this repo.
+- No `render.yaml` in the tree. **Render is not in use;** if historical services existed, they were not defined as IaC here. Prefer `poseidon-deploy.sh` / `scripts/verify_deploy_readiness.sh` and `PRODUCTION_HARDENING.md` for the current path. `[CONFIRMED]`
 - `poseidon-deploy.sh` exists at the repo root (1,709 bytes, executable) and delegates to `scripts/verify_deploy_readiness.sh` per `PRODUCTION_HARDENING.md`.
 
 ---
@@ -592,12 +596,12 @@ Several of these are Cursor/Claude project metadata paths (not full repo clones)
 | "9 containers" | `docker-compose.yml` defines **11 services**: redis, minio, postgres, core, trident, intake, ml, edi, availity, dashboard, nginx | Wrong count. 11, not 9. |
 | "edi on port 8005, availity on 8006" | `edi: PORT 8006, /health` (line 254, 291); `availity: PORT 8005, /live` (line 306, 314). `.env` line 93: `EDI_API_URL=http://edi:8006` | **Inverted.** edi=8006, availity=8005. |
 | "No postgres container (Neon replaces it)" | `docker-compose.yml` lines 64–84 define a `postgres:16-alpine` service with volume `postgres_data` and init script `scripts/init.sql` | **A Postgres container is declared.** Whether the live production environment actually runs it is `[UNKNOWN]` from this vantage (see row below and §2 on the DATABASE_URL shadowing). |
-| "DB is Neon in production" | `.env` line 22 has `DATABASE_URL=postgresql://neondb_owner:...@...neon.tech/neondb?sslmode=require`. Every compose service's `environment:` block forces `DATABASE_URL` back to the local postgres fallback unless `POSEIDON_DATABASE_URL` is set separately (which it is not in `.env` or `.env.template`). Public DNS points `api.strykefox.com` to Render, not to a compose stack — so the actual runtime is Render, where the env may be set differently. | Partially supported: Neon is the stated target; whether the live Render service actually reads that value vs the fallback is `[UNKNOWN]` here. |
+| "DB is Neon in production" | `.env` line 22 has `DATABASE_URL=postgresql://neondb_owner:...@...neon.tech/neondb?sslmode=require`. Every compose service's `environment:` block forces `DATABASE_URL` back to the local postgres fallback unless `POSEIDON_DATABASE_URL` is set separately (which it is not in `.env` or `.env.template`). A historic public DNS snapshot pointed `api.` at a non-compose host; **current ops target the droplet/compose model**, not Render. | Partially supported: Neon is the stated target; live DB for production must be confirmed on the actual host (`POSEIDON_DATABASE_URL`). |
 | "25+ tables" | `scripts/init.sql` declares **40 tables** in the primary schema; `services/availity/prisma/schema.prisma` declares **24 additional tables** in the same database namespace | Understated: reality is **64+** tables defined across both schemas. |
-| "Nginx reverse proxy in front" | `docker-compose.yml` line 387 defines an `nginx:1.29.6-alpine` container binding `80:80`, `443:443` with config at `./nginx/nginx.conf` | Supported by the compose file. **But** the public production surface does not route through this nginx — `*.strykefox.com` subdomains terminate at Cloudflare and proxy to Render, not to this container. So in **deployment reality**, the compose-level nginx is not the public reverse proxy today. `[CONFIRMED]` from DNS and `Rndr-Id` / `cf-ray` headers. |
-| "MinIO on local disk" | Compose declares `minio` service with named volume `minio_data`. Where that volume actually lives is a function of the host. On this laptop there are no poseidon-related docker volumes. On Render, volumes work differently; whether MinIO is even deployed there is `[UNKNOWN]` from public evidence (no `*.strykefox.com` subdomain for MinIO responds, and the code references `MINIO_ENDPOINT` without any public hostname set in `.env`). | `[UNKNOWN]` in production; supported as a design in the compose file. |
+| "Nginx reverse proxy in front" | `docker-compose.yml` line 387 defines an `nginx:1.29.6-alpine` container binding `80:80`, `443:443` with config at `./nginx/nginx.conf` | Supported by the compose file. **Canonical production** uses this pattern on DO; a 2026-04-18 public DNS snapshot showed Cloudflare in front of other origins — update DNS to point to your droplet when following `STATUS.md`. |
+| "MinIO on local disk" | Compose declares `minio` service with named volume `minio_data`. Where that volume actually lives is a function of the host. On this laptop there are no poseidon-related docker volumes. Whether MinIO is deployed on the **production droplet** is host-specific. | `[UNKNOWN]` without access to the live host; supported as a design in the compose file. |
 | "19 payers configured in Trident" | No evidence seen in repo for a hardcoded 19-payer list. `services/trident/main.py` contains 24 routes; payer data is stored in the `payers` DB table (one of the 40 `init.sql` tables). A direct table count would require a Neon query, which is out of scope. | `[UNKNOWN]` without DB access. |
-| "Frontend is Next.js on port 3000" | `frontend/package.json` → `next: ^16.2.1`, `react: ^19.2.4`. Compose `dashboard` service env `PORT: 3000`, healthcheck `/api/health`. `dashboard.strykefox.com/api/health` returns `{"status":"ok","service":"dashboard"}` with `x-powered-by: Next.js` and `rndr-id:` header. | Confirmed, plus Next.js 16 is a more recent version than the "Next.js" label implied. |
+| "Frontend is Next.js on port 3000" | `frontend/package.json` → `next: ^16.2.1`, `react: ^19.2.4`. Compose `dashboard` service env `PORT: 3000`, healthcheck `/api/health`. A 2026-04-18 probe of `dashboard.strykefox.com/api/health` returned `{"status":"ok","service":"dashboard"}` with `x-powered-by: Next.js`. | Confirmed; deploy the dashboard as part of the compose stack on DO per `STATUS.md`, not on Render. |
 | "EDI service uses asyncpg (others use psycopg)" | `services/edi/requirements.txt`: `asyncpg==0.29.0`. `services/core/requirements.txt` and the other three: `psycopg[binary,pool]==3.2.3`. | Confirmed. |
 | "Intake has OCR" | `INTAKE_OCR_CONFIDENCE_THRESHOLD` env var is referenced in `services/intake/main.py` (line 9 per the earlier grep). `services/intake/main.py` includes `/api/v1/intake/parse-document`. However, no `pytesseract`, `tesseract`, `easyocr`, or `textract` Python imports were found in services. `pdf-parse` is present (in the availity service) and `pdf_ocr` as a string label was not found in Python. Intake PDF parsing uses `pdf-parse` (Node) or a service-side parser; dedicated image-OCR of scanned docs is not demonstrably present in code. | Partially supported: document parsing exists, classical image OCR via tesseract-family libraries does not appear to be wired in. |
 | "DocuSign integration live" | `DROPBOX_SIGN_*` env vars are referenced and `services/core/main.py` has `POST /api/v1/webhooks/dropbox-sign` and `/webhooks/dropbox-sign/swo`. `DOCUSIGN_*` env vars in `.env` (lines 56–58) are blank. Grep for the `docusign` library returned `services/core/main.py` and `services/shared/base.py` only. | The signing integration is **Dropbox Sign (HelloSign)**, not DocuSign; DocuSign envs are blank. |
@@ -611,7 +615,7 @@ Several of these are Cursor/Claude project metadata paths (not full repo clones)
 
 Explicit list of open questions that require the surfaces this run had no access to:
 
-1. Which `DATABASE_URL` the live Render services actually read at runtime — Neon, the bundled Compose Postgres, or something else. Needs Render env introspection or direct service logs.
+1. Which `DATABASE_URL` the **live production host** (droplet/compose) reads at runtime — Neon, the bundled Compose Postgres, or something else. Needs access to that host’s env and logs (not Render; Render is not in use).
 2. Whether the droplet at `157.230.145.247` is currently running any part of POSEIDON, and if so which services and with what env. Needs SSH.
 3. What `nginx/1.18.0 (Ubuntu)` on the droplet is actually proxying to on port 80 (the FastAPI-shaped 404 body suggests a FastAPI app is behind it). Needs SSH or an authoritative URL that resolves there.
 4. Row counts in every table, including `orders`, `patients`, `claim_submissions`, `eob_claims`, `denials`, `appeals`, `eligibility_checks`, `auth_requests`, `workflow_events`, `audit_log`, `payment_outcomes`. Needs Neon query access.
@@ -619,8 +623,8 @@ Explicit list of open questions that require the surfaces this run had no access
 6. Neon plan tier (Free vs. Launch vs. Scale), PITR window, whether HIPAA is enabled on the project, whether a BAA has been executed with Neon. Needs Neon console / API.
 7. DigitalOcean: whether a BAA is executed for the account, what services the account has, whether the droplet's block storage / volumes are encrypted. Needs DO console / API.
 8. Cloudflare: zone plan tier (Free / Pro / Business / Enterprise), whether a BAA is executed. Needs Cloudflare dashboard.
-9. Render: which services are deployed, their current health, their env var values, the suspension reason for `api.strykefox.com`. Needs Render dashboard / API.
-10. MinIO: whether it is actually deployed anywhere in production, where its data volume lives, its bucket count, object count, total size, and SSE configuration. Needs either the running host or Render service access.
+9. (Removed — Render is not in use; use droplet/compose and DO for operational questions.)
+10. MinIO: whether it is actually deployed on the production host, where its data volume lives, its bucket count, object count, total size, and SSE configuration. Needs SSH or DO access to the running host.
 11. Whether GitHub Actions is configured on the `Stryke3/poseidon-os333` repo (given `ci.yml` is gitignored locally, the remote may have a different workflow). Needs GitHub API.
 12. Whether any of the other local clones (`/Users/adamstryker/Desktop/poseidon`, the `cursor/projects/*-poseidon-os*` directories) contain a different `.env` with different live credentials. Needs directory-by-directory enumeration this run did not complete.
 13. Whether any of the patient records in the DB are real patient data or synthetic (the `seed_neon.js` / `seed_real.js` scripts insert records shaped like real patient data — Medicare beneficiary IDs, names, DOBs, diagnosis codes — but whether those values were rewritten from actual CSVs or generated is not determinable from the seed script alone). Needs a comparison between the committed seed data and a source-of-truth dataset.
@@ -629,4 +633,4 @@ Explicit list of open questions that require the surfaces this run had no access
 
 ## 14. Final paragraph — plain prose, ~150 words
 
-Given only what is accessible from this laptop, POSEIDON is a Docker-Compose-defined stack of eleven services (Postgres, Redis, MinIO, five FastAPI services in Python, a Node/Express Availity service with its own Prisma schema, a Next.js 16 dashboard, and nginx) whose schema spans roughly sixty-four tables across two parallel migration systems, whose frontend is currently the only production surface actually responding (`dashboard.strykefox.com` on Render, Cloudflare-fronted), whose Core API endpoint `api.strykefox.com` is presently returning Render's "Service Suspended" page, whose Trident / Intake / ML subdomains are returning 502 through Cloudflare, and whose assumed DigitalOcean droplet at `157.230.145.247` is reachable on port 80 but is not bound to any strykefox.com name. The single largest uncertainties are which database the live Render services actually write to, what is actually running on the droplet, and whether the Neon production password that has been committed to git history since 2026-03-26 and the GitHub PAT embedded in this repository's `origin` URL are still valid credentials for the systems they name.
+Given only what is accessible from this laptop, POSEIDON is a Docker-Compose-defined stack of eleven services (Postgres, Redis, MinIO, five FastAPI services in Python, a Node/Express Availity service with its own Prisma schema, a Next.js 16 dashboard, and nginx) whose schema spans roughly sixty-four tables across two parallel migration systems. **Production target is the DigitalOcean + compose + nginx model** in `STATUS.md` — **not Render.** A 2026-04-18 public snapshot (section 9) saw mixed health across `*.strykefox.com` and a droplet at `157.230.145.247` reachable on port 80; that snapshot is not a substitute for current cutover state. The largest follow-ups are: which `DATABASE_URL` the live droplet uses, what is actually running there after DNS/ops changes, and rotating any credentials that have appeared in history (e.g. Neon, Git `origin` URLs with embedded tokens).
