@@ -18,6 +18,8 @@ type Patient = {
   diagnosis_codes: string[]
   hcpcs_codes: string[]
   notes: string | null
+  created_at: string | null
+  updated_at: string | null
 }
 
 type UploadRow = {
@@ -60,10 +62,14 @@ export function PatientLiteRepository({
   patient: initial,
   uploads: initialUploads,
   generated: initialGen,
+  basePath = "/lite/patients",
+  productLabel = "Poseidon Lite",
 }: {
   patient: Patient
   uploads: UploadRow[]
   generated: GeneratedRow[]
+  basePath?: string
+  productLabel?: string
 }) {
   const router = useRouter()
   const [patient, setPatient] = useState(initial)
@@ -265,10 +271,10 @@ export function PatientLiteRepository({
           <h1 className="text-2xl font-semibold">
             {patient.first_name} {patient.last_name}
           </h1>
-          <p className="text-sm text-slate-500">Repository ID · {patient.id}</p>
+          <p className="text-sm text-slate-500">{productLabel} case · {patient.id}</p>
         </div>
-        <Link href="/lite/patients" className="text-sm text-slate-600 hover:text-slate-900">
-          ← Back to list
+        <Link href={basePath} className="text-sm text-slate-600 hover:text-slate-900">
+          ← Back to queue
         </Link>
       </div>
 
@@ -520,12 +526,12 @@ export function PatientLiteRepository({
           ) : (
             generated.map((g) => (
               <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                <Link href={`/lite/patients/${patient.id}/generated/${g.id}`} className="font-medium text-slate-900 hover:underline">
+                <Link href={`${basePath}/${patient.id}/generated/${g.id}`} className="font-medium text-slate-900 hover:underline">
                   {g.document_type}
                 </Link>
                 <span className="text-xs text-slate-500">{g.created_at}</span>
                 <div className="flex gap-3">
-                  <Link href={`/lite/patients/${patient.id}/generated/${g.id}`} className="text-emerald-700 hover:underline">
+                  <Link href={`${basePath}/${patient.id}/generated/${g.id}`} className="text-emerald-700 hover:underline">
                     View
                   </Link>
                   <a

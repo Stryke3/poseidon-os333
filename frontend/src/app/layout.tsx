@@ -6,8 +6,8 @@ import "./globals.css"
 import Providers from "./providers"
 
 export const metadata: Metadata = {
-  title: "Poseidon with Trident Technology - Clinical. Revenue. Control.",
-  description: "Poseidon with Trident Technology - Clinical. Revenue. Control.",
+  title: "SUPER TRIDENT — OCR document intelligence engine",
+  description: "SUPER TRIDENT ingests patient record PDFs, extracts structured facts, and generates SWO plus payer addendums.",
 }
 
 export default async function RootLayout({

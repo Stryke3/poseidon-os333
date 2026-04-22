@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS patients (
     payer_id TEXT,
     diagnosis_codes JSONB DEFAULT '[]',
     address JSONB DEFAULT '{}',
+    next_of_kin JSONB DEFAULT '{}',
+    drivers_license JSONB DEFAULT '{}',
     active BOOLEAN DEFAULT TRUE,
     created_by UUID,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -1052,10 +1054,41 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 
 INSERT INTO schema_version (id, version, updated_at)
-VALUES (1, 14, NOW())
+VALUES (1, 15, NOW())
 ON CONFLICT (id) DO NOTHING;
 
-UPDATE schema_version SET version = GREATEST(version, 14), updated_at = NOW() WHERE id = 1;
+UPDATE schema_version SET version = GREATEST(version, 15), updated_at = NOW() WHERE id = 1;
+
+-- =============================================================================
+-- TRIDENT 3.0 (canonical `orders` — when Core DB is the source; Lite TRIDENT
+-- also maintains parallel tables under schema `lite`.)
+-- =============================================================================
+DO $$ BEGIN
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS coding_cover_sheet_status TEXT DEFAULT 'not_started';
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS pod_status TEXT DEFAULT 'not_required';
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS final_packet_status TEXT DEFAULT 'not_started';
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS tebra_record_status TEXT DEFAULT 'not_sent';
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS docusign_envelope_id TEXT;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS final_packet_path TEXT;
+END $$;
+
+CREATE TABLE IF NOT EXISTS docusign_events (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id              UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    envelope_id           TEXT NOT NULL,
+    template_name         TEXT,
+    recipient_name        TEXT,
+    recipient_email       TEXT,
+    status                TEXT,
+    sent_at               TIMESTAMPTZ,
+    completed_at          TIMESTAMPTZ,
+    voided_at             TIMESTAMPTZ,
+    signed_document_path  TEXT,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_docusign_events_order ON docusign_events (order_id);
+CREATE INDEX IF NOT EXISTS idx_docusign_events_envelope ON docusign_events (envelope_id);
 
 -- =============================================================================
 -- PASSWORD RESET TOKENS

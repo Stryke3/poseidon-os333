@@ -34,6 +34,8 @@ def _stedi_authorization_value(api_key: str) -> str:
     low = k.lower()
     if low.startswith("bearer "):
         k = k[7:].strip()
+    elif low.startswith("key "):
+        k = k[4:].strip()
     return k
 
 
@@ -81,12 +83,12 @@ class StediClient:
         """
         headers = {**self.headers}
         headers["Idempotency-Key"] = idempotency_key or uuid.uuid4().hex
-        headers["Content-Type"] = "text/plain"
+        headers["Content-Type"] = "application/json"
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{STEDI_BASE_URL}/change/medicalnetwork/professionalclaims/v3/raw-x12-submission",
-                content=raw_x12,
+                json={"x12": raw_x12},
                 headers=headers,
             )
             if resp.status_code >= 400:
@@ -142,10 +144,10 @@ class StediClient:
         """
         params = {}
         if cursor:
-            params["cursor"] = cursor
+            params["pageToken"] = cursor
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
-                f"{STEDI_BASE_URL}/polling/transactions",
+                f"{STEDI_CORE_URL}/polling/transactions",
                 headers=self.headers,
                 params=params,
             )
@@ -212,7 +214,7 @@ class StediClient:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(
-                    f"{STEDI_BASE_URL}/transactions?limit=1",
+                    f"{STEDI_CORE_URL}/transactions?pageSize=1",
                     headers=self.headers,
                 )
                 return resp.status_code == 200

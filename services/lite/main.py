@@ -10,18 +10,22 @@ import re
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import asyncpg
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+import trident30
+from trident30_v1 import build_router as build_trident30_v1_router
+
 APP_NAME = "poseidon-lite"
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("POSEIDON_DATABASE_URL", "")
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")
-DATA_ROOT = Path(os.environ.get("LITE_DATA_DIR", "/app/data/lite_files"))
+DEFAULT_DATA_ROOT = "/app/data/lite_files" if Path("/app").exists() else str(Path(__file__).resolve().parents[2] / "data" / "lite_files")
+DATA_ROOT = Path(os.environ.get("LITE_DATA_DIR", DEFAULT_DATA_ROOT))
 
 DOC_CATEGORIES = frozenset(
     {
@@ -34,11 +38,11 @@ DOC_CATEGORIES = frozenset(
         "billing",
         "other",
     }
-)
+) | trident30.TRIDENT_DOC_CLASSES
 
 GENERATE_TYPES = frozenset({"swo", "transmittal", "checklist", "billing-summary"})
 
-_pool: asyncpg.Pool | None = None
+_pool: Optional[asyncpg.Pool] = None
 
 
 async def ensure_schema(conn: asyncpg.Connection) -> None:
@@ -87,9 +91,10 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
             ON lite.generated_documents (patient_id);
         """
     )
+    await trident30.ensure_trident30_schema(conn)
 
 
-def require_api_key(x_internal_api_key: str | None = Header(None)) -> None:
+def require_api_key(x_internal_api_key: Optional[str] = Header(None)) -> None:
     if not INTERNAL_API_KEY:
         return
     if x_internal_api_key != INTERNAL_API_KEY:
@@ -160,31 +165,31 @@ def _row_patient(r: asyncpg.Record) -> dict[str, Any]:
 class PatientCreate(BaseModel):
     first_name: str = ""
     last_name: str = ""
-    dob: date | None = None
-    phone: str | None = None
-    email: str | None = None
-    address: str | None = None
-    payer_name: str | None = None
-    member_id: str | None = None
-    ordering_provider: str | None = None
+    dob: Optional[date] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    payer_name: Optional[str] = None
+    member_id: Optional[str] = None
+    ordering_provider: Optional[str] = None
     diagnosis_codes: list[str] = Field(default_factory=list)
     hcpcs_codes: list[str] = Field(default_factory=list)
-    notes: str | None = None
+    notes: Optional[str] = None
 
 
 class PatientUpdate(BaseModel):
-    first_name: str | None = None
-    last_name: str | None = None
-    dob: date | None = None
-    phone: str | None = None
-    email: str | None = None
-    address: str | None = None
-    payer_name: str | None = None
-    member_id: str | None = None
-    ordering_provider: str | None = None
-    diagnosis_codes: list[str] | None = None
-    hcpcs_codes: list[str] | None = None
-    notes: str | None = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    dob: Optional[date] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    payer_name: Optional[str] = None
+    member_id: Optional[str] = None
+    ordering_provider: Optional[str] = None
+    diagnosis_codes: Optional[list[str]] = None
+    hcpcs_codes: Optional[list[str]] = None
+    notes: Optional[str] = None
 
 
 def _safe_filename(name: str) -> str:
@@ -192,6 +197,11 @@ def _safe_filename(name: str) -> str:
     if not base or base in (".", ".."):
         return "upload.bin"
     return re.sub(r"[^a-zA-Z0-9._-]", "_", base)[:200]
+
+
+app.include_router(
+    build_trident30_v1_router(get_pool, DATA_ROOT, _safe_filename), dependencies=[Depends(require_api_key)]
+)
 
 
 def _json_list(v: Any) -> list[str]:
@@ -395,7 +405,7 @@ async def create_patient(body: PatientCreate, pool: asyncpg.Pool = Depends(get_p
 
 @app.get("/patients", dependencies=[Depends(require_api_key)])
 async def list_patients(
-    q: str | None = Query(None),
+    q: Optional[str] = Query(None),
     pool: asyncpg.Pool = Depends(get_pool),
 ) -> list[dict[str, Any]]:
     async with pool.acquire() as conn:

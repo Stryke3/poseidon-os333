@@ -149,6 +149,15 @@ async def _assert_core_schema_version_and_columns(conn) -> None:
     ccols = await _table_columns(conn, "claim_submissions")
     if "submission_format" not in ccols:
         raise RuntimeError("claim_submissions.submission_format missing; apply migration 014")
+    # Auto-apply migration 007 columns (next_of_kin, drivers_license) so DBs
+    # initialized from the pre-007 init.sql don't fail the patient chart query.
+    pcols = await _table_columns(conn, "patients")
+    if "next_of_kin" not in pcols or "drivers_license" not in pcols:
+        logger.warning("patients.next_of_kin / drivers_license missing — auto-applying migration 007")
+        await conn.execute("""
+            ALTER TABLE patients ADD COLUMN IF NOT EXISTS next_of_kin JSONB DEFAULT '{}'::jsonb;
+            ALTER TABLE patients ADD COLUMN IF NOT EXISTS drivers_license JSONB DEFAULT '{}'::jsonb;
+        """)
 
 
 def _require_claim_strategy_availity(claim_strategy: Any) -> None:
