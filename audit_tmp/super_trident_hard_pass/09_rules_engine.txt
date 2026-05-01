@@ -1,0 +1,15 @@
+**Primary location:** frontend/src/lib/trident-engine.ts → `ruleHitsFor` + `inferReviewState` + `defaultBundleFor` + trident-settings code mappings (JSON/loaded templates).
+
+**Centralized?** Partly: rules in one TS module + settings; not a separate rules service.
+
+**Behaviors found:**
+- Missing name, DOB, provider, diagnosis: **blocking** hits
+- TKA/THA + **laterality unknown** → **blocking** (line ~181-183)
+- TKA + **code mapping conflict** (mapping.conflict + requires_review) → **blocking**
+- **Conflicting DOB** across documents: **not** implemented
+- **Mixed-patient** packet: **not** implemented
+- Missing order date: **not** a dedicated block (notes only in TRIDENT3 workflow for order_date_iso in separate API)
+
+**trident30_v1 (Python) build_rule_hits** — similar list; not identical to trident-engine.
+
+**Verdict: PARTIAL** for a subset; **FAIL** for full matrix (mixed patient, DOB conflict, order date).

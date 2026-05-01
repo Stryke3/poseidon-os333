@@ -1,0 +1,10 @@
+No test suite was executed to completion in this audit window (no `npm test` / `pytest` run with captured output).
+
+Spot-check: `scripts/audit_no_render_left.sh` is known to **PASS** from prior session; not re-run in this evidence bundle.
+
+**Verdict: FAIL** for “tests run with results in this pass.”
+
+Suggested manual command for operator:
+- `cd frontend && npm test` or `npm run test` (if defined)
+- `cd services && pytest` where applicable
+- `bash scripts/audit_no_render_left.sh`

@@ -1,0 +1,30 @@
+## Next.js app routes (page.tsx) — non-exhaustive from glob
+See glob: frontend/src/app/**/page.tsx
+
+Trident (narrow path):
+- /trident (trident/page.tsx)
+- /trident/cases
+- /trident/cases/[caseId]
+- /trident/cases/[caseId]/generated/[genId]
+- /trident/generated
+- /trident/settings
+- / (root) redirects via middleware to /trident/cases
+- /login (excluded from auth matcher)
+
+Legacy / broad still present in filesystem (middleware redirects PAGE routes to /trident/cases or /trident/settings for some prefixes, but routes still SHIP in bundle):
+- /exec, /edi, /fax, /revenue, /intake, /matia, /executive, /ceo, /founder, /lite/patients, /patients/[patientId], /settings/wiki, /admin/... (many)
+- **API route handlers** under frontend/src/app/api/ are **NOT** in middleware redirect list — 90+ route.ts files (edi, denials, fax, exec, availity, patients, orders, etc.) remain in codebase.
+
+## Middleware (frontend/middleware.ts)
+- redirectToCases: /, /ceo, /edi, /exec, /executive, /fax, /founder, /intake, /matia, /patients, /revenue  → /trident/cases
+- redirectToSettings: /admin, /settings  → /trident/settings
+- /lite  → /trident  rewrite
+- matcher **excludes** login, api/auth, api/health, api/public-inquiry, api/core, _next, favicon — **all other /api/* except the excluded ones still go through withAuth and can be invoked if a session token exists** (e.g. /api/edi, /api/patients, /api/denials).
+
+## Trident nav (trident/layout.tsx)
+Active links: /trident/cases, /trident/generated, /trident/settings only.
+No EDI/claims in this nav, but they exist elsewhere in repo.
+
+## Verdict
+Route **reduction in UX** via redirects: PARTIAL.
+**Route surface in codebase / API:** still broad; FAIL for “legacy not exposed”.

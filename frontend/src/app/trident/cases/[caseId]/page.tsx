@@ -1,16 +1,11 @@
-import { notFound } from "next/navigation"
+import { redirect } from "next/navigation"
 
-import { PatientLiteRepository } from "@/components/lite/PatientLiteRepository"
-import { Trident30OrderWorkspace } from "@/components/trident/Trident30OrderWorkspace"
+import { BlockerList } from "@/components/spear/BlockerList"
+import { TridentCaseGenerateAction } from "@/components/trident/TridentCaseGenerateAction"
 import { getTridentCaseDetail } from "@/lib/trident-engine"
+import { canGenerateCase, getCaseBlockers, nextActionForCase, toSpearBoardCase } from "@/lib/spear-board"
 
 export const dynamic = "force-dynamic"
-
-const bannerTone = {
-  READY_TO_GENERATE: "border-emerald-300 bg-emerald-50 text-emerald-800",
-  DRAFT_NOT_READY: "border-amber-300 bg-amber-50 text-amber-800",
-  BLOCKED: "border-red-300 bg-red-50 text-red-800",
-} as const
 
 export default async function TridentCaseDetailPage({
   params,
@@ -19,80 +14,113 @@ export default async function TridentCaseDetailPage({
 }) {
   const { caseId } = await params
   const tridentCase = await getTridentCaseDetail(caseId)
-  if (!tridentCase) notFound()
+  if (!tridentCase) redirect("/trident/cases")
+
+  const blockers = getCaseBlockers(tridentCase)
+  const boardCase = toSpearBoardCase(tridentCase)
+  const canGenerate = canGenerateCase(tridentCase, blockers)
 
   return (
-    <div className="space-y-6">
-      <section className={`rounded-3xl border px-5 py-4 ${bannerTone[tridentCase.status]}`}>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="space-y-6">
+        <section className="rounded-[32px] border border-white/8 bg-[#15111b] px-6 py-6 text-[#f4f1e8] shadow-[0_24px_64px_rgba(0,0,0,0.2)]">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-[#d9eb74]/74">Case review</p>
+              <h2 className="mt-3 text-[2.4rem] tracking-[-0.05em]">
+                {tridentCase.patient_first_name} {tridentCase.patient_last_name}
+              </h2>
+              <p className="mt-2 text-sm text-slate-400">
+                {boardCase.caseId} · {boardCase.procedure} · {boardCase.payer}
+              </p>
+            </div>
+            <div className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[10px] uppercase tracking-[0.18em] text-slate-300">
+              {boardCase.statusChip}
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-[30px] border border-white/8 bg-[#efe8da] p-5 text-[#151519] shadow-[0_16px_36px_rgba(10,12,16,0.08)]">
+            <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">Focus case</p>
+            <div className="mt-4 grid gap-3 text-sm text-slate-700">
+              <div className="flex items-center justify-between gap-3">
+                <span>Procedure</span>
+                <span className="font-medium text-[#151519]">{boardCase.procedure}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Payer</span>
+                <span className="font-medium text-[#151519]">{boardCase.payer}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Provider</span>
+                <span className="font-medium text-[#151519]">{tridentCase.provider_name || "Missing"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>DOB</span>
+                <span className="font-medium text-[#151519]">{tridentCase.dob || "Missing"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Laterality</span>
+                <span className="font-medium text-[#151519]">{tridentCase.laterality}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-[30px] border border-white/8 bg-[#efe8da] p-5 text-[#151519] shadow-[0_16px_36px_rgba(10,12,16,0.08)]">
+            <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">Extraction trace</p>
+            <ul className="mt-4 space-y-3 text-sm text-slate-700">
+              {tridentCase.extracted_fields.slice(0, 8).map((field) => (
+                <li key={field.field_name} className="rounded-[20px] border border-black/6 bg-white/70 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-[#151519]">{field.field_name}</span>
+                    <span className="text-xs uppercase tracking-[0.18em] text-slate-500">{Math.round(field.confidence * 100)}%</span>
+                  </div>
+                  <p className="mt-2 text-slate-600">{field.field_value || "Missing"}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        <section className="rounded-[30px] border border-white/8 bg-[#efe8da] p-5 text-[#151519] shadow-[0_16px_36px_rgba(10,12,16,0.08)]">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">Source documents</p>
+              <h3 className="mt-2 text-xl font-semibold">Packet contents</h3>
+            </div>
+            <span className="text-sm text-slate-500">{tridentCase.source_documents.length} PDFs</span>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {tridentCase.source_documents.length === 0 ? (
+              <p className="rounded-[20px] border border-dashed border-black/8 px-4 py-5 text-sm text-slate-500">No documents uploaded yet.</p>
+            ) : (
+              tridentCase.source_documents.map((doc) => (
+                <div key={doc.id} className="rounded-[20px] border border-black/6 bg-white/70 px-4 py-4 text-sm text-slate-700">
+                  <p className="font-medium text-[#151519]">{doc.filename}</p>
+                  <p className="mt-1 text-slate-500">{doc.category}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+
+      <aside className="space-y-4">
+        <section className="rounded-[30px] border border-white/8 bg-[#14111a] p-6 text-slate-100 shadow-[0_24px_60px_rgba(0,0,0,0.22)]">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em]">Case Review</p>
-            <h2 className="mt-1 text-2xl font-semibold">
-              {tridentCase.patient_first_name} {tridentCase.patient_last_name}
-            </h2>
-            <p className="mt-1 text-sm">
-              {tridentCase.procedure_name || "Procedure not confidently extracted"} · Laterality {tridentCase.laterality}
-            </p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">Blockers</p>
+            <h3 className="mt-3 text-xl font-semibold text-[#f4f1e8]">Resolve before generation</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-400">{nextActionForCase(tridentCase, blockers)}</p>
           </div>
-          <div className="rounded-full border border-current/20 px-4 py-2 text-sm font-semibold">
-            {tridentCase.status.replaceAll("_", " ")}
+          <div className="mt-5">
+            <BlockerList blockers={blockers} />
           </div>
-        </div>
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-3xl border border-slate-300 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Rule Hits</p>
-          <ul className="mt-3 space-y-2 text-sm text-slate-700">
-            {tridentCase.rule_hits.map((hit) => (
-              <li key={`${hit.rule_name}-${hit.message}`} className="rounded-2xl border border-slate-200 px-3 py-2">
-                <span className="font-semibold">{hit.rule_name}</span>: {hit.message}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="rounded-3xl border border-slate-300 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Extraction Traceability</p>
-          <ul className="mt-3 space-y-2 text-sm text-slate-700">
-            {tridentCase.extracted_fields.slice(0, 8).map((field) => (
-              <li key={field.field_name} className="rounded-2xl border border-slate-200 px-3 py-2">
-                <span className="font-semibold">{field.field_name}</span>: {field.field_value || "missing"} · confidence{" "}
-                {Math.round(field.confidence * 100)}%
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
-
-      <PatientLiteRepository
-        patient={{
-          id: tridentCase.id,
-          first_name: tridentCase.patient_first_name,
-          last_name: tridentCase.patient_last_name,
-          dob: tridentCase.dob,
-          phone: tridentCase.phone,
-          email: null,
-          address: tridentCase.address_1,
-          payer_name: tridentCase.primary_insurance,
-          member_id: tridentCase.member_id_primary,
-          ordering_provider: tridentCase.provider_name,
-          diagnosis_codes: tridentCase.diagnosis_codes,
-          hcpcs_codes: [],
-          notes: tridentCase.review_flags.join("\n"),
-          created_at: null,
-          updated_at: null,
-        }}
-        uploads={tridentCase.source_documents}
-        generated={tridentCase.generated_documents.map((doc) => ({
-          id: doc.id,
-          document_type: doc.type === "ADDENDUM" ? "addendum" : doc.type.toLowerCase(),
-          created_at: doc.created_at,
-        }))}
-        basePath="/trident/cases"
-        productLabel="SUPER TRIDENT"
-      />
-
-      <Trident30OrderWorkspace orderId={tridentCase.id} />
+          <div className="mt-6">
+            <TridentCaseGenerateAction caseId={caseId} disabled={!canGenerate} />
+          </div>
+        </section>
+      </aside>
     </div>
   )
 }

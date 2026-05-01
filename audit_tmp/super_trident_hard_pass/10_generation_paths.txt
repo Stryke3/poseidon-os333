@@ -1,0 +1,23 @@
+## SWO / addendum (canonical narrow path — Lite)
+- POST /patients/{id}/generate/swo | transmittal | checklist | billing-summary (services/lite/main.py)
+- `generate_swo_content` → plain **text** file on disk, not final PDF form
+- `generate_transmittal_content` = physician transmittal / addendum-style cover
+- `generate_billing_summary_content` = “BILLING PACKET SUMMARY” — **out of scope** for Layer A if considered “active”
+- **No** server-side **PDF** render for SWO; **.txt** output
+
+## trident-engine mapping
+- Generated docs types: SWO, ADDENDUM (from transmittal/checklist/billing-summary)
+- `PatientLiteRepository` / API triggers generation via BFF
+
+## Trident 3.0 (Layer B) — **drift risk vs Layer A**
+- services/lite/trident30_v1.py: coding_cover_sheet, **pod_packet**, final_packet, **docusign stub**, **tebra** mark
+- frontend: Trident30OrderWorkspace on case page — **default** case UI includes this if deployed
+- If this is the **default** path in production, it **overrides** “only SWO + payer addendum” for current phase → **scope drift (FAIL vs Layer A lock)** if Trident 3.0 is active in runtime
+
+## Forbidden outputs (active code still present)
+- **EDI 837P:** EdiCommandSurface, lib/edi-api, api/edi
+- **CMS-1500:** patients page, wiki, executive surface
+- **POD as product surface:** Trident 3.0 pod_packet + Trident30OrderWorkspace
+- **Delivery receipt:** trident30 POD flow; doc classes include delivery_tracking, proof_of_delivery_*
+
+**Verdict:** SWO/addendum **text generation path exists** in Lite. **PDF/controlled template** not proven. **Forbidden/broad paths still in tree.** Trident 3.0 **conflicts** with narrow lock if default.

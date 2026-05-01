@@ -113,18 +113,18 @@ const organizationJsonLd = {
 const philosophyPoints = [
   {
     number: "01",
-    title: "Infrastructure Before Transactions",
-    body: "Every revenue event in healthcare flows through infrastructure. Build it first. Transactions follow and compound on top of it.",
+    title: "Build Infrastructure First",
+    body: "Transactions are downstream. Durable healthcare platforms start with controlled operating infrastructure, then compound through execution.",
   },
   {
     number: "02",
-    title: "Automation Eliminates Margin Drag",
-    body: "Systems reduce friction, compress cycle times, improve reimbursement visibility, and preserve margin in regulated workflows.",
+    title: "Automation Protects Margin",
+    body: "Systems should remove drag, compress cycle time, and preserve margin inside regulated workflows without sacrificing control.",
   },
   {
     number: "03",
-    title: "Physician Enablement Wins Markets",
-    body: "The real moat is not a single product. It is the operating architecture that helps physicians move faster, cleaner, and more compliantly.",
+    title: "Physician Alignment Scales",
+    body: "The moat is not a single product. It is an operating architecture that helps physicians move faster, cleaner, and more compliantly.",
   },
 ]
 
@@ -182,9 +182,7 @@ export default function FounderPage() {
             <div className="grid w-full gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.75fr)] lg:gap-16">
               {/* Left column — identity and copy */}
               <div className="max-w-2xl">
-                <p className="font-mono text-[11px] uppercase tracking-[0.42em] text-white/55">
-                  Founder
-                </p>
+                <p className="font-mono text-[11px] uppercase tracking-[0.42em] text-white/55">Founder</p>
                 <h1 className="mt-4 max-w-xl font-display text-6xl uppercase leading-[0.9] text-white sm:text-7xl lg:text-[6.5rem]">
                   Adam
                   <br />
@@ -192,31 +190,25 @@ export default function FounderPage() {
                 </h1>
 
                 <p className="mt-5 border-y border-white/10 py-4 font-mono text-[11px] uppercase tracking-[0.3em] text-accent-gold-2/80">
-                  Founder, StrykeFox Medical · Healthcare Operator · Medical
-                  Devices · DME · Biologics · Healthcare Platform Development
+                  Founder, StrykeFox Medical · Operator · Platform Builder
                 </p>
 
                 <div className="mt-8 space-y-5">
                   <p className="max-w-2xl text-sm leading-7 text-slate-200/78 sm:text-base">
-                    Adam Stryker is a healthcare operator and founder of
-                    StrykeFox Medical, focused on medical devices, DME,
-                    biologics, physician enablement, reimbursement
-                    infrastructure, and healthcare platform development.
+                    StrykeFox is the operating backbone: integrated surgical
+                    supply, physician enablement, reimbursement operations, and
+                    technology infrastructure aligned under one platform.
                   </p>
                   <p className="max-w-2xl text-sm leading-7 text-slate-200/78 sm:text-base">
-                    He builds integrated healthcare infrastructure across
-                    surgical supply, technology-driven operations, physician
-                    relationships, and scalable operating systems designed for
-                    long-term value creation across regulated healthcare
-                    markets.
+                    Founder is the narrative backbone: one accountable operator
+                    perspective shaping architecture, standards, and sequencing
+                    across a regulated system.
                   </p>
                 </div>
 
                 <div className="mt-10 border-l-2 border-accent-gold-2/40 bg-white/5 px-6 py-5 text-base italic leading-8 text-slate-200/80">
-                  &ldquo;Healthcare infrastructure is not a product category — it is
-                  a systems architecture problem. The operators who win will be
-                  the ones who build compounding platforms, not point
-                  solutions.&rdquo;
+                  &ldquo;Build the operating backbone. Let everything else compound
+                  from there.&rdquo;
                 </div>
               </div>
 
@@ -228,11 +220,11 @@ export default function FounderPage() {
                   </p>
                   <ul className="mt-4 space-y-2.5 text-sm leading-6 text-slate-200/76">
                     <li>Founder — StrykeFox Medical</li>
-                    <li>Architect — Healthcare Platform Development</li>
-                    <li>Operator — Medical Devices, DME, and Biologics</li>
+                    <li>Architect — Platform Operating Model</li>
+                    <li>Operator — Devices, DME, and Biologics</li>
                     <li>Developer — Poseidon OS</li>
                     <li>Founder — NorthStar Surgical Institute</li>
-                    <li>Strategist — Physician Enablement and Growth</li>
+                    <li>Strategist — Physician Enablement</li>
                   </ul>
                 </div>
 
@@ -241,12 +233,10 @@ export default function FounderPage() {
                     Strategic Focus
                   </p>
                   <ul className="mt-4 space-y-2.5 text-sm leading-6 text-slate-200/76">
-                    <li>Medical devices and surgical infrastructure</li>
-                    <li>DME and reimbursement architecture</li>
-                    <li>Biologics and physician enablement</li>
-                    <li>Healthcare services growth systems</li>
-                    <li>Capital structure and acquisition strategy</li>
-                    <li>Margin architecture and scalable operations</li>
+                    <li>Operating backbone for regulated care delivery</li>
+                    <li>Reimbursement architecture and packet integrity</li>
+                    <li>Physician enablement with execution discipline</li>
+                    <li>Technology systems that reduce operational drag</li>
                   </ul>
                 </div>
 
@@ -276,8 +266,18 @@ export default function FounderPage() {
                       </a>
                     </li>
                     <li>Speaker — Healthcare Infrastructure</li>
-                    <li>Founder — StrykeFox Medical Platform</li>
+                    <li>Founder — StrykeFox Platform</li>
                   </ul>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/6 p-6 backdrop-blur-xl sm:p-8">
+                  <p className="font-mono text-[11px] uppercase tracking-[0.38em] text-accent-gold-2/80">
+                    Book (Controlled Extension)
+                  </p>
+                  <p className="mt-4 text-sm leading-6 text-slate-200/76">
+                    The book is a future extension of this operating thesis:
+                    controlled release, selective distribution, no hype.
+                  </p>
                 </div>
               </aside>
             </div>
@@ -291,14 +291,11 @@ export default function FounderPage() {
               Philosophy
             </p>
 
-            <h2 className="mt-4 max-w-5xl font-display text-5xl uppercase leading-[0.92] text-white sm:text-6xl lg:text-7xl">
-              Building{" "}
-              <span className="text-accent-gold-2">Compounding</span>
-              <br />
-              Healthcare
-              <br />
-              Infrastructure
-            </h2>
+              <h2 className="mt-4 max-w-5xl font-display text-5xl uppercase leading-[0.92] text-white sm:text-6xl lg:text-7xl">
+                Build The Backbone.
+                <br />
+                Compound From Control.
+              </h2>
 
             <div className="mt-14 space-y-8">
               {philosophyPoints.map((point) => (

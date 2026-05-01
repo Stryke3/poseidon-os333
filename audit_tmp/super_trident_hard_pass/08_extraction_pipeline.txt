@@ -1,0 +1,13 @@
+## trident-engine (frontend/src/lib/trident-engine.ts) — in-process, not true OCR
+- `extractionFieldsFor`: builds ExtractionField[] from **already-stored** Lite patient + first upload as synthetic “source” — not per-page PDF classification.
+- `detection` of procedure family: regex on notes/diagnoses. Laterality: regex on corpus.
+- **No** page-level classification, **no** multi-patient packet rejection in engine.
+
+## Intake (optional backend) — when used
+- pdfplumber text extraction; regex for name, DOB, ICD-10, HCPCS, NPI. **Scanned PDF → empty/weak text → not verified “OCR fallback”.**
+
+## Case grouping
+- **One case = one lite patient id.** Multiple files attach to same patient. **No** “mixed-patient” blocking in Lite create flow.
+- trident30 build_rule_hits: adds warnings, not proven blocking for mixed patient.
+
+**Verdict: FAIL** for Layer A + acceptance tests 4–7 as specified.

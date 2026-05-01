@@ -1,0 +1,11 @@
+=== pwd ===
+/Volumes/WORKSPACE/poseidon 2
+
+=== git branch --show-current ===
+feature/poseidon-lite-mvp
+
+=== git status --short ===
+?? audit_tmp/
+
+=== git log -1 --oneline ===
+6ce6410 docs: Render is not in use; DO+compose is canonical

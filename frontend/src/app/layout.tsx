@@ -6,8 +6,8 @@ import "./globals.css"
 import Providers from "./providers"
 
 export const metadata: Metadata = {
-  title: "SUPER TRIDENT — OCR document intelligence engine",
-  description: "SUPER TRIDENT ingests patient record PDFs, extracts structured facts, and generates SWO plus payer addendums.",
+  title: "SPEAR",
+  description: "Secure internal access.",
 }
 
 export default async function RootLayout({

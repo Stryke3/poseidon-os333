@@ -13,7 +13,7 @@ export default async function SettingsPage() {
     redirect("/login")
   }
   if (!canManageUsers) {
-    redirect("/intake")
+    redirect("/trident/cases")
   }
 
   const res = await fetch(`${coreApiUrl}/api/v1/admin/users`, {

@@ -6,12 +6,16 @@ type LitePatient = {
   first_name: string
   last_name: string
   dob: string | null
+  order_date: string | null
   phone: string | null
   email: string | null
   address: string | null
   payer_name: string | null
   member_id: string | null
   ordering_provider: string | null
+  provider_npi: string | null
+  procedure_name: string | null
+  laterality: string | null
   diagnosis_codes: string[]
   hcpcs_codes: string[]
   notes: string | null
@@ -40,12 +44,30 @@ type LiteGenerated = {
   metadata: Record<string, unknown>
 }
 
+function asStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item ?? "").trim())
+      .filter(Boolean)
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    const normalized = trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed
+    return normalized
+      .split(/[,\n]/)
+      .map((item) => item.replace(/^["']|["']$/g, ""))
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+  return []
+}
+
 export type ReviewState = "READY_TO_GENERATE" | "DRAFT_NOT_READY" | "BLOCKED"
 
 export type TridentGeneratedDocument = {
   id: string
   case_id: string
-  type: "SWO" | "ADDENDUM" | "OTHER"
+  type: "SWO" | "ADDENDUM" | "POD" | "OTHER"
   template_version: string
   rendered_html: string
   rendered_pdf_path: string | null
@@ -130,7 +152,13 @@ export type TridentCaseDetail = {
 }
 
 function textCorpus(patient: LitePatient): string {
-  return [patient.notes || "", patient.diagnosis_codes.join(" "), patient.hcpcs_codes.join(" ")].join(" ").toLowerCase()
+  return [
+    patient.procedure_name || "",
+    patient.laterality || "",
+    patient.notes || "",
+    asStringArray(patient.diagnosis_codes).join(" "),
+    asStringArray(patient.hcpcs_codes).join(" "),
+  ].join(" ").toLowerCase()
 }
 
 function detectProcedureFamily(patient: LitePatient): ProcedureFamily {
@@ -141,6 +169,10 @@ function detectProcedureFamily(patient: LitePatient): ProcedureFamily {
 }
 
 function detectLaterality(patient: LitePatient): "RT" | "LT" | "bilateral" | "unknown" {
+  const explicit = String(patient.laterality || "").trim().toLowerCase()
+  if (explicit === "bilateral" || explicit === "bilat" || explicit === "both") return "bilateral"
+  if (explicit === "rt" || explicit === "right") return "RT"
+  if (explicit === "lt" || explicit === "left") return "LT"
   const corpus = textCorpus(patient)
   const hasRight = /\b(right|rt)\b/.test(corpus)
   const hasLeft = /\b(left|lt)\b/.test(corpus)
@@ -176,12 +208,12 @@ function ruleHitsFor(patient: LitePatient, uploads: LiteUpload[], generated: Lit
   }
   if (!patient.dob) add("missing_dob", "blocking", "DOB is required before final generation.", true)
   if (!patient.ordering_provider) add("missing_provider", "blocking", "Provider name is required before final generation.", true)
-  if (!patient.diagnosis_codes?.length) add("missing_diagnosis", "blocking", "At least one diagnosis is required.", true)
-  if (!patient.payer_name) add("missing_payer", "warning", "Primary payer is missing; payer addendum drafting should remain blocked.")
+  if (!asStringArray(patient.diagnosis_codes).length) add("missing_diagnosis", "blocking", "At least one diagnosis is required.", true)
+  if (!patient.payer_name) add("missing_payer", "warning", "Primary payer is missing; verify before final SWO/POD generation.")
   if (family !== "other" && laterality === "unknown") {
     add("missing_laterality", "blocking", "Laterality is required for laterality-dependent arthroplasty items.", true)
   }
-  if (!uploads.length) add("missing_source_documents", "warning", "No source PDFs uploaded for OCR/classification review.")
+  if (!uploads.length) add("missing_source_documents", "warning", "No source PDFs uploaded for packet review.")
   if (family === "other") add("unclassified_procedure", "warning", "Procedure family is still unknown; bundle proposal remains conservative.")
 
   const conflictMapping = mappings.find((mapping) => mapping.conflict && mapping.requires_review)
@@ -195,9 +227,9 @@ function ruleHitsFor(patient: LitePatient, uploads: LiteUpload[], generated: Lit
   }
 
   const hasSwo = generated.some((doc) => doc.document_type === "swo")
-  const hasAddendum = generated.some((doc) => doc.document_type === "transmittal" || doc.document_type === "checklist")
+  const hasAddendum = generated.some((doc) => doc.document_type === "addendum")
   if (!hasSwo) add("missing_swo_draft", "warning", "SWO draft has not been generated yet.")
-  if (!hasAddendum) add("missing_addendum_draft", "warning", "No payer addendum-style draft has been generated yet.")
+  if (!hasAddendum) add("missing_addendum_draft", "warning", "No payer addendum draft has been generated yet.")
 
   return hits
 }
@@ -205,7 +237,6 @@ function ruleHitsFor(patient: LitePatient, uploads: LiteUpload[], generated: Lit
 function extractionFieldsFor(patient: LitePatient, uploads: LiteUpload[]): ExtractionField[] {
   const primarySource = uploads[0]
   const source_document_id = primarySource?.id || null
-  const source_page = primarySource ? 1 : null
   const source = (
     field_name: string,
     field_value: string | null,
@@ -216,7 +247,7 @@ function extractionFieldsFor(patient: LitePatient, uploads: LiteUpload[]): Extra
     field_value,
     confidence: field_value ? 0.92 : 0.0,
     source_document_id,
-    source_page,
+    source_page: null,
     extraction_method,
     requires_review: !field_value,
   })
@@ -229,18 +260,20 @@ function extractionFieldsFor(patient: LitePatient, uploads: LiteUpload[]): Extra
     source("primary_insurance", patient.payer_name),
     source("member_id_primary", patient.member_id),
     source("provider_name", patient.ordering_provider),
+    source("provider_npi", patient.provider_npi ?? null),
+    source("procedure_name", patient.procedure_name),
     source("procedure_family", detectProcedureFamily(patient), "inferred"),
     source("laterality", detectLaterality(patient), "inferred"),
-    source("diagnosis_codes", patient.diagnosis_codes.join(", ") || null),
+    source("order_date", patient.order_date),
+    source("diagnosis_codes", asStringArray(patient.diagnosis_codes).join(", ") || null),
     source("recommended_bundle", defaultBundleFor(detectProcedureFamily(patient), getCodeMappings()).join(", ") || null, "inferred"),
   ]
 }
 
 function generatedDocType(doc: LiteGenerated): TridentGeneratedDocument["type"] {
   if (doc.document_type === "swo") return "SWO"
-  if (doc.document_type === "transmittal" || doc.document_type === "checklist" || doc.document_type === "billing-summary") {
-    return "ADDENDUM"
-  }
+  if (doc.document_type === "addendum" || doc.document_type === "payer_addendum" || doc.document_type === "coding_cover_sheet") return "ADDENDUM"
+  if (doc.document_type === "pod") return "POD"
   return "OTHER"
 }
 
@@ -266,8 +299,8 @@ function splitAddress(address: string | null): { address_1: string | null; addre
   return { address_1: address, address_2: null, city: null, state: null, zip: null }
 }
 
-export function mapLiteCaseSummary(patient: LitePatient, generated: LiteGenerated[], mappings = getCodeMappings()): TridentCaseSummary {
-  const rule_hits = ruleHitsFor(patient, [], generated, mappings)
+export function mapLiteCaseSummary(patient: LitePatient, uploads: LiteUpload[], generated: LiteGenerated[], mappings = getCodeMappings()): TridentCaseSummary {
+  const rule_hits = ruleHitsFor(patient, uploads, generated, mappings)
   return {
     id: patient.id,
     status: inferReviewState(rule_hits),
@@ -288,7 +321,8 @@ export function mapLiteCaseDetail(patient: LitePatient, uploads: LiteUpload[], g
   const laterality = detectLaterality(patient)
   const rule_hits = ruleHitsFor(patient, uploads, generated, mappings)
   const { address_1, address_2, city, state, zip } = splitAddress(patient.address)
-  const diagnosis_text = patient.diagnosis_codes.length ? patient.diagnosis_codes : []
+  const diagnosis_codes = asStringArray(patient.diagnosis_codes)
+  const diagnosis_text = diagnosis_codes.length ? diagnosis_codes : []
   const dvt_risk_factors = patient.notes?.match(/\b(dvt|fall risk|reduced mobility|bedrest|anesthesia)\b/gi) || []
   const dvt_risk_score = dvt_risk_factors.length ? dvt_risk_factors.length : null
   const generated_documents = generated.map(mapGenerated)
@@ -309,16 +343,16 @@ export function mapLiteCaseDetail(patient: LitePatient, uploads: LiteUpload[], g
     secondary_insurance: null,
     member_id_primary: patient.member_id,
     member_id_secondary: null,
-    procedure_name: procedure_family === "TKA" ? "Total Knee Arthroplasty" : procedure_family === "THA" ? "Total Hip Arthroplasty" : null,
+    procedure_name: patient.procedure_name || (procedure_family === "TKA" ? "Total Knee Arthroplasty" : procedure_family === "THA" ? "Total Hip Arthroplasty" : null),
     procedure_family,
     laterality,
     surgery_date: null,
-    order_date: null,
+    order_date: patient.order_date,
     bmi: null,
     provider_name: patient.ordering_provider,
-    provider_npi: null,
+    provider_npi: patient.provider_npi ?? null,
     facility_name: null,
-    diagnosis_codes: patient.diagnosis_codes,
+    diagnosis_codes,
     diagnosis_text,
     dvt_risk_factors,
     dvt_risk_score,
@@ -335,8 +369,13 @@ export function mapLiteCaseDetail(patient: LitePatient, uploads: LiteUpload[], g
         first_name: patient.first_name,
         last_name: patient.last_name,
         dob: patient.dob,
+        order_date: patient.order_date,
+        ordering_provider: patient.ordering_provider,
+        provider_npi: patient.provider_npi ?? null,
+        payer_name: patient.payer_name,
+        member_id: patient.member_id,
       },
-      diagnoses: patient.diagnosis_codes,
+      diagnoses: diagnosis_codes,
       items: defaultBundleFor(procedure_family, mappings),
       references: {
         swo_document_id: generated_documents.find((doc) => doc.type === "SWO")?.id || null,
@@ -365,16 +404,24 @@ export async function listTridentCases(query?: string): Promise<TridentCaseSumma
   const patients = await parseJson<LitePatient[]>(await liteServerFetch(`/patients${qs}`), [])
   const mappings = getCodeMappings()
   const generatedByCase = new Map<string, LiteGenerated[]>()
+  const uploadsByCase = new Map<string, LiteUpload[]>()
   await Promise.all(
     patients.slice(0, 50).map(async (patient) => {
-      const generated = await parseJson<LiteGenerated[]>(
-        await liteServerFetch(`/patients/${patient.id}/generated`),
-        [],
-      )
+      const [uploads, generated] = await Promise.all([
+        parseJson<LiteUpload[]>(
+          await liteServerFetch(`/patients/${patient.id}/documents`),
+          [],
+        ),
+        parseJson<LiteGenerated[]>(
+          await liteServerFetch(`/patients/${patient.id}/generated`),
+          [],
+        ),
+      ])
+      uploadsByCase.set(patient.id, uploads)
       generatedByCase.set(patient.id, generated)
     }),
   )
-  return patients.map((patient) => mapLiteCaseSummary(patient, generatedByCase.get(patient.id) || [], mappings))
+  return patients.map((patient) => mapLiteCaseSummary(patient, uploadsByCase.get(patient.id) || [], generatedByCase.get(patient.id) || [], mappings))
 }
 
 export async function getTridentCaseDetail(caseId: string): Promise<TridentCaseDetail | null> {

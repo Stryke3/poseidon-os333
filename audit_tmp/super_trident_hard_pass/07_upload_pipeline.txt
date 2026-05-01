@@ -1,0 +1,13 @@
+## Lite (SUPER TRIDENT case = lite.patients)
+- UI: CreatePatientForm + file upload to POST (BFF) → services/lite: POST /patients/{id}/documents (multipart), category = TRIDENT_DOC_CLASSES union legacy.
+- **No PDF parse in Lite** on upload — file saved to disk + DB row. No OCR in Lite path.
+- BFF: frontend/src/app/api/lite/... proxied to LITE_API_URL
+
+## Intake (separate service, not wired as sole Trident upload)
+- services/intake/main.py: POST /api/v1/intake/upload, parse-document
+- **PDF text:** `_extract_pdf_text` uses **pdfplumber** `page.extract_text()` — text-layer PDFs only. **Not OCR** (no tesseract in this function).
+
+## Conclusion
+Upload **exists** for case documents in Lite. **OCR for scanned PDFs** not shown in Lite path. Intake has **text extraction** but is a **separate** service. End-to-end “upload PDF in Trident → intake parse” **not verified** in running system.
+
+**Verdict: FAIL** for full pipeline proof; **PARTIAL** for “files land in storage”.

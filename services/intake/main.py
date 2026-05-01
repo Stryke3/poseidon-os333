@@ -1911,6 +1911,11 @@ def _extract_patient_name(text: str) -> str:
     if m:
         return m.group(1).strip()
 
+    # Strategy 6: "Patient:" / "Pt:" line in intake summaries
+    m = re.search(r"^(?:Patient|Pt)\s*[:\-]\s*([A-Z][A-Za-z,'\-\s]+?)(?:\s{2,}|\t|\n|$)", text, re.I | re.M)
+    if m:
+        return m.group(1).strip()
+
     return ""
 
 
@@ -1976,6 +1981,62 @@ def _extract_insurance(text: str) -> tuple[str, str]:
     return payer_name, member_id
 
 
+def _extract_provider(text: str) -> str:
+    patterns = [
+        r"(?:Ordering\s+Physician|Ordering\s+Provider|Attending\s+Provider|Referring\s+Provider|Rendering\s+Provider)[:\s]+([A-Z][A-Za-z.,'\- ]+?)(?:\s{2,}|\t|\n|$)",
+        r"(?:Ordering\s+Provider|Provider|Physician|Surgeon)[:\s]+([A-Z][A-Za-z.,'\- ]+?)(?:\s{2,}|\t|\n|$)",
+        r"\b([A-Z][A-Za-z'\-]+,\s*[A-Z][A-Za-z.,'\- ]+?)\s+(?:NPI|MD\b|DO\b)",
+        r"\b(Dr\.?\s+[A-Z][A-Za-z.,'\- ]+?)(?:\s{2,}|\t|\n|$)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.I)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _extract_procedure(text: str) -> str:
+    patterns = [
+        r"(?:Procedure\s+Name|Requested\s+Procedure|Planned\s+Procedure)[:\s]+([A-Za-z0-9(),'\/\- ]+?)(?:\s{2,}|\t|\n|$)",
+        r"(?:Procedure|Surgery|Operation)[:\s]+([A-Za-z0-9(),'\/\- ]+?)(?:\s{2,}|\t|\n|$)",
+        r"\b(Knee\s+Brace|Hip\s+Brace|Shoulder\s+Sling|Cold\s+Therapy(?:\s+Unit)?)\b",
+        r"\b(Total\s+Knee\s+Arthroplasty|Total\s+Hip\s+Arthroplasty|Knee\s+Replacement|Hip\s+Replacement)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.I)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _extract_order_date(text: str) -> str:
+    patterns = [
+        r"(?:Order\s+Dt|Encounter\s+Date|Visit\s+Date|DOS)[:\s]+(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})",
+        r"(?:Order\s+Date|Surgery\s+Date|Date\s+of\s+Service)[:\s]+(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})",
+        r"(?:Order\s+Dt|Encounter\s+Date|Visit\s+Date|DOS)[:\s]+(\d{4}-\d{2}-\d{2})",
+        r"(?:Order\s+Date|Surgery\s+Date|Date\s+of\s+Service)[:\s]+(\d{4}-\d{2}-\d{2})",
+        r"(?:Order\s+Dt|Encounter\s+Date|Visit\s+Date|DOS)[:\s]+((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4})",
+        r"(?:Order\s+Date|Surgery\s+Date|Date\s+of\s+Service)[:\s]+((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.I)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _extract_laterality(text: str) -> str:
+    if re.search(r"\b(bilateral|bilat|both)\b", text, re.I):
+        return "BILATERAL"
+    if re.search(r"\b(r\s*/\s*l|left\s+and\s+right)\b", text, re.I):
+        return "BILATERAL"
+    if re.search(r"\b(right|rt)\b", text, re.I):
+        return "RT"
+    if re.search(r"\b(left|lt)\b", text, re.I):
+        return "LT"
+    return ""
+
+
 def _parse_pdf_content(content: bytes, filename: str, correlation_id: str | None) -> dict[str, Any]:
     """Shared PDF parse used by parse-document and upload endpoints."""
     logger.info("intake_parse_document correlation_id=%s filename=%s", correlation_id, filename)
@@ -1987,6 +2048,10 @@ def _parse_pdf_content(content: bytes, filename: str, correlation_id: str | None
     dob_raw = _extract_dob(text)
 
     payer_name, member_id = _extract_insurance(text)
+    provider_name = _extract_provider(text)
+    procedure_name = _extract_procedure(text)
+    order_date_raw = _extract_order_date(text)
+    laterality = _extract_laterality(text)
 
     # ICD-10 diagnosis codes
     diagnosis_codes = list(set(re.findall(r"\b[A-Z]\d{2}(?:\.\d{1,4})?\b", text)))
@@ -2032,6 +2097,10 @@ def _parse_pdf_content(content: bytes, filename: str, correlation_id: str | None
             "payer_name": payer_name,
             "member_id": member_id,
         },
+        "provider_name": provider_name,
+        "procedure_name": procedure_name,
+        "order_date": _normalize_date(order_date_raw) if order_date_raw else "",
+        "laterality": laterality,
         "diagnosis_codes": diagnosis_codes,
         "physician_npi": physician_npi,
         "hcpcs_codes": hcpcs_codes,

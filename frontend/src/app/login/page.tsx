@@ -29,9 +29,9 @@ function coreFullyHealthy(coreStatus?: CoreStatusBody) {
 }
 
 function sanitizeCallbackUrl(value: string | null | undefined) {
-  if (!value) return "/"
-  if (!value.startsWith("/") || value.startsWith("//")) return "/"
-  if (value === "/login" || value.startsWith("/login?")) return "/"
+  if (!value) return "/trident/cases"
+  if (!value.startsWith("/") || value.startsWith("//")) return "/trident/cases"
+  if (value === "/login" || value.startsWith("/login?")) return "/trident/cases"
   return value
 }
 
@@ -460,7 +460,7 @@ function LoginContent() {
           disabled={loading}
           type="submit"
         >
-          {loading ? "Authenticating..." : "Enter Poseidon"}
+          {loading ? "Authenticating..." : "Sign In"}
         </button>
 
         <button
@@ -475,7 +475,7 @@ function LoginContent() {
   }
 
   const headingMap: Record<View, string> = {
-    login: "Secure Access",
+    login: "Access",
     forgot: "Reset Password",
     reset: "New Password",
     "reset-success": "Password Updated",
@@ -484,64 +484,40 @@ function LoginContent() {
   return (
     <PageShell contentClassName="justify-center">
       <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_22%,rgba(187,247,208,0.1),transparent_20%),radial-gradient(circle_at_78%_16%,rgba(216,180,106,0.14),transparent_22%),radial-gradient(circle_at_50%_110%,rgba(186,230,253,0.18),transparent_30%),linear-gradient(180deg,#091523_0%,#0b1728_42%,#0f2136_100%)]" />
-        <div className="absolute inset-0 opacity-[0.12] [background-image:linear-gradient(rgba(159,196,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(159,196,255,0.04)_1px,transparent_1px)] [background-size:140px_140px]" />
-        <div className="absolute left-[-12%] top-[8%] h-[26rem] w-[26rem] rounded-full bg-cyan-200/15 blur-3xl" />
-        <div className="absolute bottom-[-10%] right-[-6%] h-[24rem] w-[24rem] rounded-full bg-[#d8b46a]/12 blur-3xl" />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,#07111f_0%,#091423_100%)]" />
+        <div className="absolute inset-0 opacity-[0.06] [background-image:linear-gradient(rgba(159,196,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(159,196,255,0.03)_1px,transparent_1px)] [background-size:160px_160px]" />
       </div>
 
-      <div className="mx-auto grid w-full max-w-[1280px] gap-10 lg:grid-cols-[minmax(0,1.15fr)_460px] lg:items-center">
-        <section className="px-2">
-          <div className="inline-flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-200 shadow-[0_0_14px_rgba(187,247,208,0.8)]" />
-            <span className="font-mono text-[10px] uppercase tracking-[0.28em] text-slate-300">
-              Stryke Fox Medical Secure Access
-            </span>
-          </div>
-
-          <p className="mt-8 font-mono text-[11px] uppercase tracking-[0.42em] text-[#f4e7c5]">
-            Poseidon Enterprise OS
-          </p>
-          <h1 className="mt-4 max-w-4xl font-display text-[3.3rem] uppercase leading-[0.9] tracking-[0.07em] text-white sm:text-[5.75rem]">
-            Enter the
-            <br />
-            operating system.
-          </h1>
-          <p className="mt-6 max-w-2xl text-base leading-8 text-slate-300">
-            Access live patients, queue status, reimbursement activity, and operator workflow from one surface.
-          </p>
-
-        </section>
-
-        <section className="rounded-[36px] border border-white/10 bg-[linear-gradient(180deg,rgba(10,14,26,0.94),rgba(6,10,18,0.92))] p-8 shadow-[0_36px_110px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-2xl sm:p-9">
+      <div className="mx-auto w-full max-w-[520px]">
+        <section className="rounded-[32px] border border-white/10 bg-[linear-gradient(180deg,rgba(10,14,26,0.96),rgba(7,12,22,0.94))] p-8 shadow-[0_30px_90px_rgba(0,0,0,0.38),inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-2xl sm:p-9">
           <div className="mb-8">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.34em] text-[#d8b46a]">
-                  Poseidon Gateway
+                <p className="font-mono text-[10px] uppercase tracking-[0.34em] text-slate-400">
+                  Secure access
                 </p>
-                <h2 className="mt-3 font-display text-4xl uppercase tracking-[0.14em] text-white">
+                <h2 className="mt-3 text-3xl font-semibold tracking-tight text-white">
                   {headingMap[view]}
                 </h2>
               </div>
               <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">
-                HIPAA Aware
+                Secure
               </div>
             </div>
 
             {view === "login" && (
-              <div className="mt-5 grid grid-cols-3 gap-3">
+              <div className="mt-5 flex flex-wrap gap-2">
                 {[
-                  ["Auth", "Live"],
+                  ["Auth", "Verified"],
                   ["Session", "Encrypted"],
-                  ["Org", "Stryke Fox"],
+                  ["Scope", "Internal"],
                 ].map(([label, value]) => (
                   <div
                     key={label}
-                    className="rounded-[22px] border border-white/10 bg-white/[0.03] px-3 py-3 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                    className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
                   >
                     <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500">{label}</p>
-                    <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-white">{value}</p>
+                    <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white">{value}</p>
                   </div>
                 ))}
               </div>
@@ -553,14 +529,13 @@ function LoginContent() {
           <div className="mt-6 rounded-[24px] border border-white/10 bg-black/20 p-4">
             <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">Access Notice</p>
             <p className="mt-2 text-sm leading-6 text-slate-400">
-              Authorized Stryke Fox personnel only. Access attempts may be logged for compliance and security review.
+              Authorized personnel only. Access may be logged.
             </p>
           </div>
 
           <div className="mt-6 flex items-center justify-between gap-4 border-t border-white/10 pt-5 text-[10px] uppercase tracking-[0.18em] text-slate-600">
             <span>Encrypted Session</span>
-            <span>Clinical. Revenue. Control.</span>
-            <span>Stryke Fox Medical</span>
+            <span>Internal</span>
           </div>
         </section>
       </div>

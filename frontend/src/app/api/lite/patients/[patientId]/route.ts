@@ -32,3 +32,17 @@ export async function PUT(req: Request, ctx: Ctx) {
     headers: { "Content-Type": res.headers.get("content-type") || "application/json" },
   })
 }
+
+export async function DELETE(_req: Request, ctx: Ctx) {
+  const { patientId } = await ctx.params
+  const res = await fetch(`${getLiteBaseUrl()}/patients/${patientId}`, {
+    method: "DELETE",
+    headers: liteAuthHeaders(),
+    cache: "no-store",
+  })
+  const text = await res.text()
+  return new NextResponse(text, {
+    status: res.status,
+    headers: { "Content-Type": res.headers.get("content-type") || "application/json" },
+  })
+}

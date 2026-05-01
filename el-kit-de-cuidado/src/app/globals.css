@@ -1,0 +1,166 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  --background: #FDF6F0;
+  --foreground: #3D3535;
+  --primary: #C4727F;
+  --primary-foreground: #FFFFFF;
+  --secondary: #D4856A;
+  --secondary-foreground: #FFFFFF;
+  --accent: #8FAE8B;
+  --accent-foreground: #3D3535;
+  --muted: #F5EDE5;
+  --muted-foreground: #6B5E5E;
+  --rose-light: #E8A5AE;
+  --rose-pale: #F5D5DA;
+  --terracotta-deep: #B8654A;
+  --sage-light: #C5D9C2;
+  --sage-deep: #6B8E67;
+  --gold: #C9A96E;
+  --error: #D44A4A;
+  --success: #4A9D5B;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Playfair Display', serif;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+/* Custom utility classes */
+.text-warm {
+  color: #3D3D3D;
+}
+
+.bg-warm {
+  background-color: #FEFDFB;
+}
+
+.text-primary {
+  color: var(--primary);
+}
+
+.bg-primary {
+  background-color: var(--primary);
+}
+
+.text-secondary {
+  color: var(--secondary);
+}
+
+.bg-secondary {
+  background-color: var(--secondary);
+}
+
+.text-accent {
+  color: var(--accent);
+}
+
+.bg-accent {
+  background-color: var(--accent);
+}
+
+.text-rose-light {
+  color: var(--rose-light);
+}
+
+.bg-rose-light {
+  background-color: var(--rose-light);
+}
+
+.text-rose-pale {
+  color: var(--rose-pale);
+}
+
+.bg-rose-pale {
+  background-color: var(--rose-pale);
+}
+
+.text-terracotta-deep {
+  color: var(--terracotta-deep);
+}
+
+.bg-terracotta-deep {
+  background-color: var(--terracotta-deep);
+}
+
+.text-sage-light {
+  color: var(--sage-light);
+}
+
+.bg-sage-light {
+  background-color: var(--sage-light);
+}
+
+.text-sage-deep {
+  color: var(--sage-deep);
+}
+
+.bg-sage-deep {
+  background-color: var(--sage-deep);
+}
+
+.text-gold {
+  color: var(--gold);
+}
+
+.bg-gold {
+  background-color: var(--gold);
+}
+
+/* Mommy Care Hero Styles */
+.mommy-care-hero {
+  background: linear-gradient(180deg, #fff5f7 0%, #ffffff 100%);
+  text-align: center;
+  padding: 60px 20px;
+  font-family: 'Poppins', sans-serif;
+}
+
+.mommy-care-hero .logo {
+  max-width: 320px;
+  margin-bottom: 20px;
+}
+
+.mommy-care-hero h1 {
+  font-size: 34px;
+  font-weight: 700;
+  color: #e75480;
+  line-height: 1.3;
+}
+
+.mommy-care-hero h1 span {
+  color: #6a1b9a;
+}
+
+.mommy-care-hero p {
+  font-size: 18px;
+  color: #555;
+  max-width: 600px;
+  margin: 20px auto;
+}
+
+.cta-button {
+  display: inline-block;
+  background: #e75480;
+  color: white;
+  padding: 16px 28px;
+  border-radius: 40px;
+  font-weight: 600;
+  text-decoration: none;
+  margin-top: 15px;
+  transition: all 0.3s ease;
+}
+
+.cta-button:hover {
+  background: #c63c68;
+  transform: translateY(-2px);
+}

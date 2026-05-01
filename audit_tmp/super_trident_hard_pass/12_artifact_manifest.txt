@@ -1,0 +1,20 @@
+Generated during audit (evidence only):
+- audit_tmp/super_trident_hard_pass/00_repo_identity.txt
+- 01_route_inventory.txt
+- 02_forbidden_surface_grep.txt
+- 03_render_audit.txt
+- 04_build_log.txt
+- 05_runtime_boot_log.txt
+- 06_runtime_smoke.txt
+- 07_upload_pipeline.txt
+- 08_extraction_pipeline.txt
+- 09_rules_engine.txt
+- 10_generation_paths.txt
+- 11_test_results.txt
+- 12_artifact_manifest.txt
+- FINAL_AUDIT.md
+- generated/ (empty — no sample PDFs or outputs produced)
+- fixtures/ (empty)
+- screens/ (empty)
+
+No production PDFs, no runtime-generated SWO files in this pass.

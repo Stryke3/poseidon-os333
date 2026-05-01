@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StrykeFox Medical | Precision Infrastructure for Regulated Healthcare</title>
+    <meta name="description" content="StrykeFox provides precision infrastructure, surgical supply management, and compliance-first execution for regulated healthcare environments. Platform architecture that scales with discipline.">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --navy: #0B1F3A;
+            --navy-dark: #05080F;
+            --navy-light: #08111F;
+            --gold: #F0B432;
+            --gold-light: #FFD7D3;
+            --white: #FFFFFF;
+            --white-80: rgba(255, 255, 255, 0.8);
+            --white-60: rgba(255, 255, 255, 0.6);
+            --white-40: rgba(255, 255, 255, 0.4);
+            --white-20: rgba(255, 255, 255, 0.2);
+            --white-10: rgba(255, 255, 255, 0.1);
+            --border: rgba(255, 255, 255, 0.08);
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+            background: var(--navy);
+            color: var(--white);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+        
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            background: rgba(11, 31, 58, 0.95);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            z-index: 1000;
+        }
+        
+        .nav-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .logo {
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--white);
+        }
+        
+        .nav-primary {
+            display: flex;
+            gap: 32px;
+            list-style: none;
+        }
+        
+        .nav-primary a {
+            color: var(--white-80);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: color 0.3s ease;
+        }
+        
+        .nav-primary a:hover {
+            color: var(--gold);
+        }
+        
+        .nav-secondary {
+            display: flex;
+            gap: 24px;
+            list-style: none;
+        }
+        
+        .nav-secondary a {
+            color: var(--white-60);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            transition: color 0.3s ease;
+        }
+        
+        .nav-secondary a:hover {
+            color: var(--white);
+        }
+        
+        /* Hero Section */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            position: relative;
+            background: 
+                radial-gradient(circle at 18% 18%, rgba(240, 180, 50, 0.18), transparent 30%),
+                radial-gradient(circle at 82% 16%, rgba(26, 110, 245, 0.2), transparent 28%),
+                linear-gradient(135deg, rgba(5, 8, 15, 0.92) 20%, rgba(8, 13, 24, 0.72) 55%, rgba(5, 8, 15, 0.96) 100%);
+        }
+        
+        .hero-content {
+            max-width: 800px;
+            margin: 0 auto;
+            text-align: center;
+            padding-top: 80px;
+        }
+        
+        .hero-label {
+            font-family: "SF Mono", ui-monospace, Monaco, Consolas, monospace;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.42em;
+            color: var(--white-40);
+            margin-bottom: 24px;
+        }
+        
+        .hero-headline {
+            font-size: clamp(48px, 8vw, 72px);
+            font-weight: 700;
+            line-height: 0.9;
+            letter-spacing: -0.02em;
+            margin-bottom: 32px;
+            background: linear-gradient(135deg, var(--white) 0%, var(--white-80) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .hero-subhead {
+            font-size: 18px;
+            line-height: 1.6;
+            color: var(--white-80);
+            margin-bottom: 48px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .cta-button {
+            display: inline-block;
+            padding: 16px 32px;
+            background: var(--gold);
+            color: var(--navy);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+        
+        .cta-button:hover {
+            background: var(--white);
+            transform: translateY(-2px);
+        }
+        
+        /* Credibility Strip */
+        .credibility-strip {
+            padding: 80px 0;
+            background: linear-gradient(180deg, var(--navy-dark) 0%, var(--navy-light) 100%);
+            border-top: 1px solid var(--border);
+        }
+        
+        .credibility-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 32px;
+        }
+        
+        .credibility-item {
+            text-align: center;
+            padding: 24px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.03);
+        }
+        
+        .credibility-item h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--gold);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .credibility-item p {
+            font-size: 13px;
+            color: var(--white-60);
+        }
+        
+        /* Why We Exist */
+        .why-exist {
+            padding: 120px 0;
+            background: var(--navy);
+        }
+        
+        .section-label {
+            font-family: "SF Mono", ui-monospace, Monaco, Consolas, monospace;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.42em;
+            color: var(--white-40);
+            margin-bottom: 24px;
+        }
+        
+        .section-headline {
+            font-size: clamp(36px, 6vw, 56px);
+            font-weight: 700;
+            line-height: 0.92;
+            letter-spacing: -0.02em;
+            margin-bottom: 48px;
+            max-width: 800px;
+        }
+        
+        .section-body {
+            font-size: 18px;
+            line-height: 1.7;
+            color: var(--white-80);
+            max-width: 700px;
+        }
+        
+        .section-body strong {
+            color: var(--white);
+            font-weight: 600;
+        }
+        
+        /* Platform Architecture */
+        .platform-arch {
+            padding: 120px 0;
+            background: linear-gradient(180deg, var(--navy-dark) 0%, var(--navy-light) 100%);
+            border-top: 1px solid var(--border);
+        }
+        
+        .platform-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 48px;
+            margin-top: 64px;
+        }
+        
+        .platform-entity {
+            padding: 32px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.03);
+            transition: all 0.3s ease;
+        }
+        
+        .platform-entity:hover {
+            border-color: var(--gold);
+            background: rgba(255, 255, 255, 0.05);
+        }
+        
+        .entity-name {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--gold);
+            margin-bottom: 16px;
+        }
+        
+        .entity-list {
+            list-style: none;
+        }
+        
+        .entity-list li {
+            font-size: 14px;
+            color: var(--white-80);
+            margin-bottom: 8px;
+            padding-left: 16px;
+            position: relative;
+        }
+        
+        .entity-list li:before {
+            content: "•";
+            position: absolute;
+            left: 0;
+            color: var(--gold);
+        }
+        
+        /* Core Capabilities */
+        .capabilities {
+            padding: 120px 0;
+            background: var(--navy);
+        }
+        
+        .capability-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 64px;
+            margin-top: 80px;
+        }
+        
+        .capability {
+            border-left: 2px solid var(--gold);
+            padding-left: 32px;
+        }
+        
+        .capability h3 {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--gold);
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .capability ul {
+            list-style: none;
+        }
+        
+        .capability li {
+            font-size: 14px;
+            color: var(--white-80);
+            margin-bottom: 8px;
+            padding-left: 16px;
+            position: relative;
+        }
+        
+        .capability li:before {
+            content: "•";
+            position: absolute;
+            left: 0;
+            color: var(--white-40);
+        }
+        
+        /* Operating Philosophy */
+        .philosophy {
+            padding: 120px 0;
+            background: linear-gradient(180deg, var(--navy-dark) 0%, var(--navy-light) 100%);
+            border-top: 1px solid var(--border);
+        }
+        
+        .philosophy-grid {
+            margin-top: 80px;
+            display: grid;
+            gap: 48px;
+        }
+        
+        .philosophy-principle {
+            display: grid;
+            grid-template-columns: 80px 1fr;
+            gap: 32px;
+            padding-top: 48px;
+            border-top: 1px solid var(--border);
+        }
+        
+        .principle-number {
+            font-size: 48px;
+            font-weight: 700;
+            color: var(--white-10);
+            line-height: 1;
+        }
+        
+        .principle-content h3 {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--white);
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .principle-content p {
+            font-size: 16px;
+            line-height: 1.6;
+            color: var(--white-80);
+        }
+        
+        /* Founder Bridge */
+        .founder-bridge {
+            padding: 120px 0;
+            background: var(--navy);
+        }
+        
+        .founder-content {
+            max-width: 700px;
+            margin: 0 auto;
+            text-align: center;
+        }
+        
+        .founder-bridge .section-body {
+            margin: 48px auto;
+        }
+        
+        .founder-bridge .cta-button {
+            margin-top: 32px;
+        }
+        
+        /* CTA Section */
+        .cta-section {
+            padding: 120px 0;
+            background: linear-gradient(180deg, var(--navy-dark) 0%, var(--navy-light) 100%);
+            border-top: 1px solid var(--border);
+            text-align: center;
+        }
+        
+        .cta-section .section-headline {
+            margin: 0 auto 48px;
+        }
+        
+        .cta-section .section-body {
+            margin: 0 auto 64px;
+            max-width: 600px;
+        }
+        
+        .cta-buttons {
+            display: flex;
+            gap: 24px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .cta-button-secondary {
+            display: inline-block;
+            padding: 16px 32px;
+            background: transparent;
+            color: var(--white);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border: 1px solid var(--white-40);
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+        
+        .cta-button-secondary:hover {
+            border-color: var(--gold);
+            color: var(--gold);
+        }
+        
+        /* Footer */
+        footer {
+            padding: 80px 0 40px;
+            background: var(--navy-dark);
+            border-top: 1px solid var(--border);
+        }
+        
+        .footer-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 48px;
+            margin-bottom: 48px;
+        }
+        
+        .footer-brand h3 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+        
+        .footer-brand p {
+            font-size: 14px;
+            color: var(--white-60);
+            line-height: 1.6;
+        }
+        
+        .footer-column h4 {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--white-40);
+            margin-bottom: 20px;
+        }
+        
+        .footer-column ul {
+            list-style: none;
+        }
+        
+        .footer-column li {
+            margin-bottom: 12px;
+        }
+        
+        .footer-column a {
+            color: var(--white-60);
+            text-decoration: none;
+            font-size: 14px;
+            transition: color 0.3s ease;
+        }
+        
+        .footer-column a:hover {
+            color: var(--white);
+        }
+        
+        .footer-bottom {
+            padding-top: 32px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+        
+        .footer-legal {
+            font-size: 12px;
+            color: var(--white-40);
+        }
+        
+        .certifications {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        
+        .cert-badge {
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--white-60);
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .nav-primary {
+                display: none;
+            }
+            
+            .nav-secondary {
+                display: none;
+            }
+            
+            .footer-grid {
+                grid-template-columns: 1fr;
+                gap: 32px;
+            }
+            
+            .capability-grid {
+                grid-template-columns: 1fr;
+                gap: 48px;
+            }
+            
+            .philosophy-principle {
+                grid-template-columns: 60px 1fr;
+                gap: 24px;
+            }
+            
+            .cta-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav>
+        <div class="nav-container">
+            <div class="logo">StrykeFox</div>
+            <ul class="nav-primary">
+                <li><a href="#platform">Platform</a></li>
+                <li><a href="#capabilities">Capabilities</a></li>
+                <li><a href="#architecture">Architecture</a></li>
+                <li><a href="#philosophy">Philosophy</a></li>
+                <li><a href="#founder">Founder</a></li>
+            </ul>
+            <ul class="nav-secondary">
+                <li><a href="#contact">Contact</a></li>
+                <li><a href="#partner">Partner Portal</a></li>
+                <li><a href="#rep">Rep Network</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero" id="platform">
+        <div class="container">
+            <div class="hero-content">
+                <div class="hero-label">Platform</div>
+                <h1 class="hero-headline">Precision Infrastructure for Regulated Healthcare</h1>
+                <p class="hero-subhead">StrykeFox brings structural control, documented workflows, and execution discipline to healthcare environments where compliance and precision matter.</p>
+                <a href="#capabilities" class="cta-button">Explore Platform</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Credibility Strip -->
+    <section class="credibility-strip">
+        <div class="container">
+            <div class="credibility-grid">
+                <div class="credibility-item">
+                    <h3>FDA-Registered</h3>
+                    <p>Medical Device Distribution</p>
+                </div>
+                <div class="credibility-item">
+                    <h3>HIPAA-Compliant</h3>
+                    <p>Operations & Data Security</p>
+                </div>
+                <div class="credibility-item">
+                    <h3>50-State Licensed</h3>
+                    <p>DME Distribution Network</p>
+                </div>
+                <div class="credibility-item">
+                    <h3>Integrated Architecture</h3>
+                    <p>Reimbursement Systems</p>
+                </div>
+                <div class="credibility-item">
+                    <h3>Physician-First</h3>
+                    <p>Design Standards</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Why We Exist -->
+    <section class="why-exist">
+        <div class="container">
+            <div class="section-label">Purpose</div>
+            <h2 class="section-headline">Healthcare Needs Clean Systems</h2>
+            <div class="section-body">
+                <p>Regulated healthcare environments operate with fragmented infrastructure, undocumented workflows, and compliance risk. The cost of operational drag is measured in delayed care, reimbursement loss, and regulatory exposure.</p>
+                <br>
+                <p><strong>Clean systems solve this.</strong> Controlled architecture. Documented processes. Compliance-first execution. Precision infrastructure that scales without breaking regulatory discipline.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Platform Architecture -->
+    <section class="platform-arch" id="architecture">
+        <div class="container">
+            <div class="section-label">Architecture</div>
+            <h2 class="section-headline">Integrated Operating Backbone</h2>
+            <div class="platform-grid">
+                <div class="platform-entity">
+                    <h3 class="entity-name">StrykeFox Medical</h3>
+                    <ul class="entity-list">
+                        <li>Device and biologic distribution</li>
+                        <li>Surgical supply chain management</li>
+                        <li>Regulatory compliance oversight</li>
+                    </ul>
+                </div>
+                <div class="platform-entity">
+                    <h3 class="entity-name">Poseidon OS</h3>
+                    <ul class="entity-list">
+                        <li>Clinical documentation platform</li>
+                        <li>Reimbursement packet generation</li>
+                        <li>Workflow automation engine</li>
+                    </ul>
+                </div>
+                <div class="platform-entity">
+                    <h3 class="entity-name">NorthStar Surgical Institute</h3>
+                    <ul class="entity-list">
+                        <li>Physician enablement programs</li>
+                        <li>Clinical protocol development</li>
+                        <li>Outcomes measurement infrastructure</li>
+                    </ul>
+                </div>
+                <div class="platform-entity">
+                    <h3 class="entity-name">StrykeFox Capital</h3>
+                    <ul class="entity-list">
+                        <li>Equipment financing solutions</li>
+                        <li>Working capital management</li>
+                        <li>Growth capital deployment</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Core Capabilities -->
+    <section class="capabilities" id="capabilities">
+        <div class="container">
+            <div class="section-label">Capabilities</div>
+            <h2 class="section-headline">Execution at Scale</h2>
+            <div class="capability-grid">
+                <div class="capability">
+                    <h3>Physician Enablement</h3>
+                    <ul>
+                        <li>Clinical protocol development</li>
+                        <li>Documentation standards</li>
+                        <li>Reimbursement optimization</li>
+                        <li>Compliance training systems</li>
+                    </ul>
+                </div>
+                <div class="capability">
+                    <h3>Surgical Supply Infrastructure</h3>
+                    <ul>
+                        <li>Device and biologic sourcing</li>
+                        <li>Inventory management</li>
+                        <li>Distribution logistics</li>
+                        <li>Regulatory documentation</li>
+                    </ul>
+                </div>
+                <div class="capability">
+                    <h3>Documentation & Reimbursement</h3>
+                    <ul>
+                        <li>Clinical documentation platform</li>
+                        <li>Prior authorization automation</li>
+                        <li>Claims packet generation</li>
+                        <li>Denial management systems</li>
+                    </ul>
+                </div>
+                <div class="capability">
+                    <h3>Technology Visibility</h3>
+                    <ul>
+                        <li>Real-time workflow tracking</li>
+                        <li>Performance analytics</li>
+                        <li>Compliance monitoring</li>
+                        <li>Operational dashboards</li>
+                    </ul>
+                </div>
+                <div class="capability">
+                    <h3>Capital & Operating Structure</h3>
+                    <ul>
+                        <li>Equipment financing programs</li>
+                        <li>Working capital solutions</li>
+                        <li>Revenue cycle optimization</li>
+                        <li>Growth capital deployment</li>
+                    </ul>
+                </div>
+                <div class="capability">
+                    <h3>Compliance-First Process Design</h3>
+                    <ul>
+                        <li>Regulatory framework integration</li>
+                        <li>Documentation requirements</li>
+                        <li>Audit trail maintenance</li>
+                        <li>Risk management systems</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Operating Philosophy -->
+    <section class="philosophy" id="philosophy">
+        <div class="container">
+            <div class="section-label">Philosophy</div>
+            <h2 class="section-headline">Precision Over Noise</h2>
+            <div class="philosophy-grid">
+                <div class="philosophy-principle">
+                    <div class="principle-number">01</div>
+                    <div class="principle-content">
+                        <h3>Documentation Before Scale</h3>
+                        <p>No undocumented processes. Every workflow documented before automation.</p>
+                    </div>
+                </div>
+                <div class="philosophy-principle">
+                    <div class="principle-number">02</div>
+                    <div class="principle-content">
+                        <h3>Architecture Over Reaction</h3>
+                        <p>Systematic design over reactive problem-solving. Build the backbone first.</p>
+                    </div>
+                </div>
+                <div class="philosophy-principle">
+                    <div class="principle-number">03</div>
+                    <div class="principle-content">
+                        <h3>Controlled Execution</h3>
+                        <p>Every step measured. Every process monitored. Every outcome documented.</p>
+                    </div>
+                </div>
+                <div class="philosophy-principle">
+                    <div class="principle-number">04</div>
+                    <div class="principle-content">
+                        <h3>Clean Systems</h3>
+                        <p>Remove operational drag. Compress cycle time. Preserve margin inside regulated workflows.</p>
+                    </div>
+                </div>
+                <div class="philosophy-principle">
+                    <div class="principle-number">05</div>
+                    <div class="principle-content">
+                        <h3>Structural Integrity</h3>
+                        <p>The platform must hold under regulatory pressure, market volatility, and operational complexity.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Founder Bridge -->
+    <section class="founder-bridge" id="founder">
+        <div class="container">
+            <div class="founder-content">
+                <div class="section-label">Founder</div>
+                <h2 class="section-headline">Operator Behind the Standards</h2>
+                <div class="section-body">
+                    <p>Adam Stryker builds disciplined systems in regulated healthcare environments. His relevance is operator pedigree, institutional fluency, and platform standards. Not trauma. Not comeback narrative.</p>
+                    <br>
+                    <p>The founder provides the accountable operator perspective that shapes architecture, standards, and sequencing across a regulated system.</p>
+                </div>
+                <a href="#founder-page" class="cta-button">Learn About the Founder</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta-section" id="contact">
+        <div class="container">
+            <div class="section-label">Partnership</div>
+            <h2 class="section-headline">Build With Precision</h2>
+            <p class="section-body">When you're ready to bring structural control to healthcare operations, we're ready to build.</p>
+            <div class="cta-buttons">
+                <a href="#partner" class="cta-button">Start Partnership Conversation</a>
+                <a href="#architecture" class="cta-button-secondary">Explore Platform Architecture</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-brand">
+                    <h3>StrykeFox</h3>
+                    <p>Precision infrastructure for regulated healthcare environments. Platform architecture that scales with discipline.</p>
+                </div>
+                <div class="footer-column">
+                    <h4>Platform</h4>
+                    <ul>
+                        <li><a href="#platform">Overview</a></li>
+                        <li><a href="#capabilities">Capabilities</a></li>
+                        <li><a href="#architecture">Architecture</a></li>
+                        <li><a href="#philosophy">Philosophy</a></li>
+                        <li><a href="#founder">Founder</a></li>
+                    </ul>
+                </div>
+                <div class="footer-column">
+                    <h4>Operations</h4>
+                    <ul>
+                        <li><a href="#contact">Contact</a></li>
+                        <li><a href="#partner">Partner Portal</a></li>
+                        <li><a href="#rep">Rep Network</a></li>
+                        <li><a href="#careers">Careers</a></li>
+                    </ul>
+                </div>
+                <div class="footer-column">
+                    <h4>Legal</h4>
+                    <ul>
+                        <li><a href="#privacy">Privacy Policy</a></li>
+                        <li><a href="#terms">Terms of Service</a></li>
+                        <li><a href="#compliance">Compliance</a></li>
+                        <li><a href="#regulatory">Regulatory</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <div class="footer-legal">
+                    © 2026 StrykeFox Medical. All rights reserved. | patients@strykefox.com | Monday-Friday, 8AM-5PM PST
+                </div>
+                <div class="certifications">
+                    <div class="cert-badge">FDA Registered</div>
+                    <div class="cert-badge">HIPAA Compliant</div>
+                    <div class="cert-badge">ISO 13485</div>
+                    <div class="cert-badge">50-State Licensed</div>
+                </div>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

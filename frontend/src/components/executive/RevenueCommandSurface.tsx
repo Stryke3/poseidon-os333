@@ -99,7 +99,7 @@ export default function RevenueCommandSurface() {
   const [search, setSearch] = useState("")
   const [searchFocused, setSearchFocused] = useState(false)
   const [patientModalId, setPatientModalId] = useState<string | null>(null)
-  const [docModal, setDocModal] = useState<{ title: string; patient: string } | null>(null)
+  const [docModal, setDocModal] = useState<{ title: string; patient: string; patientId: string; documentId: string } | null>(null)
   const [clock, setClock] = useState("00:00:00")
   const [userPct, setUserPct] = useState(0)
   const now = new Date()
@@ -607,7 +607,7 @@ export default function RevenueCommandSurface() {
                                     <button
                                       key={type}
                                       type="button"
-                                      onClick={() => setDocModal({ title: type, patient: patient.name })}
+                                      onClick={() => setDocModal({ title: type, patient: patient.name, patientId: patient.id, documentId: 'latest' })}
                                       className={`${styles.mono} rounded-lg border border-white/8 bg-white/5 py-2 text-[8px] font-bold uppercase tracking-wider transition hover:border-teal-500 hover:bg-teal-500 hover:text-black`}
                                     >
                                       {type === "CMS-1500" ? "CMS" : type}
@@ -1157,7 +1157,7 @@ export default function RevenueCommandSurface() {
               <div className="grid gap-3 sm:grid-cols-3">
                 <button
                   type="button"
-                  onClick={() => setDocModal({ title: "SWO", patient: patientModal.name })}
+                  onClick={() => setDocModal({ title: "SWO", patient: patientModal.name, patientId: patientModalId || '', documentId: 'latest' })}
                   className={`${styles.mono} rounded-xl bg-gradient-to-r from-teal-500 to-cyan-400 py-3 text-xs font-bold uppercase tracking-wider text-black transition hover:shadow-lg hover:shadow-teal-500/20`}
                 >
                   VIEW_SWO
@@ -1191,16 +1191,15 @@ export default function RevenueCommandSurface() {
                 CLOSE [ESC]
               </button>
             </div>
-            <div className="flex flex-1 flex-col items-center justify-center bg-zinc-950 text-zinc-700">
-              <div className="mb-4 flex h-28 w-20 items-center justify-center rounded-lg border-2 border-dashed border-zinc-800 text-2xl font-serif italic text-zinc-700">
-                PDF
-              </div>
-              <p className={`${styles.mono} text-[10px] uppercase tracking-widest text-zinc-600`}>
-                Rendering encrypted document stream...
-              </p>
-              <div className="mt-5 h-1 w-48 overflow-hidden rounded-full bg-zinc-900">
-                <div className="h-full w-1/3 animate-pulse bg-teal-500" />
-              </div>
+            <div className="flex flex-1 bg-zinc-950">
+              <iframe
+                src={`/api/lite/patients/${docModal.patientId}/generated/${docModal.documentId}/preview`}
+                className="w-full h-full border-0"
+                title={`${docModal.title} Document`}
+                onError={(e) => {
+                  console.error('Failed to load document:', e);
+                }}
+              />
             </div>
           </div>
         </div>

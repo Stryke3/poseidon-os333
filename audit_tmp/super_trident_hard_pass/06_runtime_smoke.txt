@@ -1,0 +1,7 @@
+$ curl -m 2 http://127.0.0.1:3000/api/health
+Result: connection refused (no listener on 3000)
+
+$ curl -m 2 http://127.0.0.1:8010/health
+Result: connection refused (no listener on 8010)
+
+**No end-to-end HTTP smoke against running services.** FAIL for runtime proof.

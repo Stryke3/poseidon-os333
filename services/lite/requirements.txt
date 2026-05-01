@@ -2,3 +2,4 @@ fastapi==0.115.6
 uvicorn[standard]==0.32.1
 asyncpg==0.30.0
 python-multipart==0.0.17
+reportlab==4.2.5

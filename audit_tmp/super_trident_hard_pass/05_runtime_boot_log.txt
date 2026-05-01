@@ -1,0 +1,5 @@
+No docker-compose stack started during audit.
+
+No `docker ps` run (optional).
+
+Lite / Next dev servers were **not** started.

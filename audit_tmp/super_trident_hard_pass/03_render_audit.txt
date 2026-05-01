@@ -1,0 +1,15 @@
+Pattern: render.com|onrender|RENDER_|render.yaml (from audit_no_render_left.sh)
+
+ACTIVE / CODE (not platform deploy):
+- services/shared/base.py: "render.com" in host check for TLS / managed DB hostnames — code path, not “using Render to host”
+
+HISTORICAL / DOCS (explicit):
+- POSEIDON_GROUND_TRUTH.md: section 9 dig snapshot with onrender.com; top banner says Render not in use; DO canonical
+- STATUS.md, PRODUCTION_HARDENING.md: DO + compose; no Render
+
+SCRIPTS (audit tooling):
+- scripts/audit_no_render_left.sh, audit_no_render_pointers.sh: contain pattern strings
+
+NO render.yaml in repo (per prior inventory).
+
+VERDICT: **Render as deployment target:** not documented as current; **residual “render.com” string** remains in base.py for DB SSL heuristic. **PARTIAL** for “fully gone from code” — one functional reference.

@@ -15,6 +15,7 @@ type Patient = {
   payer_name: string | null
   member_id: string | null
   ordering_provider: string | null
+  provider_npi: string | null
   diagnosis_codes: string[]
   hcpcs_codes: string[]
   notes: string | null
@@ -35,7 +36,15 @@ type GeneratedRow = {
   created_at: string | null
 }
 
-const DOC_CATS = [
+type ReferenceRow = {
+  id: string
+  display_name: string
+  npi?: string | null
+  external_code?: string | null
+  sort_order?: number
+}
+
+const DEFAULT_DOC_CATS = [
   "intake",
   "insurance",
   "rx",
@@ -44,6 +53,13 @@ const DOC_CATS = [
   "medical_records",
   "billing",
   "other",
+] as const
+
+const DEFAULT_GENERATION_OPTIONS = [
+  ["swo", "Generate SWO"],
+  ["pod", "Generate POD paperwork"],
+  ["checklist", "Generate checklist"],
+  ["billing-summary", "Generate billing summary"],
 ] as const
 
 function codesToInput(codes: string[] | undefined): string {
@@ -64,12 +80,16 @@ export function PatientLiteRepository({
   generated: initialGen,
   basePath = "/lite/patients",
   productLabel = "Poseidon Lite",
+  documentCategories = DEFAULT_DOC_CATS,
+  generationOptions = DEFAULT_GENERATION_OPTIONS,
 }: {
   patient: Patient
   uploads: UploadRow[]
   generated: GeneratedRow[]
   basePath?: string
   productLabel?: string
+  documentCategories?: readonly string[]
+  generationOptions?: readonly (readonly [string, string])[]
 }) {
   const router = useRouter()
   const [patient, setPatient] = useState(initial)
@@ -81,6 +101,33 @@ export function PatientLiteRepository({
 
   const [dxInput, setDxInput] = useState(codesToInput(initial.diagnosis_codes))
   const [hcpcsInput, setHcpcsInput] = useState(codesToInput(initial.hcpcs_codes))
+  const [refProviders, setRefProviders] = useState<ReferenceRow[]>([])
+  const [refPayers, setRefPayers] = useState<ReferenceRow[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadReferenceLists() {
+      try {
+        const [pr, py] = await Promise.all([
+          fetch("/api/trident/reference/providers", { credentials: "include" }),
+          fetch("/api/trident/reference/payers", { credentials: "include" }),
+        ])
+        if (!pr.ok || !py.ok) return
+        const providers = (await pr.json()) as ReferenceRow[]
+        const payers = (await py.json()) as ReferenceRow[]
+        if (!cancelled && Array.isArray(providers) && Array.isArray(payers)) {
+          setRefProviders(providers)
+          setRefPayers(payers)
+        }
+      } catch {
+        /* dropdowns fall back to plain text */
+      }
+    }
+    void loadReferenceLists()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Keep client state in sync when the server page re-renders with fresh props (e.g. after router.refresh()).
   useEffect(() => {
@@ -150,6 +197,7 @@ export function PatientLiteRepository({
         payer_name: fd.get("payer_name") ? String(fd.get("payer_name")) : null,
         member_id: fd.get("member_id") ? String(fd.get("member_id")) : null,
         ordering_provider: fd.get("ordering_provider") ? String(fd.get("ordering_provider")) : null,
+        provider_npi: fd.get("provider_npi") ? String(fd.get("provider_npi")) : null,
       }
       const res = await fetch(`/api/lite/patients/${patient.id}`, {
         method: "PUT",
@@ -349,17 +397,38 @@ export function PatientLiteRepository({
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-medium text-slate-900">Payer / billing</h2>
+        <h2 className="text-lg font-medium text-slate-900">Payer / provider</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Choose a recognized payer or provider from suggestions, or type a custom value. Lists are managed in the database
+          (seeded defaults; extend via SQL or admin tooling).
+        </p>
         <form
           key={`payer-${patient.updated_at || patient.id}`}
           onSubmit={savePayer}
           className="mt-4 grid gap-3 sm:grid-cols-2"
         >
+          {refPayers.length ? (
+            <datalist id={`ref-payers-${patient.id}`}>
+              {refPayers.map((row) => (
+                <option key={row.id} value={row.display_name} />
+              ))}
+            </datalist>
+          ) : null}
+          {refProviders.length ? (
+            <datalist id={`ref-providers-${patient.id}`}>
+              {refProviders.map((row) => (
+                <option key={row.id} value={row.display_name} />
+              ))}
+            </datalist>
+          ) : null}
           <label className="text-sm sm:col-span-2">
             <span className="text-slate-600">Payer name</span>
             <input
               name="payer_name"
+              list={refPayers.length ? `ref-payers-${patient.id}` : undefined}
               defaultValue={patient.payer_name || ""}
+              autoComplete="off"
+              placeholder="e.g. Medicare, UnitedHealthcare"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             />
           </label>
@@ -375,8 +444,22 @@ export function PatientLiteRepository({
             <span className="text-slate-600">Ordering provider</span>
             <input
               name="ordering_provider"
+              list={refProviders.length ? `ref-providers-${patient.id}` : undefined}
               defaultValue={patient.ordering_provider || ""}
+              autoComplete="off"
+              placeholder="Select or type provider / practice"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="text-sm sm:col-span-2">
+            <span className="text-slate-600">Provider NPI (10-digit)</span>
+            <input
+              name="provider_npi"
+              defaultValue={patient.provider_npi || ""}
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="1234567890"
+              className="mt-1 w-full max-w-md rounded-md border border-slate-300 px-3 py-2 text-sm font-mono"
             />
           </label>
           <div className="sm:col-span-2">
@@ -451,7 +534,7 @@ export function PatientLiteRepository({
               className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
               defaultValue="intake"
             >
-              {DOC_CATS.map((c) => (
+              {documentCategories.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
@@ -497,14 +580,7 @@ export function PatientLiteRepository({
           Each run creates a new document and saves it to this patient&apos;s repository.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
-          {(
-            [
-              ["swo", "Generate SWO"],
-              ["transmittal", "Generate transmittal"],
-              ["checklist", "Generate checklist"],
-              ["billing-summary", "Generate billing summary"],
-            ] as const
-          ).map(([kind, label]) => (
+          {generationOptions.map(([kind, label]) => (
             <button
               key={kind}
               type="button"

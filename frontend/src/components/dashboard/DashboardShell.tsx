@@ -218,13 +218,9 @@ function VariantShell({
   const collectionRate = totalValue > 0 ? Math.round((paidValue / totalValue) * 100) : 0
 
   const navItems = [
-    { href: "/", label: "Live OS", active: variant === "os" },
-    { href: "/executive", label: "Executive", active: variant === "executive" },
-    { href: "/ceo", label: "CEO", active: variant === "ceo" },
-    { href: "/intake", label: "Intake", active: variant === "intake" },
-    { href: "/edi", label: "EDI", active: false },
-    { href: "/fax", label: "Fax", active: false },
-    ...(canManageUsers ? [{ href: "/settings", label: "Settings", active: false }] : []),
+    { href: "/trident/cases", label: "Case Queue", active: variant === "intake" || variant === "os" },
+    { href: "/trident/generated", label: "Generated Docs", active: false },
+    { href: "/trident/settings", label: "Rules / Settings", active: false },
   ]
 
   async function handleTridentSubmit(e: React.FormEvent<HTMLFormElement>) {

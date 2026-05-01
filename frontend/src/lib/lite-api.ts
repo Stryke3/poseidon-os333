@@ -19,8 +19,17 @@ export async function liteServerFetch(path: string, init?: RequestInit): Promise
   const url = `${getLiteBaseUrl()}${p}`
   const headers = new Headers(init?.headers)
   const auth = liteAuthHeaders()
+  const signal = init?.signal || (typeof AbortSignal !== "undefined" && "timeout" in AbortSignal ? AbortSignal.timeout(1200) : undefined)
   for (const [k, v] of Object.entries(auth)) {
     headers.set(k, v)
   }
-  return fetch(url, { ...init, headers, cache: "no-store" })
+  try {
+    return await fetch(url, { ...init, headers, cache: "no-store", signal })
+  } catch (error) {
+    console.warn(`[lite-api] request failed for ${url}`, error)
+    return new Response(null, {
+      status: 503,
+      statusText: "Lite service unavailable",
+    })
+  }
 }

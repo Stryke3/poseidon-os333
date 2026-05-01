@@ -1,0 +1,26 @@
+name: Poseidon Production Deploy
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H 157.230.145.247 >> ~/.ssh/known_hosts
+
+      - name: Execute Deploy Script
+        run: bash scripts/deploy.sh
+        env:
+          DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}

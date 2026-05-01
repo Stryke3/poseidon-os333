@@ -413,38 +413,11 @@ export default function NeuralOsDashboard({
 
             {/* Scrollable nav */}
             <nav className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
-              {/* 1. New Patient */}
-              <SidebarSection title="New Patient">
-                <SidebarLink href="/intake/new" label="New Patient Intake" onClick={() => setMenuOpen(false)} accent="emerald" />
-                <SidebarLink href="/intake" label="Intake Workspace" active={true} onClick={() => setMenuOpen(false)} />
-                <SidebarLink href="/fax" label="Fax" onClick={() => setMenuOpen(false)} />
+              <SidebarSection title="SUPER TRIDENT">
+                <SidebarLink href="/trident/cases" label="Case Queue" active={true} onClick={() => setMenuOpen(false)} accent="emerald" />
+                <SidebarLink href="/trident/generated" label="Generated Docs" onClick={() => setMenuOpen(false)} />
+                <SidebarLink href="/trident/settings" label="Rules / Settings" onClick={() => setMenuOpen(false)} />
               </SidebarSection>
-
-              {/* 2. Patient Dashboard */}
-              <SidebarSection title="Patient Dashboard">
-                <SidebarLink href="/" label="Live OS" active={true} onClick={() => setMenuOpen(false)} />
-                <SidebarLink href="/executive" label="Executive" onClick={() => setMenuOpen(false)} />
-                <SidebarLink href="/ceo" label="CEO" onClick={() => setMenuOpen(false)} />
-                <SidebarLink href="/revenue" label="Revenue" onClick={() => setMenuOpen(false)} />
-              </SidebarSection>
-
-              {/* 3. Practice Dashboard */}
-              <SidebarSection title="Practice Dashboard">
-                <SidebarLink href="/edi" label="EDI" onClick={() => setMenuOpen(false)} />
-                <SidebarLink href={matiaUrl} label="Matia" onClick={() => setMenuOpen(false)} />
-                <SidebarLink href="/fax" label="Fax Queue" onClick={() => setMenuOpen(false)} />
-              </SidebarSection>
-
-              {/* 4. Admin Tools */}
-              {canManageUsers && (
-                <SidebarSection title="Admin Tools">
-                  <SidebarLink href="/settings" label="Settings" onClick={() => setMenuOpen(false)} />
-                  <SidebarLink href="/admin/denials/queue" label="Denials" onClick={() => setMenuOpen(false)} />
-                  <SidebarLink href="/admin/integrations/availity" label="Integrations" onClick={() => setMenuOpen(false)} />
-                  <SidebarLink href="/admin/learning" label="Learning" onClick={() => setMenuOpen(false)} />
-                  <SidebarLink href="/admin/playbooks" label="Playbooks" onClick={() => setMenuOpen(false)} />
-                </SidebarSection>
-              )}
             </nav>
 
             {/* Footer */}

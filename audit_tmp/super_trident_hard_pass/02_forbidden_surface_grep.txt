@@ -1,0 +1,30 @@
+Selected matches (frontend/src) — not exhaustive. Full repo has more in services/*, trident3, exec.
+
+-- CMS-1500 / 837P / claim (active UI)
+frontend/src/components/edi/EdiCommandSurface.tsx: 837P Claims, Submit 837P, EDI command surface
+frontend/src/components/patient/ClaimActions.tsx: 837P Claim Actions, Submit 837P
+frontend/src/lib/edi-api.ts: claims, submit, validate
+frontend/src/app/patients/[patientId]/page.tsx: cms1500 document key, CMS-1500 in copy
+frontend/src/components/executive/RevenueCommandSurface.tsx: SWO, CMS-1500, POD tabs
+frontend/src/app/settings/wiki/page.tsx: 837P, X12, EDI, Availity SFTP, Stedi
+
+-- POD / delivery
+frontend/src/components/trident/Trident30OrderWorkspace.tsx: POD packet, DocuSign stub, ingest signed POD
+services/lite/trident30*.py: pod_status, docusign_events, proof_of_delivery_*
+
+-- billing / tebra
+services/lite/trident30_v1.py: mark-saved-to-tebra, tebra_handoff
+
+-- EDI / fax / denials / patients (api routes)
+frontend/src/app/api/edi/route.ts
+frontend/src/app/api/fax/send/route.ts, fax/inbound, fax/ocr
+frontend/src/app/api/denials/** 
+frontend/src/app/api/exec/**
+
+Grep for “837P|CMS-1500” in frontend alone returned 14+ file hits (see prior audit run).
+
+HISTORICAL (allowed):
+- POSEIDON_GROUND_TRUTH.md: onrender.com in snapshot dig block; policy says Render not in use
+- scripts/audit_no_render_*.sh: pattern definitions
+
+CONCLUSION: Forbidden and broad-scope terms remain in **active** components and **API** paths. FAIL for Layer A exclusion in active product definition at codebase level.
