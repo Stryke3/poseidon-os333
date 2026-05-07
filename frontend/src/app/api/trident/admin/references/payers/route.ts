@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server"
 
-import { getTridentAdminSessionOrResponse } from "@/lib/trident-admin-guard"
+import { checkAdminGate } from "@/lib/trident-admin-guard"
 import { liteServerFetch } from "@/lib/lite-api"
 
 const timeoutMs = 15_000
 
 export async function GET() {
-  const gate = await getTridentAdminSessionOrResponse()
-  if (!gate.ok) return gate.response
+  const gate = await checkAdminGate()
+  if (!gate.success) {
+    return (gate as any).response
+  }
   const res = await liteServerFetch("/reference/admin/payers", {
     signal: AbortSignal.timeout(timeoutMs),
   })
@@ -23,8 +25,10 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const gate = await getTridentAdminSessionOrResponse()
-  if (!gate.ok) return gate.response
+  const gate = await checkAdminGate()
+  if (!gate.success) {
+    return (gate as any).response
+  }
   const body = await req.text()
   const res = await liteServerFetch("/reference/admin/payers", {
     method: "POST",

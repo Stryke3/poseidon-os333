@@ -19,3 +19,20 @@ export async function getTridentAdminSessionOrResponse(): Promise<
   }
   return { ok: true, session }
 }
+
+/** Helper function to check if gate is successful and return response if not */
+export async function checkAdminGate(): Promise<{
+  success: true
+  session: NonNullable<Awaited<ReturnType<typeof getSafeServerSession>>>
+} | {
+  success: false
+  response: NextResponse
+}> {
+  const gate = await getTridentAdminSessionOrResponse()
+  
+  if (!gate.ok) {
+    return { success: false, response: (gate as any).response }
+  }
+  
+  return { success: true, session: gate.session }
+}
