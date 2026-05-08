@@ -1,7 +1,8 @@
 "use client"
 
-import React, { useMemo, useState } from "react"
+import React, { useState } from "react"
 import { Activity, AlertCircle, AlertTriangle, ArrowUpRight, CheckCircle2, ChevronRight, Download, Eye, FileCheck2, FileText, Lock, Plus, RefreshCw, Save, Search, ShieldCheck, Trash2, X, TrendingUp, TrendingDown, DollarSign, Calendar, User, FileSearch, Database, Brain, Zap, Archive, Settings, LogOut } from "lucide-react"
+import type { SpearCommandData, SpearSourceStatus } from "@/lib/spear-command"
 
 /* SPEAR Visual System */
 const T = {
@@ -55,15 +56,15 @@ const WORKFLOW_STAGES = [
 
 /* Operating Cards */
 const OPERATING_CARDS = [
-  { key: "open_cases", label: "Open Cases", value: 0, delta: "+2", icon: FileText, color: T.gold },
-  { key: "missing_docs", label: "Missing Docs", value: 0, delta: "-1", icon: AlertTriangle, color: T.warning },
-  { key: "trident_review", label: "Trident Review", value: 0, delta: "+3", icon: Brain, color: T.blueBright },
-  { key: "ready_fulfillment", label: "Ready for Fulfillment", value: 0, delta: "+1", icon: CheckCircle2, color: T.success },
-  { key: "pod_needed", label: "POD Needed", value: 0, delta: "0", icon: FileCheck2, color: T.goldSoft },
-  { key: "revenue_support", label: "Revenue Support", value: 0, delta: "+4", icon: DollarSign, color: T.success },
-  { key: "tebra_ready", label: "Tebra Ready", value: 0, delta: "+2", icon: TrendingUp, color: T.gold },
-  { key: "high_risk", label: "High-Risk Flags", value: 0, delta: "-1", icon: AlertCircle, color: T.danger },
-]
+  { key: "open_cases", label: "Open Cases", icon: FileText, color: T.gold },
+  { key: "missing_docs", label: "Missing Docs", icon: AlertTriangle, color: T.warning },
+  { key: "trident_review", label: "Trident Review", icon: Brain, color: T.blueBright },
+  { key: "ready_fulfillment", label: "Ready for Fulfillment", icon: CheckCircle2, color: T.success },
+  { key: "pod_needed", label: "POD Needed", icon: FileCheck2, color: T.goldSoft },
+  { key: "revenue_support", label: "Revenue Support", icon: DollarSign, color: T.success },
+  { key: "tebra_ready", label: "Tebra Ready", icon: TrendingUp, color: T.gold },
+  { key: "high_risk", label: "High-Risk Flags", icon: AlertCircle, color: T.danger },
+] as const
 
 const StatusBadge = ({ status, color = T.gold }) => (
   <span
@@ -86,7 +87,11 @@ const StatusBadge = ({ status, color = T.gold }) => (
   </span>
 )
 
-const MetricCard = ({ card, data }) => {
+const MetricCard = ({ card, data, degraded }: {
+  card: typeof OPERATING_CARDS[number]
+  data: SpearCommandData["metrics"]
+  degraded: boolean
+}) => {
   const Icon = card.icon
   const value = data[card.key] || 0
   
@@ -105,7 +110,7 @@ const MetricCard = ({ card, data }) => {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
         <Icon size={18} color={card.color} />
         <span style={{ fontSize: "11px", color: T.muted, fontWeight: 500 }}>
-          {card.delta}
+          {degraded ? "CHECK" : "LIVE"}
         </span>
       </div>
       <div style={{ fontSize: "24px", fontWeight: 600, color: T.ivory, marginBottom: "4px" }}>
@@ -118,7 +123,11 @@ const MetricCard = ({ card, data }) => {
   )
 }
 
-const WorkflowStage = ({ stage, isActive, hasItems }) => {
+const WorkflowStage = ({ stage, isActive, hasItems }: {
+  stage: typeof WORKFLOW_STAGES[number]
+  isActive: boolean
+  hasItems: number
+}) => {
   const Icon = stage.icon
   
   return (
@@ -194,30 +203,41 @@ const ComplianceNotice = () => (
   </div>
 )
 
-export function SpearCommand({ initialData }) {
+const SourceHealth = ({ source }: { source: SpearSourceStatus }) => (
+  <div
+    style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "12px",
+      padding: "8px 10px",
+      background: source.ok ? `${T.success}10` : `${T.danger}10`,
+      border: `1px solid ${source.ok ? T.success : T.danger}30`,
+      borderRadius: "6px",
+    }}
+  >
+    <span style={{ fontSize: 11, color: T.muted }}>{source.label}</span>
+    <span
+      style={{
+        fontSize: 10,
+        color: source.ok ? T.success : T.danger,
+        textTransform: "uppercase",
+        letterSpacing: "0.5px",
+        whiteSpace: "nowrap",
+      }}
+      title={source.message}
+    >
+      {source.ok ? "online" : source.status ? `fault ${source.status}` : "offline"}
+    </span>
+  </div>
+)
+
+export function SpearCommand({ initialData }: { initialData: SpearCommandData }) {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedStage, setSelectedStage] = useState("all")
-
-  // Mock data - replace with actual API calls
-  const workflowData = useMemo(() => ({
-    intake: { count: 12, active: true },
-    poseidon: { count: 8, active: true },
-    trident: { count: 5, active: true },
-    execution: { count: 15, active: true },
-    revenue: { count: 7, active: true },
-    ledger: { count: 23, active: true },
-  }), [])
-
-  const metricsData = useMemo(() => ({
-    open_cases: 12,
-    missing_docs: 3,
-    trident_review: 5,
-    ready_fulfillment: 8,
-    pod_needed: 4,
-    revenue_support: 7,
-    tebra_ready: 6,
-    high_risk: 2,
-  }), [])
+  const workflowData = initialData.workflow
+  const metricsData = initialData.metrics
+  const degraded = initialData.diagnostics.degraded
 
   return (
     <div className="spear-app" style={{ background: T.bg }}>
@@ -240,6 +260,8 @@ export function SpearCommand({ initialData }) {
           </div>
           <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
             <button
+              type="button"
+              onClick={() => window.location.reload()}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -298,6 +320,33 @@ export function SpearCommand({ initialData }) {
         </div>
       </div>
 
+      {degraded && (
+        <div
+          style={{
+            margin: "16px 32px 0",
+            padding: "14px 16px",
+            background: `${T.danger}10`,
+            border: `1px solid ${T.danger}35`,
+            borderRadius: "8px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+            <AlertTriangle size={16} color={T.danger} />
+            <div>
+              <div style={{ color: T.ivory, fontSize: 13, fontWeight: 600 }}>Command surface degraded</div>
+              <div style={{ color: T.muted, fontSize: 11 }}>
+                One or more operational dependencies did not return live data. Counts remain source-bound; no mock data is displayed.
+              </div>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "8px" }}>
+            {initialData.diagnostics.sources.map((source) => (
+              <SourceHealth key={source.key} source={source} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Workflow Line */}
       <div style={{ 
         padding: "24px 32px", 
@@ -352,7 +401,7 @@ export function SpearCommand({ initialData }) {
           marginBottom: "32px"
         }}>
           {OPERATING_CARDS.map((card) => (
-            <MetricCard key={card.key} card={card} data={metricsData} />
+            <MetricCard key={card.key} card={card} data={metricsData} degraded={degraded} />
           ))}
         </div>
 
@@ -374,15 +423,15 @@ export function SpearCommand({ initialData }) {
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: T.muted }}>Total Records</span>
-                <span style={{ fontSize: 13, color: T.ivory, fontWeight: 500 }}>1,247</span>
+                <span style={{ fontSize: 13, color: T.ivory, fontWeight: 500 }}>{initialData.poseidon.total_records}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: T.muted }}>Storage Used</span>
-                <span style={{ fontSize: 13, color: T.ivory, fontWeight: 500 }}>18.4 GB</span>
+                <span style={{ fontSize: 13, color: T.ivory, fontWeight: 500 }}>{initialData.poseidon.storage_used}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: T.muted }}>Last Sync</span>
-                <span style={{ fontSize: 13, color: T.success, fontWeight: 500 }}>2 min ago</span>
+                <span style={{ fontSize: 13, color: degraded ? T.warning : T.success, fontWeight: 500 }}>{initialData.poseidon.last_sync}</span>
               </div>
             </div>
           </div>
@@ -403,15 +452,15 @@ export function SpearCommand({ initialData }) {
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: T.muted }}>Cases Reviewed</span>
-                <span style={{ fontSize: 13, color: T.ivory, fontWeight: 500 }}>892</span>
+                <span style={{ fontSize: 13, color: T.ivory, fontWeight: 500 }}>{initialData.trident.cases_reviewed}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: T.muted }}>Risk Flags</span>
-                <span style={{ fontSize: 13, color: T.warning, fontWeight: 500 }}>47</span>
+                <span style={{ fontSize: 13, color: T.warning, fontWeight: 500 }}>{initialData.trident.risk_flags}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: T.muted }}>Next Actions</span>
-                <span style={{ fontSize: 13, color: T.gold, fontWeight: 500 }}>124</span>
+                <span style={{ fontSize: 13, color: T.gold, fontWeight: 500 }}>{initialData.trident.next_actions}</span>
               </div>
             </div>
             <div style={{ marginTop: "12px" }}>
@@ -435,15 +484,15 @@ export function SpearCommand({ initialData }) {
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: T.muted }}>Active Tasks</span>
-                <span style={{ fontSize: 13, color: T.ivory, fontWeight: 500 }}>156</span>
+                <span style={{ fontSize: 13, color: T.ivory, fontWeight: 500 }}>{initialData.spear_execution.active_tasks}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: T.muted }}>Fulfillment Pending</span>
-                <span style={{ fontSize: 13, color: T.gold, fontWeight: 500 }}>23</span>
+                <span style={{ fontSize: 13, color: T.gold, fontWeight: 500 }}>{initialData.spear_execution.fulfillment_pending}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: T.muted }}>Completed Today</span>
-                <span style={{ fontSize: 13, color: T.success, fontWeight: 500 }}>41</span>
+                <span style={{ fontSize: 13, color: T.success, fontWeight: 500 }}>{initialData.spear_execution.completed_today}</span>
               </div>
             </div>
           </div>
@@ -464,15 +513,15 @@ export function SpearCommand({ initialData }) {
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: T.muted }}>Tebra Ready</span>
-                <span style={{ fontSize: 13, color: T.ivory, fontWeight: 500 }}>67</span>
+                <span style={{ fontSize: 13, color: T.ivory, fontWeight: 500 }}>{initialData.revenue_support.tebra_ready}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: T.muted }}>Packet Prep</span>
-                <span style={{ fontSize: 13, color: T.gold, fontWeight: 500 }}>19</span>
+                <span style={{ fontSize: 13, color: T.gold, fontWeight: 500 }}>{initialData.revenue_support.packet_prep}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: T.muted }}>Revenue at Risk</span>
-                <span style={{ fontSize: 13, color: T.danger, fontWeight: 500 }}>8</span>
+                <span style={{ fontSize: 13, color: T.danger, fontWeight: 500 }}>{initialData.revenue_support.revenue_at_risk}</span>
               </div>
             </div>
             <div style={{ marginTop: "12px" }}>

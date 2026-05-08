@@ -1,0 +1,41 @@
+{
+  "platform": "POSEIDON",
+  "operator": "Stryke Fox Medical",
+  "generated_at": "2026-04-10T17:18:24Z",
+  "services": {
+    "core_api": {"port": 8001, "framework": "FastAPI", "health": "/ready"},
+    "trident": {"port": 8002, "framework": "FastAPI", "health": "/ready"},
+    "intake": {"port": 8003, "framework": "FastAPI", "health": "/ready"},
+    "ml": {"port": 8004, "framework": "FastAPI", "health": "/ready"},
+    "availity_node": {"port": 8005, "framework": "Node", "health": "/live"},
+    "edi": {"port": 8006, "framework": "FastAPI", "health": "/health"},
+    "frontend": {"port": 3000, "framework": "Next.js", "health": "/api/health"}
+  },
+  "edi_pipeline": {
+    "outbound_837p": {
+      "primary_note": "Configure per env: Availity SFTP vs Stedi API (SUBMISSION_METHOD)",
+      "format": "X12 5010 837P",
+      "edi_openapi_paths": ["/api/v1/claims/submit/{order_id}", "/api/v1/claims/validate/{order_id}"]
+    },
+    "inbound_835": {
+      "format": "X12 5010 835",
+      "storage": "remittance_batches, remittance_claims, remittance_adjustments, remittance_service_lines",
+      "stedi_dedup": "stedi_835_import_ids"
+    },
+    "acknowledgments": ["TA1", "999"],
+    "future_transactions": ["276/277 claim status", "270/271 eligibility"]
+  },
+  "database": {
+    "provider_note": "Neon or Postgres per DATABASE_URL",
+    "pk_type": "UUID"
+  },
+  "integration_ask": {
+    "stedi": [
+      "837P claim submission via Stedi API (replace/supplement Availity SFTP)",
+      "835 ERA ingestion via webhook or scheduled pull",
+      "276/277 real-time claim status",
+      "270/271 eligibility verification",
+      "TA1/999 acknowledgment webhook delivery"
+    ]
+  }
+}

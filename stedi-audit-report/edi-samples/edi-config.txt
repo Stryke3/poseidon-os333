@@ -1,0 +1,2 @@
+--- EDI container env (REDACT secrets before external share) ---
+Could not read EDI container env (expected name: poseidon_edi)

@@ -1,0 +1,15 @@
+--- Table Row Counts ---
+  claim_submissions: 0
+  remittance_batches: 0
+  remittance_claims: 0
+  remittance_adjustments: 0
+  remittance_service_lines: 0
+  edi_audit_log: 0
+  payment_outcomes: 0
+  learned_rates: 0
+  payers: 19
+  orders: 3
+  eob_claims: 0
+  denials: 0
+  patients: 2
+  physicians: 0

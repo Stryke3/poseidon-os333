@@ -1,0 +1,6 @@
+1:"$Sreact.fragment"
+2:I[5649,["882","static/chunks/882-2f1a4a2efae4654f.js","814","static/chunks/app/fax/page-148a40f76eb7f418.js"],"default"]
+3:I[484,[],"OutletBoundary"]
+4:"$Sreact.suspense"
+0:{"rsc":["$","$1","c",{"children":[["$","div",null,{"className":"relative min-h-screen","children":[["$","nav",null,{"className":"absolute top-3 left-4 z-10","children":["$","a",null,{"href":"/","className":"text-xs text-slate-400 hover:text-teal-600 transition-colors font-medium","children":"← Dashboard"}]}],["$","$L2",null,{}]]}],null,["$","$L3",null,{"children":["$","$4",null,{"name":"Next.MetadataOutlet","children":"$@5"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"cIT8NhtkeppaNRMSpdktR"}
+5:null

@@ -1,0 +1,23 @@
+       id       |          name          | active 
+----------------+------------------------+--------
+ AETNA          | Aetna                  | t
+ AMBETTER       | Ambetter               | t
+ ANTHEM         | Anthem                 | t
+ BCBS           | Blue Cross Blue Shield | t
+ CARESOURCE     | CareSource             | t
+ CENTENE        | Centene                | t
+ CHAMP_VA       | ChampVA                | t
+ CIGNA          | Cigna                  | t
+ HUMANA         | Humana                 | t
+ KAISER         | Kaiser Permanente      | t
+ MAGELLAN       | Magellan Health        | t
+ MEDICAID       | Medicaid               | t
+ MEDICARE_DMERC | Medicare DMERC         | t
+ MOLINA         | Molina Healthcare      | t
+ OSCAR          | Oscar Health           | t
+ TRICARE        | TRICARE                | t
+ UHC            | UnitedHealthcare       | t
+ VA             | Veterans Affairs       | t
+ WELLCARE       | WellCare               | t
+(19 rows)
+

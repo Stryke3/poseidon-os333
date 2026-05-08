@@ -1,0 +1,258 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  --background: #FEF9F5;
+  --foreground: #2C1810;
+  --primary: #D4A574;
+  --primary-foreground: #FFFFFF;
+  --secondary: #C97C5D;
+  --secondary-foreground: #FFFFFF;
+  --accent: #8B9A7A;
+  --accent-foreground: #2C1810;
+  --muted: #F5E6D8;
+  --muted-foreground: #6B5B54;
+  --terracotta: #B8654A;
+  --terracotta-light: #D4A574;
+  --sage: #7A8B7A;
+  --sage-light: #B5C5B5;
+  --cream: #FEF9F5;
+  --warm-brown: #8B6F47;
+  --rose-terracotta: #C97C5D;
+  --gold-warm: #D4A574;
+  --error: #D44A4A;
+  --success: #4A9D5B;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Poppins', sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Playfair Display', serif;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+/* Custom utility classes */
+.text-warm {
+  color: #2C1810;
+}
+
+.bg-warm {
+  background-color: #FEF9F5;
+}
+
+.text-primary {
+  color: var(--primary);
+}
+
+.bg-primary {
+  background-color: var(--primary);
+}
+
+.text-secondary {
+  color: var(--secondary);
+}
+
+.bg-secondary {
+  background-color: var(--secondary);
+}
+
+.text-accent {
+  color: var(--accent);
+}
+
+.bg-accent {
+  background-color: var(--accent);
+}
+
+.text-terracotta {
+  color: var(--terracotta);
+}
+
+.bg-terracotta {
+  background-color: var(--terracotta);
+}
+
+.text-terracotta-light {
+  color: var(--terracotta-light);
+}
+
+.bg-terracotta-light {
+  background-color: var(--terracotta-light);
+}
+
+.text-sage {
+  color: var(--sage);
+}
+
+.bg-sage {
+  background-color: var(--sage);
+}
+
+.text-sage-light {
+  color: var(--sage-light);
+}
+
+.bg-sage-light {
+  background-color: var(--sage-light);
+}
+
+.text-cream {
+  color: var(--cream);
+}
+
+.bg-cream {
+  background-color: var(--cream);
+}
+
+.text-warm-brown {
+  color: var(--warm-brown);
+}
+
+.bg-warm-brown {
+  background-color: var(--warm-brown);
+}
+
+.text-rose-terracotta {
+  color: var(--rose-terracotta);
+}
+
+.bg-rose-terracotta {
+  background-color: var(--rose-terracotta);
+}
+
+.text-gold-warm {
+  color: var(--gold-warm);
+}
+
+.bg-gold-warm {
+  background-color: var(--gold-warm);
+}
+
+/* Mommy Care Hero Styles - Latina Maternity Aesthetic */
+.mommy-care-hero {
+  background: linear-gradient(135deg, #FEF9F5 0%, #F5E6D8 50%, #FEF9F5 100%);
+  text-align: center;
+  padding: 60px 20px 80px 20px;
+  font-family: 'Poppins', sans-serif;
+  position: relative;
+  overflow: hidden;
+  min-height: 500px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.mommy-care-hero::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23D4A574' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  opacity: 0.3;
+}
+
+.mommy-care-hero .logo {
+  max-width: 320px;
+  margin-bottom: 40px;
+  position: relative;
+  z-index: 2;
+  filter: drop-shadow(0 4px 6px rgba(212, 165, 116, 0.2));
+}
+
+.mommy-care-hero h1 {
+  font-size: clamp(32px, 5vw, 48px);
+  font-weight: 600;
+  color: #2C1810;
+  line-height: 1.2;
+  margin-bottom: 24px;
+  position: relative;
+  z-index: 2;
+  font-family: 'Playfair Display', serif;
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.mommy-care-hero h1 span {
+  color: #C97C5D;
+  font-weight: 700;
+}
+
+.mommy-care-hero p {
+  font-size: clamp(16px, 2.5vw, 20px);
+  color: #6B5B54;
+  max-width: 600px;
+  margin: 0 auto 40px;
+  position: relative;
+  z-index: 2;
+  line-height: 1.7;
+  font-weight: 400;
+}
+
+.cta-button {
+  display: inline-block;
+  background: linear-gradient(135deg, #C97C5D 0%, #D4A574 100%);
+  color: white;
+  padding: 18px 32px;
+  border-radius: 50px;
+  font-weight: 600;
+  text-decoration: none;
+  margin-top: 20px;
+  transition: all 0.3s ease;
+  font-family: 'Poppins', sans-serif;
+  font-size: 16px;
+  box-shadow: 0 8px 25px rgba(201, 124, 93, 0.3);
+  position: relative;
+  z-index: 2;
+}
+
+.cta-button:hover {
+  background: linear-gradient(135deg, #B8654A 0%, #C97C5D 100%);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 35px rgba(201, 124, 93, 0.4);
+}
+
+/* Latina-inspired decorative elements */
+.mommy-care-hero::after {
+  content: '';
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 200px;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #D4A574, transparent);
+  border-radius: 2px;
+  z-index: 2;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .mommy-care-hero {
+    padding: 40px 16px 60px 16px;
+    min-height: 400px;
+  }
+  
+  .mommy-care-hero .logo {
+    max-width: 280px;
+    margin-bottom: 30px;
+  }
+  
+  .mommy-care-hero h1 {
+    margin-bottom: 20px;
+  }
+  
+  .mommy-care-hero p {
+    margin-bottom: 30px;
+  }
+}

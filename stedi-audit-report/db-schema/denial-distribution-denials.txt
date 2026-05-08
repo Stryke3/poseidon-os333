@@ -1,0 +1,4 @@
+ carc_code | rarc_code | cnt 
+-----------+-----------+-----
+(0 rows)
+

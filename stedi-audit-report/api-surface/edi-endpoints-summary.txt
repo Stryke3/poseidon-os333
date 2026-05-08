@@ -1,0 +1,13 @@
+# EDI-relevant OpenAPI paths (keyword filter)
+
+### CORE — no paths (service down or empty OpenAPI)
+
+### TRIDENT — no paths (service down or empty OpenAPI)
+
+### INTAKE — no paths (service down or empty OpenAPI)
+
+### EDI — no paths (service down or empty OpenAPI)
+
+### AVAILITY — no paths (service down or empty OpenAPI)
+
+No EDI-relevant paths matched. Usually means APIs are not reachable on localhost (empty OpenAPI files).

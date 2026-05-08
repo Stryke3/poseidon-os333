@@ -1,0 +1,4 @@
+ payer_id | hcpcs_code | avg_paid | denial_rate | sample_count 
+----------+------------+----------+-------------+--------------
+(0 rows)
+

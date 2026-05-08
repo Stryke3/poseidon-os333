@@ -1,0 +1,528 @@
+                                                                  Table "public.claim_submissions"
+           Column           |           Type           | Collation | Nullable |            Default             | Storage  | Compression | Stats target | Description 
+----------------------------+--------------------------+-----------+----------+--------------------------------+----------+-------------+--------------+-------------
+ id                         | uuid                     |           | not null | gen_random_uuid()              | plain    |             |              | 
+ order_id                   | uuid                     |           | not null |                                | plain    |             |              | 
+ org_id                     | uuid                     |           | not null |                                | plain    |             |              | 
+ payer_id                   | text                     |           |          |                                | extended |             |              | 
+ claim_number               | character varying(50)    |           |          |                                | extended |             |              | 
+ interchange_control_number | character varying(20)    |           | not null |                                | extended |             |              | 
+ stedi_transaction_id       | character varying(100)   |           |          |                                | extended |             |              | 
+ submission_type            | character varying(20)    |           | not null | '837P'::character varying      | extended |             |              | 
+ submission_method          | character varying(20)    |           | not null | 'stedi_api'::character varying | extended |             |              | 
+ clearinghouse              | character varying(50)    |           |          | 'stedi'::character varying     | extended |             |              | 
+ submission_payload         | jsonb                    |           |          |                                | extended |             |              | 
+ acknowledgment_payload     | jsonb                    |           |          |                                | extended |             |              | 
+ raw_x12_outbound           | text                     |           |          |                                | extended |             |              | 
+ status                     | character varying(30)    |           | not null | 'draft'::character varying     | extended |             |              | 
+ failure_reason             | text                     |           |          |                                | extended |             |              | 
+ rejection_codes            | jsonb                    |           |          |                                | extended |             |              | 
+ triggered_by               | uuid                     |           |          |                                | plain    |             |              | 
+ batch_id                   | character varying(50)    |           |          |                                | extended |             |              | 
+ submission_count           | integer                  |           |          | 1                              | plain    |             |              | 
+ parent_submission_id       | uuid                     |           |          |                                | plain    |             |              | 
+ validated_at               | timestamp with time zone |           |          |                                | plain    |             |              | 
+ submitted_at               | timestamp with time zone |           |          |                                | plain    |             |              | 
+ acknowledged_at            | timestamp with time zone |           |          |                                | plain    |             |              | 
+ created_at                 | timestamp with time zone |           |          | now()                          | plain    |             |              | 
+ updated_at                 | timestamp with time zone |           |          | now()                          | plain    |             |              | 
+ icn                        | character varying(50)    |           |          |                                | extended |             |              | 
+ edi_filename               | character varying(500)   |           |          |                                | extended |             |              | 
+ edi_content                | text                     |           |          |                                | extended |             |              | 
+ isa_control_number         | character varying(20)    |           |          |                                | extended |             |              | 
+ gs_control_number          | character varying(20)    |           |          |                                | extended |             |              | 
+ clearinghouse_response     | jsonb                    |           |          |                                | extended |             |              | 
+ ack_type                   | character varying(20)    |           |          |                                | extended |             |              | 
+ ack_errors                 | jsonb                    |           |          |                                | extended |             |              | 
+ paid_amount                | numeric(12,2)            |           |          |                                | main     |             |              | 
+ adjustment_amount          | numeric(12,2)            |           |          |                                | main     |             |              | 
+ payment_date               | date                     |           |          |                                | plain    |             |              | 
+ error_message              | text                     |           |          |                                | extended |             |              | 
+ retry_count                | integer                  |           |          | 0                              | plain    |             |              | 
+ dry_run                    | boolean                  |           |          | false                          | plain    |             |              | 
+ submission_format          | character varying(32)    |           |          |                                | extended |             |              | 
+Indexes:
+    "claim_submissions_pkey" PRIMARY KEY, btree (id)
+    "idx_claim_submissions_one_success_per_order" UNIQUE, btree (order_id) WHERE status::text = ANY (ARRAY['submitted'::character varying, 'accepted'::character varying]::text[])
+    "idx_cs_batch" btree (batch_id)
+    "idx_cs_icn" btree (interchange_control_number)
+    "idx_cs_order" btree (order_id)
+    "idx_cs_org" btree (org_id)
+    "idx_cs_status" btree (status, submitted_at DESC)
+    "idx_cs_stedi" btree (stedi_transaction_id)
+Foreign-key constraints:
+    "claim_submissions_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+    "claim_submissions_org_id_fkey" FOREIGN KEY (org_id) REFERENCES organizations(id)
+    "claim_submissions_parent_submission_id_fkey" FOREIGN KEY (parent_submission_id) REFERENCES claim_submissions(id)
+Referenced by:
+    TABLE "claim_submissions" CONSTRAINT "claim_submissions_parent_submission_id_fkey" FOREIGN KEY (parent_submission_id) REFERENCES claim_submissions(id)
+    TABLE "remittance_claims" CONSTRAINT "remittance_claims_claim_submission_id_fkey" FOREIGN KEY (claim_submission_id) REFERENCES claim_submissions(id)
+Access method: heap
+
+                                                                  Table "public.remittance_batches"
+         Column          |           Type           | Collation | Nullable |              Default               | Storage  | Compression | Stats target | Description 
+-------------------------+--------------------------+-----------+----------+------------------------------------+----------+-------------+--------------+-------------
+ id                      | uuid                     |           | not null | gen_random_uuid()                  | plain    |             |              | 
+ org_id                  | uuid                     |           | not null |                                    | plain    |             |              | 
+ filename                | character varying(255)   |           |          |                                    | extended |             |              | 
+ source                  | character varying(50)    |           | not null | 'clearinghouse'::character varying | extended |             |              | 
+ file_format             | character varying(10)    |           | not null | '835'::character varying           | extended |             |              | 
+ raw_content             | text                     |           |          |                                    | extended |             |              | 
+ raw_x12_inbound         | text                     |           |          |                                    | extended |             |              | 
+ interchange_control_num | character varying(20)    |           |          |                                    | extended |             |              | 
+ payer_name              | character varying(255)   |           |          |                                    | extended |             |              | 
+ payer_id_code           | character varying(50)    |           |          |                                    | extended |             |              | 
+ check_number            | character varying(50)    |           |          |                                    | extended |             |              | 
+ check_date              | date                     |           |          |                                    | plain    |             |              | 
+ total_paid              | numeric(12,2)            |           |          |                                    | main     |             |              | 
+ status                  | character varying(30)    |           |          | 'received'::character varying      | extended |             |              | 
+ claim_count             | integer                  |           |          | 0                                  | plain    |             |              | 
+ error_message           | text                     |           |          |                                    | extended |             |              | 
+ received_at             | timestamp with time zone |           |          | now()                              | plain    |             |              | 
+ parsed_at               | timestamp with time zone |           |          |                                    | plain    |             |              | 
+ posted_at               | timestamp with time zone |           |          |                                    | plain    |             |              | 
+ created_at              | timestamp with time zone |           |          | now()                              | plain    |             |              | 
+Indexes:
+    "remittance_batches_pkey" PRIMARY KEY, btree (id)
+    "idx_rb_org" btree (org_id)
+    "idx_rb_payer" btree (payer_name)
+    "idx_rb_status" btree (status)
+Foreign-key constraints:
+    "remittance_batches_org_id_fkey" FOREIGN KEY (org_id) REFERENCES organizations(id)
+Referenced by:
+    TABLE "remittance_claims" CONSTRAINT "remittance_claims_batch_id_fkey" FOREIGN KEY (batch_id) REFERENCES remittance_batches(id) ON DELETE CASCADE
+Access method: heap
+
+                                                          Table "public.remittance_claims"
+         Column         |           Type           | Collation | Nullable |      Default      | Storage  | Compression | Stats target | Description 
+------------------------+--------------------------+-----------+----------+-------------------+----------+-------------+--------------+-------------
+ id                     | uuid                     |           | not null | gen_random_uuid() | plain    |             |              | 
+ batch_id               | uuid                     |           | not null |                   | plain    |             |              | 
+ org_id                 | uuid                     |           | not null |                   | plain    |             |              | 
+ patient_control_number | character varying(50)    |           |          |                   | extended |             |              | 
+ order_id               | uuid                     |           |          |                   | plain    |             |              | 
+ claim_submission_id    | uuid                     |           |          |                   | plain    |             |              | 
+ payer_claim_number     | character varying(50)    |           |          |                   | extended |             |              | 
+ claim_status_code      | character varying(5)     |           |          |                   | extended |             |              | 
+ billed_amount          | numeric(10,2)            |           |          |                   | main     |             |              | 
+ paid_amount            | numeric(10,2)            |           |          |                   | main     |             |              | 
+ patient_responsibility | numeric(10,2)            |           |          |                   | main     |             |              | 
+ filing_indicator       | character varying(5)     |           |          |                   | extended |             |              | 
+ patient_last_name      | character varying(100)   |           |          |                   | extended |             |              | 
+ patient_first_name     | character varying(100)   |           |          |                   | extended |             |              | 
+ patient_member_id      | character varying(50)    |           |          |                   | extended |             |              | 
+ rendering_npi          | character varying(10)    |           |          |                   | extended |             |              | 
+ service_date_start     | date                     |           |          |                   | plain    |             |              | 
+ service_date_end       | date                     |           |          |                   | plain    |             |              | 
+ is_denial              | boolean                  |           |          | false             | plain    |             |              | 
+ is_partial_pay         | boolean                  |           |          | false             | plain    |             |              | 
+ is_reversal            | boolean                  |           |          | false             | plain    |             |              | 
+ auto_posted            | boolean                  |           |          | false             | plain    |             |              | 
+ created_at             | timestamp with time zone |           |          | now()             | plain    |             |              | 
+Indexes:
+    "remittance_claims_pkey" PRIMARY KEY, btree (id)
+    "idx_rc_batch" btree (batch_id)
+    "idx_rc_denial" btree (is_denial) WHERE is_denial = true
+    "idx_rc_order" btree (order_id)
+    "idx_rc_pcn" btree (patient_control_number)
+Foreign-key constraints:
+    "remittance_claims_batch_id_fkey" FOREIGN KEY (batch_id) REFERENCES remittance_batches(id) ON DELETE CASCADE
+    "remittance_claims_claim_submission_id_fkey" FOREIGN KEY (claim_submission_id) REFERENCES claim_submissions(id)
+Referenced by:
+    TABLE "remittance_adjustments" CONSTRAINT "remittance_adjustments_remittance_claim_id_fkey" FOREIGN KEY (remittance_claim_id) REFERENCES remittance_claims(id) ON DELETE CASCADE
+    TABLE "remittance_service_lines" CONSTRAINT "remittance_service_lines_remittance_claim_id_fkey" FOREIGN KEY (remittance_claim_id) REFERENCES remittance_claims(id) ON DELETE CASCADE
+Access method: heap
+
+                                                      Table "public.remittance_adjustments"
+       Column        |           Type           | Collation | Nullable |      Default      | Storage  | Compression | Stats target | Description 
+---------------------+--------------------------+-----------+----------+-------------------+----------+-------------+--------------+-------------
+ id                  | uuid                     |           | not null | gen_random_uuid() | plain    |             |              | 
+ remittance_claim_id | uuid                     |           | not null |                   | plain    |             |              | 
+ adjustment_group    | character varying(5)     |           | not null |                   | extended |             |              | 
+ carc_code           | character varying(10)    |           | not null |                   | extended |             |              | 
+ carc_description    | text                     |           |          |                   | extended |             |              | 
+ rarc_code           | character varying(10)    |           |          |                   | extended |             |              | 
+ rarc_description    | text                     |           |          |                   | extended |             |              | 
+ adjustment_amount   | numeric(10,2)            |           |          |                   | main     |             |              | 
+ adjustment_quantity | integer                  |           |          |                   | plain    |             |              | 
+ denial_category     | character varying(50)    |           |          |                   | extended |             |              | 
+ is_actionable       | boolean                  |           |          | true              | plain    |             |              | 
+ suggested_action    | character varying(100)   |           |          |                   | extended |             |              | 
+ created_at          | timestamp with time zone |           |          | now()             | plain    |             |              | 
+Indexes:
+    "remittance_adjustments_pkey" PRIMARY KEY, btree (id)
+    "idx_ra_carc" btree (carc_code)
+    "idx_ra_cat" btree (denial_category)
+    "idx_ra_claim" btree (remittance_claim_id)
+Foreign-key constraints:
+    "remittance_adjustments_remittance_claim_id_fkey" FOREIGN KEY (remittance_claim_id) REFERENCES remittance_claims(id) ON DELETE CASCADE
+Access method: heap
+
+                                                     Table "public.remittance_service_lines"
+       Column        |           Type           | Collation | Nullable |      Default      | Storage  | Compression | Stats target | Description 
+---------------------+--------------------------+-----------+----------+-------------------+----------+-------------+--------------+-------------
+ id                  | uuid                     |           | not null | gen_random_uuid() | plain    |             |              | 
+ remittance_claim_id | uuid                     |           | not null |                   | plain    |             |              | 
+ hcpcs_code          | character varying(10)    |           |          |                   | extended |             |              | 
+ modifier            | character varying(10)    |           |          |                   | extended |             |              | 
+ billed_amount       | numeric(10,2)            |           |          |                   | main     |             |              | 
+ paid_amount         | numeric(10,2)            |           |          |                   | main     |             |              | 
+ allowed_amount      | numeric(10,2)            |           |          |                   | main     |             |              | 
+ deductible          | numeric(10,2)            |           |          |                   | main     |             |              | 
+ coinsurance         | numeric(10,2)            |           |          |                   | main     |             |              | 
+ copay               | numeric(10,2)            |           |          |                   | main     |             |              | 
+ units_billed        | integer                  |           |          |                   | plain    |             |              | 
+ units_paid          | integer                  |           |          |                   | plain    |             |              | 
+ service_date        | date                     |           |          |                   | plain    |             |              | 
+ created_at          | timestamp with time zone |           |          | now()             | plain    |             |              | 
+Indexes:
+    "remittance_service_lines_pkey" PRIMARY KEY, btree (id)
+    "idx_rsl_claim" btree (remittance_claim_id)
+    "idx_rsl_hcpcs" btree (hcpcs_code)
+Foreign-key constraints:
+    "remittance_service_lines_remittance_claim_id_fkey" FOREIGN KEY (remittance_claim_id) REFERENCES remittance_claims(id) ON DELETE CASCADE
+Access method: heap
+
+                                                       Table "public.edi_audit_log"
+    Column    |           Type           | Collation | Nullable |      Default      | Storage  | Compression | Stats target | Description 
+--------------+--------------------------+-----------+----------+-------------------+----------+-------------+--------------+-------------
+ id           | uuid                     |           | not null | gen_random_uuid() | plain    |             |              | 
+ entity_type  | character varying(30)    |           | not null |                   | extended |             |              | 
+ entity_id    | uuid                     |           | not null |                   | plain    |             |              | 
+ action       | character varying(50)    |           | not null |                   | extended |             |              | 
+ old_status   | character varying(30)    |           |          |                   | extended |             |              | 
+ new_status   | character varying(30)    |           |          |                   | extended |             |              | 
+ details      | jsonb                    |           |          |                   | extended |             |              | 
+ performed_by | uuid                     |           |          |                   | plain    |             |              | 
+ created_at   | timestamp with time zone |           |          | now()             | plain    |             |              | 
+Indexes:
+    "edi_audit_log_pkey" PRIMARY KEY, btree (id)
+    "idx_eal_entity" btree (entity_type, entity_id)
+Access method: heap
+
+                                                          Table "public.payment_outcomes"
+        Column         |           Type           | Collation | Nullable |      Default      | Storage  | Compression | Stats target | Description 
+-----------------------+--------------------------+-----------+----------+-------------------+----------+-------------+--------------+-------------
+ id                    | uuid                     |           | not null | gen_random_uuid() | plain    |             |              | 
+ org_id                | uuid                     |           |          |                   | plain    |             |              | 
+ order_id              | uuid                     |           |          |                   | plain    |             |              | 
+ claim_number          | character varying(100)   |           |          |                   | extended |             |              | 
+ payer_id              | character varying(50)    |           |          |                   | extended |             |              | 
+ payer_name            | character varying(200)   |           |          |                   | extended |             |              | 
+ hcpcs_code            | character varying(20)    |           |          |                   | extended |             |              | 
+ icd10_code            | character varying(20)    |           |          |                   | extended |             |              | 
+ diagnosis_codes       | text                     |           |          |                   | extended |             |              | 
+ billed_amount         | numeric(10,2)            |           |          |                   | main     |             |              | 
+ paid_amount           | numeric(10,2)            |           |          |                   | main     |             |              | 
+ is_denial             | boolean                  |           |          |                   | plain    |             |              | 
+ denial_reason         | character varying(500)   |           |          |                   | extended |             |              | 
+ carc_code             | character varying(20)    |           |          |                   | extended |             |              | 
+ rarc_code             | character varying(20)    |           |          |                   | extended |             |              | 
+ date_of_service       | date                     |           |          |                   | plain    |             |              | 
+ adjudicated_at        | timestamp with time zone |           |          |                   | plain    |             |              | 
+ external_claim_number | character varying(100)   |           |          |                   | extended |             |              | 
+ payment_date          | date                     |           |          |                   | plain    |             |              | 
+ eob_reference         | text                     |           |          |                   | extended |             |              | 
+ adjustment_codes      | jsonb                    |           |          | '[]'::jsonb       | extended |             |              | 
+ created_by            | uuid                     |           |          |                   | plain    |             |              | 
+ created_at            | timestamp with time zone |           |          | now()             | plain    |             |              | 
+ source                | character varying(50)    |           |          |                   | extended |             |              | 
+ service_date          | date                     |           |          |                   | plain    |             |              | 
+ payment_status        | character varying(30)    |           |          |                   | extended |             |              | 
+Indexes:
+    "payment_outcomes_pkey" PRIMARY KEY, btree (id)
+    "idx_po_training" btree (payer_id, hcpcs_code, is_denial)
+Foreign-key constraints:
+    "payment_outcomes_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+Access method: heap
+
+                                                                   Table "public.learned_rates"
+    Column    |           Type           | Collation | Nullable |                  Default                  | Storage  | Compression | Stats target | Description 
+--------------+--------------------------+-----------+----------+-------------------------------------------+----------+-------------+--------------+-------------
+ id           | integer                  |           | not null | nextval('learned_rates_id_seq'::regclass) | plain    |             |              | 
+ org_id       | uuid                     |           |          |                                           | plain    |             |              | 
+ payer_id     | character varying(50)    |           | not null |                                           | extended |             |              | 
+ hcpcs_code   | character varying(20)    |           | not null |                                           | extended |             |              | 
+ avg_paid     | numeric(10,2)            |           |          |                                           | main     |             |              | 
+ median_paid  | numeric(10,2)            |           |          |                                           | main     |             |              | 
+ min_paid     | numeric(10,2)            |           |          |                                           | main     |             |              | 
+ max_paid     | numeric(10,2)            |           |          |                                           | main     |             |              | 
+ denial_rate  | numeric(5,4)             |           |          |                                           | main     |             |              | 
+ sample_count | integer                  |           |          | 0                                         | plain    |             |              | 
+ last_updated | timestamp with time zone |           |          | now()                                     | plain    |             |              | 
+Indexes:
+    "learned_rates_pkey" PRIMARY KEY, btree (id)
+    "learned_rates_org_id_payer_id_hcpcs_code_key" UNIQUE CONSTRAINT, btree (org_id, payer_id, hcpcs_code)
+Access method: heap
+
+                                                     Table "public.payers"
+        Column        |     Type     | Collation | Nullable |   Default   | Storage  | Compression | Stats target | Description 
+----------------------+--------------+-----------+----------+-------------+----------+-------------+--------------+-------------
+ id                   | text         |           | not null |             | extended |             |              | 
+ name                 | text         |           | not null |             | extended |             |              | 
+ timely_filing_days   | integer      |           | not null | 365         | plain    |             |              | 
+ requires_cmn         | boolean      |           | not null | false       | plain    |             |              | 
+ requires_prior_auth  | jsonb        |           | not null | '[]'::jsonb | extended |             |              | 
+ baseline_denial_rate | numeric(5,4) |           |          |             | main     |             |              | 
+ active               | boolean      |           | not null | true        | plain    |             |              | 
+Indexes:
+    "payers_pkey" PRIMARY KEY, btree (id)
+Access method: heap
+
+                                                                      Table "public.orders"
+          Column           |           Type           | Collation | Nullable |           Default            | Storage  | Compression | Stats target | Description 
+---------------------------+--------------------------+-----------+----------+------------------------------+----------+-------------+--------------+-------------
+ id                        | uuid                     |           | not null | gen_random_uuid()            | plain    |             |              | 
+ org_id                    | uuid                     |           | not null |                              | plain    |             |              | 
+ order_number              | character varying(50)    |           |          |                              | extended |             |              | 
+ patient_id                | uuid                     |           | not null |                              | plain    |             |              | 
+ physician_id              | uuid                     |           |          |                              | plain    |             |              | 
+ assigned_rep_id           | uuid                     |           |          |                              | plain    |             |              | 
+ assigned_to               | uuid                     |           |          |                              | plain    |             |              | 
+ status                    | character varying(50)    |           |          | 'intake'::character varying  | extended |             |              | 
+ product_category          | character varying(100)   |           |          |                              | extended |             |              | 
+ vertical                  | character varying(50)    |           |          |                              | extended |             |              | 
+ source                    | character varying(100)   |           |          |                              | extended |             |              | 
+ priority                  | character varying(20)    |           |          | 'normal'::character varying  | extended |             |              | 
+ territory_id              | character varying(100)   |           |          |                              | extended |             |              | 
+ place_of_service          | character varying(5)     |           |          | '12'::character varying      | extended |             |              | 
+ clinical_notes            | text                     |           |          |                              | extended |             |              | 
+ clinical_data             | jsonb                    |           |          | '{}'::jsonb                  | extended |             |              | 
+ total_billed              | numeric(12,2)            |           |          |                              | main     |             |              | 
+ total_allowed             | numeric(12,2)            |           |          |                              | main     |             |              | 
+ total_paid                | numeric(12,2)            |           |          |                              | main     |             |              | 
+ date_of_service           | date                     |           |          |                              | plain    |             |              | 
+ submitted_at              | timestamp with time zone |           |          |                              | plain    |             |              | 
+ paid_at                   | timestamp with time zone |           |          |                              | plain    |             |              | 
+ hcpcs_codes               | jsonb                    |           |          | '[]'::jsonb                  | extended |             |              | 
+ referring_physician_npi   | text                     |           |          |                              | extended |             |              | 
+ payer_id                  | text                     |           |          |                              | extended |             |              | 
+ insurance_auth_number     | text                     |           |          |                              | extended |             |              | 
+ denial_category           | text                     |           |          |                              | extended |             |              | 
+ denied_amount             | numeric(12,2)            |           |          |                              | main     |             |              | 
+ denial_date               | date                     |           |          |                              | plain    |             |              | 
+ paid_amount               | numeric(12,2)            |           |          |                              | main     |             |              | 
+ payment_date              | date                     |           |          |                              | plain    |             |              | 
+ denial_risk_score         | numeric(5,4)             |           |          |                              | main     |             |              | 
+ risk_tier                 | text                     |           |          |                              | extended |             |              | 
+ trident_flags             | jsonb                    |           |          | '[]'::jsonb                  | extended |             |              | 
+ swo_document_id           | text                     |           |          |                              | extended |             |              | 
+ cms1500_document_id       | text                     |           |          |                              | extended |             |              | 
+ pod_document_id           | text                     |           |          |                              | extended |             |              | 
+ invoice_document_id       | text                     |           |          |                              | extended |             |              | 
+ packing_sheet_document_id | text                     |           |          |                              | extended |             |              | 
+ source_channel            | text                     |           |          | 'manual'::text               | extended |             |              | 
+ source_reference          | text                     |           |          |                              | extended |             |              | 
+ intake_payload            | jsonb                    |           |          | '{}'::jsonb                  | extended |             |              | 
+ eligibility_status        | text                     |           |          | 'pending'::text              | extended |             |              | 
+ eligibility_summary       | jsonb                    |           |          | '{}'::jsonb                  | extended |             |              | 
+ swo_status                | text                     |           |          | 'not_requested'::text        | extended |             |              | 
+ swo_request_id            | text                     |           |          |                              | extended |             |              | 
+ swo_sign_url              | text                     |           |          |                              | extended |             |              | 
+ fulfillment_status        | text                     |           |          | 'draft'::text                | extended |             |              | 
+ tracking_number           | text                     |           |          |                              | extended |             |              | 
+ tracking_carrier          | text                     |           |          |                              | extended |             |              | 
+ tracking_status           | text                     |           |          |                              | extended |             |              | 
+ tracking_url              | text                     |           |          |                              | extended |             |              | 
+ delivered_at              | timestamp with time zone |           |          |                              | plain    |             |              | 
+ pod_status                | text                     |           |          | 'not_scheduled'::text        | extended |             |              | 
+ pod_sent_at               | timestamp with time zone |           |          |                              | plain    |             |              | 
+ pod_received_at           | timestamp with time zone |           |          |                              | plain    |             |              | 
+ billing_status            | text                     |           |          | 'not_ready'::text            | extended |             |              | 
+ billing_ready_at          | timestamp with time zone |           |          |                              | plain    |             |              | 
+ notes                     | text                     |           |          |                              | extended |             |              | 
+ created_by                | uuid                     |           |          |                              | plain    |             |              | 
+ created_at                | timestamp with time zone |           |          | now()                        | plain    |             |              | 
+ updated_at                | timestamp with time zone |           |          | now()                        | plain    |             |              | 
+ modifier                  | character varying(10)    |           |          |                              | extended |             |              | 
+ npi_billing               | character varying(20)    |           |          |                              | extended |             |              | 
+ prior_auth_number         | character varying(50)    |           |          |                              | extended |             |              | 
+ claim_status              | character varying(30)    |           |          | 'pending'::character varying | extended |             |              | 
+ last_submitted_at         | timestamp with time zone |           |          |                              | plain    |             |              | 
+ claim_strategy            | text                     |           |          |                              | extended |             |              | 
+Indexes:
+    "orders_pkey" PRIMARY KEY, btree (id)
+    "idx_orders_assigned_to" btree (assigned_to)
+    "idx_orders_org" btree (org_id)
+    "idx_orders_org_claim_strategy" btree (org_id, claim_strategy) WHERE claim_strategy IS NOT NULL
+    "idx_orders_patient" btree (patient_id)
+    "idx_orders_rep" btree (assigned_rep_id)
+    "idx_orders_status" btree (status)
+    "orders_assigned_to_idx" btree (assigned_to)
+    "orders_order_number_key" UNIQUE CONSTRAINT, btree (order_number)
+Check constraints:
+    "orders_claim_strategy_check" CHECK (claim_strategy IS NULL OR (claim_strategy = ANY (ARRAY['AVAILITY'::text, 'EDI'::text])))
+    "orders_status_check" CHECK (status::text = ANY (ARRAY['draft'::character varying, 'authorized'::character varying, 'appealed'::character varying, 'write_off'::character varying, 'intake'::character varying, 'eligibility_check'::character varying, 'eligibility_failed'::character varying, 'pending_auth'::character varying, 'auth_approved'::character varying, 'auth_denied'::character varying, 'documents_pending'::character varying, 'physician_signature'::character varying, 'ready_to_submit'::character varying, 'submitted'::character varying, 'pending_payment'::character varying, 'partial_payment'::character varying, 'denied'::character varying, 'appeal_pending'::character varying, 'appeal_submitted'::character varying, 'paid'::character varying, 'closed'::character varying, 'cancelled'::character varying]::text[]))
+    "orders_vertical_check" CHECK (vertical::text = ANY (ARRAY['dme'::character varying, 'biologics'::character varying, 'mobility'::character varying]::text[]))
+Foreign-key constraints:
+    "orders_assigned_rep_id_fkey" FOREIGN KEY (assigned_rep_id) REFERENCES users(id)
+    "orders_assigned_to_fkey" FOREIGN KEY (assigned_to) REFERENCES users(id)
+    "orders_org_id_fkey" FOREIGN KEY (org_id) REFERENCES organizations(id)
+    "orders_patient_id_fkey" FOREIGN KEY (patient_id) REFERENCES patients(id)
+    "orders_physician_id_fkey" FOREIGN KEY (physician_id) REFERENCES physicians(id)
+Referenced by:
+    TABLE "appeals" CONSTRAINT "appeals_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+    TABLE "auth_requests" CONSTRAINT "auth_requests_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+    TABLE "claim_submissions" CONSTRAINT "claim_submissions_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+    TABLE "cmn_tracker" CONSTRAINT "cmn_tracker_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+    TABLE "communications_messages" CONSTRAINT "communications_messages_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+    TABLE "denials" CONSTRAINT "denials_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+    TABLE "eligibility_checks" CONSTRAINT "eligibility_checks_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+    TABLE "eob_claims" CONSTRAINT "eob_claims_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+    TABLE "notifications" CONSTRAINT "notifications_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+    TABLE "order_diagnoses" CONSTRAINT "order_diagnoses_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    TABLE "order_documents" CONSTRAINT "order_documents_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    TABLE "order_line_items" CONSTRAINT "order_line_items_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    TABLE "payment_outcomes" CONSTRAINT "payment_outcomes_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+    TABLE "shipments" CONSTRAINT "shipments_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+Access method: heap
+
+                                                                                                          Table "public.eob_claims"
+            Column            |           Type           | Collation | Nullable |                                               Default                                                | Storage  | Compression | Stats target | Description 
+------------------------------+--------------------------+-----------+----------+------------------------------------------------------------------------------------------------------+----------+-------------+--------------+-------------
+ id                           | uuid                     |           | not null | gen_random_uuid()                                                                                    | plain    |             |              | 
+ org_id                       | uuid                     |           |          |                                                                                                      | plain    |             |              | 
+ claim_number                 | character varying(100)   |           | not null |                                                                                                      | extended |             |              | 
+ order_id                     | uuid                     |           |          |                                                                                                      | plain    |             |              | 
+ patient_name                 | character varying(255)   |           |          |                                                                                                      | extended |             |              | 
+ patient_dob                  | date                     |           |          |                                                                                                      | plain    |             |              | 
+ member_id                    | character varying(100)   |           |          |                                                                                                      | extended |             |              | 
+ payer_name                   | character varying(255)   |           |          |                                                                                                      | extended |             |              | 
+ payer_id                     | character varying(50)    |           |          |                                                                                                      | extended |             |              | 
+ provider_npi                 | character varying(20)    |           |          |                                                                                                      | extended |             |              | 
+ date_of_service              | date                     |           |          |                                                                                                      | plain    |             |              | 
+ date_of_remittance           | date                     |           |          |                                                                                                      | plain    |             |              | 
+ total_billed                 | numeric(12,2)            |           |          |                                                                                                      | main     |             |              | 
+ total_allowed                | numeric(12,2)            |           |          |                                                                                                      | main     |             |              | 
+ total_paid                   | numeric(12,2)            |           |          |                                                                                                      | main     |             |              | 
+ total_patient_responsibility | numeric(12,2)            |           |          |                                                                                                      | main     |             |              | 
+ balance_due                  | numeric(12,2)            |           |          | generated always as ((COALESCE(total_billed, 0::numeric) - COALESCE(total_paid, 0::numeric))) stored | main     |             |              | 
+ claim_status                 | character varying(50)    |           |          |                                                                                                      | extended |             |              | 
+ denial_reason                | text                     |           |          |                                                                                                      | extended |             |              | 
+ carc_code                    | character varying(20)    |           |          |                                                                                                      | extended |             |              | 
+ rarc_code                    | character varying(20)    |           |          |                                                                                                      | extended |             |              | 
+ denial_category              | character varying(50)    |           |          |                                                                                                      | extended |             |              | 
+ suggested_action             | character varying(100)   |           |          |                                                                                                      | extended |             |              | 
+ is_appealable                | boolean                  |           |          | true                                                                                                 | plain    |             |              | 
+ appeal_deadline              | date                     |           |          |                                                                                                      | plain    |             |              | 
+ raw_source                   | text                     |           |          |                                                                                                      | extended |             |              | 
+ ingest_batch_id              | character varying(100)   |           |          |                                                                                                      | extended |             |              | 
+ created_at                   | timestamp with time zone |           |          | now()                                                                                                | plain    |             |              | 
+ updated_at                   | timestamp with time zone |           |          | now()                                                                                                | plain    |             |              | 
+Indexes:
+    "eob_claims_pkey" PRIMARY KEY, btree (id)
+    "eob_claims_claim_number_key" UNIQUE CONSTRAINT, btree (claim_number)
+    "idx_eob_payer" btree (payer_id)
+    "idx_eob_status" btree (claim_status)
+Foreign-key constraints:
+    "eob_claims_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+Referenced by:
+    TABLE "denials" CONSTRAINT "denials_claim_id_fkey" FOREIGN KEY (claim_id) REFERENCES eob_claims(id)
+    TABLE "eob_line_items" CONSTRAINT "eob_line_items_claim_id_fkey" FOREIGN KEY (claim_id) REFERENCES eob_claims(id) ON DELETE CASCADE
+    TABLE "eob_worklist" CONSTRAINT "eob_worklist_claim_id_fkey" FOREIGN KEY (claim_id) REFERENCES eob_claims(id)
+Access method: heap
+
+                                                                Table "public.denials"
+       Column       |           Type           | Collation | Nullable |         Default          | Storage  | Compression | Stats target | Description 
+--------------------+--------------------------+-----------+----------+--------------------------+----------+-------------+--------------+-------------
+ id                 | uuid                     |           | not null | gen_random_uuid()        | plain    |             |              | 
+ order_id           | uuid                     |           |          |                          | plain    |             |              | 
+ org_id             | uuid                     |           | not null |                          | plain    |             |              | 
+ claim_id           | uuid                     |           |          |                          | plain    |             |              | 
+ payer_id           | character varying(50)    |           |          |                          | extended |             |              | 
+ payer_name         | character varying(200)   |           |          |                          | extended |             |              | 
+ carc_code          | character varying(20)    |           |          |                          | extended |             |              | 
+ rarc_code          | character varying(20)    |           |          |                          | extended |             |              | 
+ denial_category    | character varying(50)    |           |          |                          | extended |             |              | 
+ denial_reason      | text                     |           |          |                          | extended |             |              | 
+ billed_amount      | numeric(10,2)            |           |          |                          | main     |             |              | 
+ denied_amount      | numeric(12,2)            |           |          |                          | main     |             |              | 
+ denial_date        | date                     |           |          |                          | plain    |             |              | 
+ payer_claim_number | text                     |           |          |                          | extended |             |              | 
+ appeal_deadline    | date                     |           |          |                          | plain    |             |              | 
+ status             | character varying(30)    |           |          | 'new'::character varying | extended |             |              | 
+ appeal_status      | text                     |           |          | 'pending'::text          | extended |             |              | 
+ assigned_to        | uuid                     |           |          |                          | plain    |             |              | 
+ notes              | text                     |           |          |                          | extended |             |              | 
+ created_by         | uuid                     |           |          |                          | plain    |             |              | 
+ created_at         | timestamp with time zone |           |          | now()                    | plain    |             |              | 
+Indexes:
+    "denials_pkey" PRIMARY KEY, btree (id)
+    "idx_denials_status" btree (status, appeal_deadline)
+Foreign-key constraints:
+    "denials_assigned_to_fkey" FOREIGN KEY (assigned_to) REFERENCES users(id)
+    "denials_claim_id_fkey" FOREIGN KEY (claim_id) REFERENCES eob_claims(id)
+    "denials_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+Referenced by:
+    TABLE "appeals" CONSTRAINT "appeals_denial_id_fkey" FOREIGN KEY (denial_id) REFERENCES denials(id)
+Access method: heap
+
+                                                                                    Table "public.patients"
+     Column      |           Type           | Collation | Nullable |      Default      | Storage  | Compression | Stats target |                          Description                           
+-----------------+--------------------------+-----------+----------+-------------------+----------+-------------+--------------+----------------------------------------------------------------
+ id              | uuid                     |           | not null | gen_random_uuid() | plain    |             |              | 
+ org_id          | uuid                     |           | not null |                   | plain    |             |              | 
+ mrn             | character varying(50)    |           |          |                   | extended |             |              | 
+ first_name      | character varying(255)   |           | not null |                   | extended |             |              | 
+ last_name       | character varying(255)   |           | not null |                   | extended |             |              | 
+ date_of_birth   | date                     |           |          |                   | plain    |             |              | 
+ dob             | date                     |           |          |                   | plain    |             |              | 
+ gender          | character varying(20)    |           |          |                   | extended |             |              | 
+ ssn_last4       | character varying(4)     |           |          |                   | extended |             |              | 
+ phone           | character varying(30)    |           |          |                   | extended |             |              | 
+ email           | character varying(255)   |           |          |                   | extended |             |              | 
+ address_line1   | character varying(500)   |           |          |                   | extended |             |              | 
+ address_line2   | character varying(255)   |           |          |                   | extended |             |              | 
+ city            | character varying(255)   |           |          |                   | extended |             |              | 
+ state           | character varying(10)    |           |          |                   | extended |             |              | 
+ zip_code        | character varying(20)    |           |          |                   | extended |             |              | 
+ territory_id    | character varying(100)   |           |          |                   | extended |             |              | 
+ insurance_id    | text                     |           |          |                   | extended |             |              | 
+ payer_id        | text                     |           |          |                   | extended |             |              | 
+ diagnosis_codes | jsonb                    |           |          | '[]'::jsonb       | extended |             |              | 
+ address         | jsonb                    |           |          | '{}'::jsonb       | extended |             |              | 
+ active          | boolean                  |           |          | true              | plain    |             |              | 
+ created_by      | uuid                     |           |          |                   | plain    |             |              | 
+ created_at      | timestamp with time zone |           |          | now()             | plain    |             |              | 
+ updated_at      | timestamp with time zone |           |          | now()             | plain    |             |              | 
+ next_of_kin     | jsonb                    |           |          | '{}'::jsonb       | extended |             |              | e.g. {"name","relationship","phone","email"}
+ drivers_license | jsonb                    |           |          | '{}'::jsonb       | extended |             |              | e.g. {"storage_bucket","storage_key","file_name"} for ID image
+Indexes:
+    "patients_pkey" PRIMARY KEY, btree (id)
+    "idx_patient_identity" btree (org_id, lower(first_name::text), lower(last_name::text), date_of_birth)
+    "idx_patients_name" gin (to_tsvector('english'::regconfig, (COALESCE(first_name, ''::character varying)::text || ' '::text) || COALESCE(last_name, ''::character varying)::text))
+    "idx_patients_org" btree (org_id)
+    "patients_org_id_mrn_key" UNIQUE CONSTRAINT, btree (org_id, mrn)
+Foreign-key constraints:
+    "patients_org_id_fkey" FOREIGN KEY (org_id) REFERENCES organizations(id)
+Referenced by:
+    TABLE "cmn_tracker" CONSTRAINT "cmn_tracker_patient_id_fkey" FOREIGN KEY (patient_id) REFERENCES patients(id)
+    TABLE "eligibility_checks" CONSTRAINT "eligibility_checks_patient_id_fkey" FOREIGN KEY (patient_id) REFERENCES patients(id)
+    TABLE "orders" CONSTRAINT "orders_patient_id_fkey" FOREIGN KEY (patient_id) REFERENCES patients(id)
+    TABLE "patient_insurances" CONSTRAINT "patient_insurances_patient_id_fkey" FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
+    TABLE "patient_notes" CONSTRAINT "patient_notes_patient_id_fkey" FOREIGN KEY (patient_id) REFERENCES patients(id)
+Access method: heap
+
+                                                         Table "public.physicians"
+    Column     |           Type           | Collation | Nullable |      Default      | Storage  | Compression | Stats target | Description 
+---------------+--------------------------+-----------+----------+-------------------+----------+-------------+--------------+-------------
+ id            | uuid                     |           | not null | gen_random_uuid() | plain    |             |              | 
+ npi           | character varying(20)    |           |          |                   | extended |             |              | 
+ first_name    | character varying(100)   |           |          |                   | extended |             |              | 
+ last_name     | character varying(100)   |           |          |                   | extended |             |              | 
+ specialty     | character varying(255)   |           |          |                   | extended |             |              | 
+ phone         | character varying(30)    |           |          |                   | extended |             |              | 
+ fax           | character varying(30)    |           |          |                   | extended |             |              | 
+ facility_name | character varying(500)   |           |          |                   | extended |             |              | 
+ address       | jsonb                    |           |          |                   | extended |             |              | 
+ org_id        | uuid                     |           |          |                   | plain    |             |              | 
+ is_active     | boolean                  |           |          | true              | plain    |             |              | 
+ active        | boolean                  |           |          | true              | plain    |             |              | 
+ created_at    | timestamp with time zone |           |          | now()             | plain    |             |              | 
+Indexes:
+    "physicians_pkey" PRIMARY KEY, btree (id)
+    "physicians_npi_key" UNIQUE CONSTRAINT, btree (npi)
+Referenced by:
+    TABLE "orders" CONSTRAINT "orders_physician_id_fkey" FOREIGN KEY (physician_id) REFERENCES physicians(id)
+Access method: heap
+

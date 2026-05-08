@@ -1,0 +1,4 @@
+ denial_reason | cnt 
+---------------+-----
+(0 rows)
+

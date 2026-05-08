@@ -1,0 +1,4 @@
+ id | status | submission_method | clearinghouse | x12_chars | submitted_at 
+----+--------+-------------------+---------------+-----------+--------------
+(0 rows)
+

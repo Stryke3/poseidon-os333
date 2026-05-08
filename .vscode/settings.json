@@ -1,3 +1,4 @@
 {
-  "workbench.panel.defaultLocation": "right"
+  "workbench.panel.defaultLocation": "right",
+  "diffEditor.renderSideBySide": true
 }

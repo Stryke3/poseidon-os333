@@ -1,0 +1,328 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  background: #030303;
+  color: #f6f3ed;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  overflow-x: hidden;
+  background: #030303;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.vault-page {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 48%, rgba(255, 104, 24, .18), transparent 30%),
+    radial-gradient(circle at 50% 8%, rgba(255, 255, 255, .075), transparent 24%),
+    linear-gradient(135deg, rgba(255, 255, 255, .035) 0 1px, transparent 1px 22px),
+    linear-gradient(90deg, rgba(255, 255, 255, .035) 0 1px, transparent 1px 96px),
+    linear-gradient(180deg, #080807 0%, #020202 58%, #090502 100%);
+}
+
+.vault-page::before {
+  position: fixed;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, .055) 0 1px, transparent 1px 3px),
+    radial-gradient(circle at 26% 62%, rgba(255, 120, 22, .11), transparent 24%);
+  mix-blend-mode: screen;
+  opacity: .25;
+}
+
+.vault-page::after {
+  position: fixed;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, .08);
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, .88);
+}
+
+.flash-denied::after {
+  background: rgba(255, 0, 0, .24);
+  box-shadow: inset 0 0 180px rgba(255, 0, 0, .82);
+  animation: denied .26s steps(2) both;
+}
+
+.vertical-stream {
+  position: fixed;
+  z-index: 20;
+  max-height: 92vh;
+  writing-mode: vertical-rl;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: rgba(255, 170, 76, .68);
+  text-shadow: 0 0 14px rgba(255, 93, 0, .65);
+  pointer-events: none;
+}
+
+.intel-panel {
+  position: relative;
+  min-height: 225px;
+  padding: 14px;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, .075), rgba(255, 255, 255, .018)),
+    rgba(5, 5, 5, .82);
+  border: 1px solid rgba(255, 255, 255, .16);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 111, 25, .12),
+    0 20px 60px rgba(0, 0, 0, .48);
+}
+
+.intel-panel::before,
+.center-stage::before {
+  position: absolute;
+  inset: 8px;
+  content: "";
+  pointer-events: none;
+  border: 1px solid rgba(255, 118, 28, .2);
+}
+
+.center-stage {
+  position: relative;
+  display: flex;
+  min-height: 610px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .012)),
+    rgba(0, 0, 0, .58);
+  border: 1px solid rgba(255, 255, 255, .15);
+  box-shadow: inset 0 0 42px rgba(255, 97, 12, .08), 0 0 96px rgba(255, 88, 0, .12);
+}
+
+.vault-core {
+  position: relative;
+  width: min(100%, 620px);
+  aspect-ratio: 1.18 / 1;
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 0 38px rgba(255, 88, 0, .25));
+}
+
+.vault-rail,
+.vault-clamp,
+.vault-bolt {
+  position: absolute;
+  background: linear-gradient(180deg, #1b1a18, #050505);
+  border: 1px solid rgba(255, 255, 255, .18);
+  box-shadow: inset 0 0 16px rgba(255, 255, 255, .06), 0 0 26px rgba(255, 91, 0, .16);
+}
+
+.vault-rail {
+  left: 14%;
+  width: 72%;
+  height: 10%;
+}
+
+.vault-rail-top {
+  top: 13%;
+}
+
+.vault-rail-bottom {
+  bottom: 13%;
+}
+
+.vault-clamp {
+  top: 26%;
+  width: 13%;
+  height: 48%;
+}
+
+.vault-clamp-left {
+  left: 4%;
+  clip-path: polygon(0 0, 100% 12%, 100% 88%, 0 100%);
+}
+
+.vault-clamp-right {
+  right: 4%;
+  clip-path: polygon(0 12%, 100% 0, 100% 100%, 0 88%);
+}
+
+.vault-bolt {
+  width: 11%;
+  height: 11%;
+  transform: rotate(45deg);
+}
+
+.vault-bolt-left-top {
+  left: 17%;
+  top: 21%;
+}
+
+.vault-bolt-right-top {
+  right: 17%;
+  top: 21%;
+}
+
+.vault-bolt-left-bottom {
+  left: 17%;
+  bottom: 21%;
+}
+
+.vault-bolt-right-bottom {
+  right: 17%;
+  bottom: 21%;
+}
+
+.vault-dial {
+  position: absolute;
+  width: 68%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    conic-gradient(from 15deg, rgba(255, 126, 24, .5), transparent 14%, rgba(255, 255, 255, .12) 16%, transparent 32%, rgba(255, 88, 0, .58), transparent 62%, rgba(255, 255, 255, .14), transparent 84%),
+    radial-gradient(circle, #171411 0 47%, #050505 48% 100%);
+  border: 1px solid rgba(255, 255, 255, .16);
+  box-shadow: inset 0 0 46px rgba(0, 0, 0, .78), 0 0 70px rgba(255, 78, 0, .2);
+}
+
+.vault-dial-inner {
+  position: absolute;
+  inset: 14%;
+  border-radius: 50%;
+  border: 1px dashed rgba(255, 207, 156, .32);
+  box-shadow: inset 0 0 32px rgba(255, 91, 0, .12);
+}
+
+.vault-window {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  width: 72%;
+  min-height: 118px;
+  place-items: center;
+  overflow: hidden;
+  padding: 20px;
+  background:
+    linear-gradient(90deg, rgba(255, 86, 0, .22), rgba(255, 173, 54, .35), rgba(255, 78, 0, .22)),
+    #100805;
+  border: 1px solid rgba(255, 225, 185, .84);
+  box-shadow:
+    0 0 22px rgba(255, 128, 22, .75),
+    0 0 86px rgba(255, 79, 0, .46),
+    inset 0 0 42px rgba(255, 117, 24, .36);
+}
+
+.vault-window span {
+  font-family: "JetBrains Mono", monospace;
+  font-size: clamp(.9rem, 2vw, 1.45rem);
+  font-weight: 700;
+  letter-spacing: .22em;
+  text-align: center;
+  text-transform: uppercase;
+  color: #fff8e8;
+  text-shadow: 0 0 16px rgba(255, 255, 255, .65), 0 0 26px rgba(255, 93, 0, .92);
+}
+
+.scanline {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 0 44%, rgba(255, 255, 255, .38), transparent 56% 100%);
+  animation: scan 2.8s linear infinite;
+}
+
+.vault-unlocked .vault-window {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, .24), rgba(255, 172, 55, .62), rgba(255, 255, 255, .2)),
+    #1a0c03;
+}
+
+.command-shell {
+  display: flex;
+  width: min(100%, 620px);
+  align-items: center;
+  gap: 10px;
+  padding: 15px 16px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  background: rgba(0, 0, 0, .78);
+  box-shadow: inset 0 0 24px rgba(255, 110, 22, .1), 0 0 36px rgba(255, 93, 0, .14);
+  font-family: "JetBrains Mono", monospace;
+}
+
+.svg-mono {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: .08em;
+}
+
+.muted {
+  fill: rgba(255, 255, 255, .65);
+}
+
+@keyframes denied {
+  0% {
+    opacity: 0;
+  }
+  35%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes scan {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@media (max-width: 1023px) {
+  .center-stage {
+    order: -1;
+    min-height: 520px;
+  }
+}
+
+@media (max-width: 640px) {
+  .vertical-stream {
+    display: none;
+  }
+
+  .center-stage {
+    min-height: 430px;
+    padding: 18px;
+  }
+
+  .vault-window {
+    min-height: 88px;
+  }
+
+  .command-shell {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

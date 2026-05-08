@@ -1,334 +1,353 @@
-'use client';
+import Link from "next/link"
+import {
+  Activity,
+  ArrowRight,
+  Baby,
+  Bone,
+  BrainCircuit,
+  CheckCircle2,
+  ClipboardCheck,
+  Database,
+  FileCheck2,
+  HeartPulse,
+  Lock,
+  Network,
+  Orbit,
+  ShieldCheck,
+  Stethoscope,
+  Truck,
+  UserRoundCheck,
+  Waves,
+  Workflow,
+} from "lucide-react"
 
-import { useState, useEffect } from 'react';
-import { Menu, X, Check, Activity, Shield, Package, Truck, FileText } from 'lucide-react';
+const workflowNodes = [
+  { label: "Clinical Trigger", detail: "Case signal captured", icon: Activity },
+  { label: "Eligibility", detail: "Coverage verified", icon: ShieldCheck },
+  { label: "Documentation", detail: "Record assembled", icon: FileCheck2 },
+  { label: "Fulfillment", detail: "Pathway executed", icon: Truck },
+  { label: "POD", detail: "Delivery proof locked", icon: ClipboardCheck },
+  { label: "Billing Packet", detail: "Revenue-ready file", icon: CheckCircle2 },
+]
+
+const pathwayCards = [
+  { title: "Surgical", icon: Stethoscope, copy: "Procedure-adjacent recovery coordination with documentation controls." },
+  { title: "Orthopedic", icon: Bone, copy: "Brace, mobility, and recovery pathways organized around medical necessity." },
+  { title: "Maternal", icon: Baby, copy: "Continuity infrastructure for perinatal and postpartum support pathways." },
+  { title: "Mobility", icon: Orbit, copy: "Patient movement, device readiness, and fulfillment visibility in one record." },
+  { title: "Wound", icon: HeartPulse, copy: "Document-heavy pathways governed by payer logic and supply continuity." },
+  { title: "Post-Acute", icon: Waves, copy: "Recovery transitions coordinated beyond the visit and into the home." },
+]
+
+const providerBullets = [
+  "Less staff drag",
+  "Cleaner documentation",
+  "Patient continuity",
+  "Fulfillment visibility",
+]
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-5 inline-flex items-center gap-2 border border-blue-500/25 bg-blue-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-blue-400 shadow-[0_0_30px_rgba(59,130,246,0.12)] backdrop-blur">
+      <span className="h-1.5 w-1.5 rounded-full bg-blue-400 shadow-[0_0_16px_rgba(96,165,250,0.95)]" />
+      {children}
+    </div>
+  )
+}
+
+function GlassPanel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`border border-white/10 bg-slate-950/45 shadow-2xl shadow-black/40 backdrop-blur-xl ${className}`}>
+      {children}
+    </div>
+  )
+}
+
+function WorkflowStrip() {
+  return (
+    <section id="workflow" className="relative border-y border-white/10 bg-[#06101d]/80 px-4 py-14 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+          <div>
+            <SectionLabel>Pipeline Control</SectionLabel>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-100 sm:text-4xl">
+              The pathway moves as one controlled system.
+            </h2>
+          </div>
+          <p className="max-w-xl text-sm leading-6 text-slate-400">
+            Every handoff is visible. Every document has a place. Every billing packet inherits the record that came before it.
+          </p>
+        </div>
+
+        <GlassPanel className="overflow-hidden rounded-sm p-4 sm:p-6">
+          <div className="grid gap-4 lg:grid-cols-6 lg:gap-0">
+            {workflowNodes.map((node, index) => {
+              const Icon = node.icon
+              return (
+                <div key={node.label} className="relative">
+                  {index < workflowNodes.length - 1 ? (
+                    <div className="absolute left-[calc(50%+34px)] top-8 hidden h-px w-[calc(100%-68px)] bg-gradient-to-r from-blue-500/80 via-blue-500/25 to-transparent lg:block" />
+                  ) : null}
+                  <div className="group relative flex h-full flex-col border border-white/10 bg-[#0B1829]/75 p-4 transition duration-300 hover:border-blue-500/40 hover:bg-blue-500/[0.07] hover:shadow-[0_0_35px_rgba(43,111,212,0.16)]">
+                    <div className="mb-5 flex h-16 w-16 items-center justify-center border border-blue-500/30 bg-blue-500/10">
+                      <Icon className="h-6 w-6 text-blue-400" strokeWidth={1.5} />
+                    </div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-blue-400">
+                      0{index + 1}
+                    </div>
+                    <h3 className="mt-2 text-base font-semibold text-slate-100">{node.label}</h3>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">{node.detail}</p>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </GlassPanel>
+      </div>
+    </section>
+  )
+}
+
+function EngineSection() {
+  return (
+    <section id="engine" className="relative px-4 py-24 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-10 max-w-3xl">
+          <SectionLabel>Intelligence Engine</SectionLabel>
+          <h2 className="text-3xl font-semibold tracking-tight text-slate-100 sm:text-5xl">
+            Poseidon preserves the record. Trident finds the gaps.
+          </h2>
+        </div>
+
+        <div className="grid gap-5 lg:grid-cols-2">
+          <GlassPanel className="relative overflow-hidden rounded-sm p-8">
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent" />
+            <div className="mb-8 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center border border-blue-500/30 bg-blue-500/10">
+                  <Database className="h-6 w-6 text-blue-400" strokeWidth={1.5} />
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-blue-400">Poseidon OS</p>
+                  <h3 className="text-2xl font-semibold text-slate-100">Workflow Orchestration</h3>
+                </div>
+              </div>
+              <Lock className="h-5 w-5 text-slate-500" strokeWidth={1.5} />
+            </div>
+            <p className="text-sm leading-7 text-slate-400">
+              Intake, routing, fulfillment tracking, proof-of-delivery, billing readiness, and operational lineage live inside one controlled pathway record.
+            </p>
+            <div className="mt-8 grid gap-3 sm:grid-cols-3">
+              {["Intake", "Routing", "Fulfillment"].map((item) => (
+                <div key={item} className="border border-white/10 bg-white/[0.03] p-4">
+                  <div className="mb-3 h-px w-10 bg-blue-500" />
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">{item}</p>
+                </div>
+              ))}
+            </div>
+          </GlassPanel>
+
+          <GlassPanel className="relative overflow-hidden rounded-sm p-8">
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent" />
+            <div className="mb-8 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center border border-blue-500/30 bg-blue-500/10">
+                  <BrainCircuit className="h-6 w-6 text-blue-400" strokeWidth={1.5} />
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-blue-400">Trident AI</p>
+                  <h3 className="text-2xl font-semibold text-slate-100">Documentation Intelligence</h3>
+                </div>
+              </div>
+              <Network className="h-5 w-5 text-slate-500" strokeWidth={1.5} />
+            </div>
+            <p className="text-sm leading-7 text-slate-400">
+              Payer rules, compliance signals, missing-document detection, and reimbursement readiness are reviewed before the pathway reaches billing.
+            </p>
+            <div className="mt-8 space-y-3">
+              {["Payer rule scan", "Clinical document gap check", "Revenue packet readiness"].map((item) => (
+                <div key={item} className="flex items-center justify-between border border-white/10 bg-white/[0.03] px-4 py-3">
+                  <span className="text-sm text-slate-300">{item}</span>
+                  <span className="text-[10px] uppercase tracking-[0.2em] text-blue-400">active</span>
+                </div>
+              ))}
+            </div>
+          </GlassPanel>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function PathwayCard({ title, copy, icon: Icon }: { title: string; copy: string; icon: typeof Activity }) {
+  return (
+    <div className="group relative overflow-hidden border border-white/10 bg-[#0B1829]/70 p-6 backdrop-blur transition duration-300 hover:-translate-y-1 hover:border-blue-500/40 hover:shadow-[0_0_45px_rgba(43,111,212,0.18)]">
+      <div className="absolute inset-x-0 top-0 h-px origin-left scale-x-0 bg-blue-500 transition duration-300 group-hover:scale-x-100" />
+      <div className="mb-8 flex h-12 w-12 items-center justify-center border border-blue-500/25 bg-blue-500/10">
+        <Icon className="h-6 w-6 text-blue-400" strokeWidth={1.5} />
+      </div>
+      <h3 className="text-xl font-semibold tracking-tight text-slate-100">{title}</h3>
+      <p className="mt-4 text-sm leading-6 text-slate-500">{copy}</p>
+    </div>
+  )
+}
+
+function PathwaysSection() {
+  return (
+    <section id="pathways" className="relative border-y border-white/10 bg-[#06101d]/85 px-4 py-24 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-12 grid gap-8 lg:grid-cols-[0.85fr_1.15fr] lg:items-end">
+          <div>
+            <SectionLabel>Owned Pathways</SectionLabel>
+            <h2 className="text-3xl font-semibold tracking-tight text-slate-100 sm:text-5xl">
+              We do not think in product categories.
+            </h2>
+          </div>
+          <p className="text-lg leading-8 text-slate-400">
+            We think in pathways. The product mix changes. The pathway logic does not.
+          </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {pathwayCards.map((card) => (
+            <PathwayCard key={card.title} {...card} />
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function ProviderClose() {
+  return (
+    <section id="providers" className="relative px-4 py-24 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl">
+        <GlassPanel className="relative overflow-hidden rounded-sm p-8 sm:p-12 lg:p-16">
+          <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full border border-blue-500/20" />
+          <div className="relative grid gap-10 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
+            <div>
+              <SectionLabel>Provider Alignment</SectionLabel>
+              <h2 className="max-w-3xl text-4xl font-semibold tracking-tight text-slate-100 sm:text-6xl">
+                Your staff focuses on patients. We own the pathway.
+              </h2>
+              <p className="mt-6 max-w-2xl text-base leading-7 text-slate-400">
+                CarePath absorbs the operational drag between clinical need and billing-ready documentation, preserving continuity without turning your team into a fulfillment desk.
+              </p>
+            </div>
+
+            <div className="grid gap-3">
+              {providerBullets.map((item) => (
+                <div key={item} className="flex items-center gap-3 border border-white/10 bg-white/[0.03] px-4 py-4">
+                  <CheckCircle2 className="h-5 w-5 text-blue-400" strokeWidth={1.5} />
+                  <span className="text-sm font-medium text-slate-200">{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </GlassPanel>
+      </div>
+    </section>
+  )
+}
+
+function Hero() {
+  return (
+    <section className="relative min-h-screen overflow-hidden px-4 pb-20 pt-6 sm:px-6 lg:px-8">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(43,111,212,0.18),transparent_32%),linear-gradient(180deg,#020713_0%,#07111F_45%,#030712_100%)]" />
+      <div className="absolute inset-0 opacity-[0.22] [background-image:linear-gradient(rgba(148,163,184,0.14)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.14)_1px,transparent_1px)] [background-size:28px_28px]" />
+      <div className="absolute left-0 right-0 top-32 h-px bg-gradient-to-r from-transparent via-blue-500/40 to-transparent" />
+
+      <div className="relative z-10 mx-auto max-w-7xl">
+        <nav className="flex items-center justify-between border border-white/10 bg-slate-950/35 px-4 py-3 backdrop-blur-xl">
+          <Link href="/" className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center border border-blue-500/30 bg-blue-500/10">
+              <Workflow className="h-5 w-5 text-blue-400" strokeWidth={1.5} />
+            </div>
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-100">StrykeFox</p>
+              <p className="text-[10px] uppercase tracking-[0.22em] text-blue-400">CarePath</p>
+            </div>
+          </Link>
+          <div className="hidden items-center gap-8 text-xs uppercase tracking-[0.18em] text-slate-400 md:flex">
+            <a href="#workflow" className="transition hover:text-blue-400">Workflow</a>
+            <a href="#engine" className="transition hover:text-blue-400">Poseidon</a>
+            <a href="#pathways" className="transition hover:text-blue-400">Pathways</a>
+          </div>
+          <Link href="/login" className="border border-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-300 transition hover:border-blue-500/40 hover:text-white">
+            Login
+          </Link>
+        </nav>
+
+        <div className="grid min-h-[calc(100vh-100px)] items-center gap-12 py-16 lg:grid-cols-[1fr_520px]">
+          <div>
+            <SectionLabel>Elite Care-Pathway Infrastructure</SectionLabel>
+            <h1 className="text-[17vw] font-black uppercase leading-[0.78] tracking-[-0.09em] text-slate-100 sm:text-[132px] lg:text-[160px]">
+              CAREPATH
+            </h1>
+            <p className="mt-8 text-3xl font-semibold tracking-tight text-blue-400 sm:text-5xl">
+              Verify. Document. Deliver.
+            </p>
+            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-400">
+              The care-pathway infrastructure layer for modern healthcare recovery coordination. Not a product catalog. An operating system.
+            </p>
+            <div className="mt-10 flex flex-col gap-3 sm:flex-row">
+              <a href="#providers" className="group inline-flex items-center justify-center gap-2 bg-blue-600 px-6 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-white shadow-[0_0_40px_rgba(37,99,235,0.35)] transition hover:bg-blue-500">
+                Partner With Us
+                <ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" />
+              </a>
+              <Link href="/login" className="inline-flex items-center justify-center border border-blue-500/30 bg-white/[0.02] px-6 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-200 backdrop-blur transition hover:border-blue-500/70 hover:bg-blue-500/10">
+                Provider Login
+              </Link>
+            </div>
+          </div>
+
+          <GlassPanel className="relative overflow-hidden rounded-sm p-5">
+            <div className="absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(43,111,212,0.16)_1px,transparent_1px),linear-gradient(90deg,rgba(43,111,212,0.16)_1px,transparent_1px)] [background-size:18px_18px]" />
+            <div className="relative">
+              <div className="mb-5 flex items-center justify-between border-b border-white/10 pb-4">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.24em] text-blue-400">Command Layer</p>
+                  <p className="mt-1 text-lg font-semibold text-slate-100">Pathway Control Plane</p>
+                </div>
+                <UserRoundCheck className="h-5 w-5 text-blue-400" strokeWidth={1.5} />
+              </div>
+              <div className="space-y-3">
+                {workflowNodes.slice(0, 5).map((node, index) => {
+                  const Icon = node.icon
+                  return (
+                    <div key={node.label} className="flex items-center gap-3 border border-white/10 bg-[#06101d]/80 p-3">
+                      <div className="flex h-10 w-10 items-center justify-center border border-blue-500/25 bg-blue-500/10">
+                        <Icon className="h-5 w-5 text-blue-400" strokeWidth={1.5} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="truncate text-sm font-medium text-slate-200">{node.label}</p>
+                          <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">0{index + 1}</span>
+                        </div>
+                        <div className="mt-2 h-1 overflow-hidden bg-white/5">
+                          <div className="h-full bg-blue-500" style={{ width: `${88 - index * 9}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </GlassPanel>
+        </div>
+      </div>
+    </section>
+  )
+}
 
 export default function HomePage() {
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [activeWorkflowStep, setActiveWorkflowStep] = useState(0);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setActiveWorkflowStep((prev) => (prev + 1) % 6);
-    }, 3000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const workflowSteps = [
-    { id: 'clinical', label: 'Clinical Trigger', icon: Activity, status: 'Pathway Initiated' },
-    { id: 'eligibility', label: 'Eligibility Verification', icon: Shield, status: 'Pathway Verified' },
-    { id: 'documentation', label: 'Documentation Generation', icon: FileText, status: 'Documentation Ready' },
-    { id: 'pathway', label: 'Product Pathway Selection', icon: Package, status: 'Product Selected' },
-    { id: 'fulfillment', label: 'Fulfillment Coordination', icon: Truck, status: 'Fulfillment Coordinated' },
-    { id: 'pod', label: 'POD Capture', icon: Check, status: 'POD Captured' },
-  ];
-
   return (
-    <div className="min-h-screen bg-spear-bg text-spear-ivory relative overflow-hidden">
-      <div className="fixed inset-0 opacity-10 pointer-events-none">
-        <div 
-          className="absolute inset-0" 
-          style={{
-            backgroundImage: 'linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px)',
-            backgroundSize: '50px 50px'
-          }} 
-        />
-      </div>
-
-      <nav className="fixed top-0 w-full glass-panel z-50">
-        <div className="max-w-7xl mx-auto px-6 lg:px-8">
-          <div className="flex items-center justify-between h-20">
-            <div className="flex items-center">
-              <div className="text-2xl font-bold tracking-tight text-spear-white">
-                STRYKE<span className="text-spear-gold">FOX</span>
-              </div>
-              <div className="ml-4 text-xs font-medium text-spear-muted uppercase tracking-wider">
-                CAREPATH
-              </div>
-            </div>
-
-            <div className="hidden lg:flex lg:items-center lg:space-x-10">
-              <a href="#carepath" className="nav-link-gloss text-sm font-medium">
-                CarePath
-              </a>
-              <a href="#workflow" className="nav-link-gloss text-sm font-medium">
-                Workflow
-              </a>
-              <a href="#providers" className="nav-link-gloss text-sm font-medium">
-                Providers
-              </a>
-              <a href="#platform" className="nav-link-gloss text-sm font-medium">
-                Poseidon + Trident
-              </a>
-              <a href="#lineage" className="nav-link-gloss text-sm font-medium">
-                Healthcare Lineage
-              </a>
-              <a href="#ecosystem" className="nav-link-gloss text-sm font-medium">
-                Ecosystem
-              </a>
-            </div>
-
-            <button 
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="lg:hidden p-2 text-spear-muted hover:text-spear-white"
-            >
-              <Menu className="w-6 h-6" />
-            </button>
-          </div>
-        </div>
-      </nav>
-
-      <section className="relative min-h-screen flex items-center justify-center bg-gradient-to-br from-spear-bg via-spear-bg-soft to-spear-bg">
-        <div className="absolute inset-0 bg-gradient-to-br from-spear-blue/5 via-transparent to-transparent opacity-50" />
-        
-        <div className="container mx-auto px-6 py-24 relative z-10">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
-            <div className="space-y-8">
-              <div className="text-xs font-mono text-spear-gold uppercase tracking-wider">
-                STRYKEFOX CAREPATH
-              </div>
-              
-              <h1 className="text-5xl lg:text-7xl font-bold text-spear-white mb-8 leading-tight tracking-tight">
-                Verified.<br />Documented.<br />Delivered.
-              </h1>
-              
-              <p className="text-lg lg:text-xl text-spear-muted mb-12 leading-relaxed">
-                Care-pathway infrastructure for modern healthcare recovery coordination.
-              </p>
-              
-              <p className="text-spear-muted mb-12 leading-relaxed">
-                StrykeFox CarePath helps provider teams coordinate medically necessary recovery products through eligibility verification, documentation control, fulfillment coordination, proof-of-delivery capture, and billing-ready packet generation.
-              </p>
-              
-              <div className="flex flex-col lg:flex-row gap-6 justify-start">
-                <a 
-                  href="#carepath" 
-                  className="btn-gloss"
-                >
-                  Partner With StrykeFox
-                </a>
-                <a 
-                  href="#workflow" 
-                  className="btn-ghost-gloss"
-                >
-                  See Workflow
-                </a>
-              </div>
-            </div>
-
-            <div className="relative">
-              <div className="glass-panel rounded-2xl p-8 shadow-2xl">
-                <div className="text-center mb-8">
-                  <div className="text-sm font-mono text-spear-gold uppercase tracking-wider mb-6">
-                    LIVE WORKFLOW STATUS
-                  </div>
-                  <h3 className="text-xl font-semibold text-spear-white mb-2">
-                    CarePath Coordination System
-                  </h3>
-                  <p className="text-spear-muted text-sm">
-                    Real-time pathway orchestration
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  {workflowSteps.map((step, index) => {
-                    const Icon = step.icon;
-                    const isActive = index === activeWorkflowStep;
-                    
-                    return (
-                      <div key={step.id} className="relative glass-panel rounded-xl p-4 transition-all duration-700">
-                        <div className="flex items-center space-x-4">
-                          <div className={`relative w-12 h-12 rounded-full flex items-center justify-center transition-all duration-700 ${
-                            isActive 
-                              ? 'bg-spear-blue shadow-lg shadow-spear-blue/40' 
-                              : 'bg-spear-panel'
-                          }`}>
-                            {isActive && (
-                              <div className="absolute inset-0 bg-spear-blue rounded-full animate-pulse opacity-20" />
-                            )}
-                            <Icon className={
-                              isActive ? 'w-6 h-6 text-spear-white transition-all duration-700' : 'w-6 h-6 text-spear-muted transition-all duration-700'
-                            } />
-                          </div>
-                          
-                          <div className="flex-1">
-                            <div className="flex items-center justify-between mb-1">
-                              <h4 className={`font-medium text-spear-white mb-1 transition-all duration-700 ${
-                                isActive ? 'text-spear-white' : 'text-spear-muted'
-                              }`}>
-                                {step.label}
-                              </h4>
-                              {isActive && (
-                                <div className="flex items-center space-x-2">
-                                  <div className="w-2 h-2 bg-spear-blue rounded-full animate-pulse" />
-                                  <span className="text-xs text-spear-blue font-mono">ACTIVE</span>
-                                </div>
-                              )}
-                            </div>
-                            <p className={`text-sm transition-all duration-700 ${
-                              isActive ? 'text-spear-muted' : 'text-spear-muted/60'
-                            }`}>
-                              {index === 0 && 'Clinical trigger detected and pathway initiated'}
-                              {index === 1 && 'Eligibility verification in progress with coverage validation'}
-                              {index === 2 && 'Documentation generation active with medical necessity establishment'}
-                              {index === 3 && 'Product pathway selection complete with fulfillment coordination'}
-                              {index === 4 && 'Fulfillment coordination started with delivery logistics management'}
-                              {index === 5 && 'Proof of delivery captured with patient receipt confirmation'}
-                            </p>
-                          </div>
-                        </div>
-                        
-                        {index < workflowSteps.length - 1 && (
-                          <div className="absolute left-16 top-12 w-0.5 h-16 -z-10">
-                            <div className={`w-full transition-all duration-700 ${
-                              isActive || index < activeWorkflowStep 
-                                ? 'bg-spear-blue/60' 
-                                : 'bg-spear-border'
-                            }`} />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="mt-8 glass-panel rounded-lg p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-mono text-spear-muted">PATHWAY PROGRESSION</span>
-                    <span className="text-sm font-mono text-spear-blue">
-                      {Math.round(((activeWorkflowStep + 1) / workflowSteps.length) * 100)}%
-                    </span>
-                  </div>
-                  <div className="w-full bg-spear-panel rounded-full h-2">
-                    <div 
-                      className="bg-spear-blue h-2 rounded-full transition-all duration-700"
-                      style={{ width: `${((activeWorkflowStep + 1) / workflowSteps.length) * 100}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section id="carepath" className="py-32 bg-gradient-to-b from-spear-bg to-spear-bg-soft">
-        <div className="container mx-auto px-6">
-          <div className="text-center mb-20">
-            <div className="text-sm font-mono text-spear-gold uppercase tracking-wider mb-8">
-              CARE-PATHWAY INFRASTRUCTURE
-            </div>
-            <h2 className="text-4xl lg:text-6xl font-bold text-spear-white mb-8 leading-tight">
-              Care-Pathway Infrastructure.
-            </h2>
-            <p className="text-xl text-spear-muted mb-16 max-w-4xl mx-auto leading-relaxed">
-              Different patients require different recovery pathways. CarePath coordinates the operational layer around clinical need: verification, documentation, fulfillment coordination, proof-of-delivery capture, and billing-ready packet preparation.
-            </p>
-          </div>
-          
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="glass-panel rounded-2xl p-8 hover:border-spear-blue/30 transition-all duration-700">
-              <div className="text-center mb-6">
-                <div className="w-16 h-16 bg-spear-blue/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <Shield className="w-8 h-8 text-spear-blue" />
-                </div>
-                <h3 className="text-xl font-semibold text-spear-white mb-4">
-                  Verification
-                </h3>
-                <p className="text-spear-muted mb-6">
-                  Clinical eligibility verification and documentation readiness assessment before pathway initiation.
-                </p>
-              </div>
-              <div className="space-y-3">
-                <div className="flex items-center">
-                  <div className="w-2 h-2 bg-spear-blue rounded-full flex-shrink-0" />
-                  <span className="ml-3 text-spear-muted text-sm">Eligibility Confirmed</span>
-                </div>
-                <div className="flex items-center">
-                  <div className="w-2 h-2 bg-spear-blue rounded-full flex-shrink-0" />
-                  <span className="ml-3 text-spear-muted text-sm">Documentation Ready</span>
-                </div>
-                <div className="flex items-center">
-                  <div className="w-2 h-2 bg-spear-blue rounded-full flex-shrink-0" />
-                  <span className="ml-3 text-spear-muted text-sm">Pathway Initiated</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="glass-panel rounded-2xl p-8 hover:border-spear-gold/30 transition-all duration-700">
-              <div className="text-center mb-6">
-                <div className="w-16 h-16 bg-spear-gold/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <Package className="w-8 h-8 text-spear-gold" />
-                </div>
-                <h3 className="text-xl font-semibold text-spear-white mb-4">
-                  Coordination
-                </h3>
-                <p className="text-spear-muted mb-6">
-                  Product pathway selection, fulfillment coordination, and delivery management across recovery continuum.
-                </p>
-              </div>
-              <div className="space-y-3">
-                <div className="flex items-center">
-                  <div className="w-2 h-2 bg-spear-gold rounded-full flex-shrink-0" />
-                  <span className="ml-3 text-spear-muted text-sm">Product Pathway Selected</span>
-                </div>
-                <div className="flex items-center">
-                  <div className="w-2 h-2 bg-spear-gold rounded-full flex-shrink-0" />
-                  <span className="ml-3 text-spear-muted text-sm">Fulfillment Coordinated</span>
-                </div>
-                <div className="flex items-center">
-                  <div className="w-2 h-2 bg-spear-gold rounded-full flex-shrink-0" />
-                  <span className="ml-3 text-spear-muted text-sm">Delivery Managed</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="glass-panel rounded-2xl p-8 hover:border-spear-muted/30 transition-all duration-700">
-              <div className="text-center mb-6">
-                <div className="w-16 h-16 bg-spear-muted/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <FileText className="w-8 h-8 text-spear-muted" />
-                </div>
-                <h3 className="text-xl font-semibold text-spear-white mb-4">
-                  Completion
-                </h3>
-                <p className="text-spear-muted mb-6">
-                  Proof-of-delivery capture and billing-ready packet generation for reimbursement submission.
-                </p>
-              </div>
-              <div className="space-y-3">
-                <div className="flex items-center">
-                  <div className="w-2 h-2 bg-spear-muted rounded-full flex-shrink-0" />
-                  <span className="ml-3 text-spear-muted text-sm">POD Captured</span>
-                </div>
-                <div className="flex items-center">
-                  <div className="w-2 h-2 bg-spear-muted rounded-full flex-shrink-0" />
-                  <span className="ml-3 text-spear-muted text-sm">Billing-Ready Packet</span>
-                </div>
-                <div className="flex items-center">
-                  <div className="w-2 h-2 bg-spear-muted rounded-full flex-shrink-0" />
-                  <span className="ml-3 text-spear-muted text-sm">Pathway Complete</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <footer className="bg-spear-bg border-t border-spear-border">
-        <div className="container mx-auto px-6 py-20">
-          <div className="text-center">
-            <h3 className="text-2xl font-bold text-spear-white mb-6">
-              StrykeFox CarePath
-            </h3>
-            <p className="text-spear-muted mb-8 leading-relaxed">
-              Precision infrastructure for regulated healthcare environments.
-            </p>
-            <div className="text-spear-muted/40 text-sm pt-8 border-t border-spear-border">
-              <p>&copy; 2026 Egeiro Holdings Co. All rights reserved.</p>
-            </div>
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
+    <main className="min-h-screen bg-[#030712] font-sans text-slate-200">
+      <Hero />
+      <WorkflowStrip />
+      <EngineSection />
+      <PathwaysSection />
+      <ProviderClose />
+    </main>
+  )
 }
