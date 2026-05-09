@@ -225,69 +225,46 @@ export default function HomePage() {
           <div className={cx(styles.platCard, styles.reveal, styles.d1)}>
             <div className={styles.platLogo}>
               <Image
-                src="/images/sfm-logo.jpeg"
-                alt="StrykeFox Medical"
-                width={160}
+                src="/images/platform-portfolio.svg"
+                alt="Platform Portfolio"
+                width={180}
                 height={38}
               />
             </div>
-            <p className={styles.platName}>StrykeFox Medical</p>
-            <p className={styles.platRole}>Operating Platform</p>
+            <p className={styles.platName}>Platform Portfolio</p>
+            <p className={styles.platRole}>Strategic Assets</p>
             <p className={styles.platDesc}>
-              Provider relationships, DME, biologics, implants, and billing. The
-              healthcare operations engine behind CarePath.
+              Comprehensive portfolio of healthcare platforms, technologies, and strategic assets designed for national scale and operational excellence.
             </p>
           </div>
           <div className={cx(styles.platCard, styles.reveal, styles.d2)}>
             <div className={styles.platLogo}>
               <Image
-                src="/images/nsi-logo.png"
-                alt="NorthStar Surgical Innovations"
+                src="/images/ctf-logo.svg"
+                alt="Candor Through Fire"
                 width={180}
                 height={38}
               />
             </div>
-            <p className={styles.platName}>NorthStar Surgical</p>
-            <p className={styles.platRole}>Clinical Innovation</p>
+            <p className={styles.platName}>Candor Through Fire</p>
+            <p className={styles.platRole}>Transformation Framework</p>
             <p className={styles.platDesc}>
-              3D-printed implants, Bluetooth surgical navigation, FDA-cleared
-              international devices, biologics, and physician training.
+              Radical transparency and proven methodologies for healthcare transformation. Building trust through measurable outcomes and uncompromising integrity.
             </p>
           </div>
           <div className={cx(styles.platCard, styles.reveal, styles.d3)}>
-            <div className={styles.platCode}>S13</div>
-            <p className={styles.platName}>SoC13</p>
-            <p className={styles.platRole}>Acquisition Vehicle</p>
+            <div className={styles.platLogo}>
+              <Image
+                src="/images/operating-framework.svg"
+                alt="Operating Framework"
+                width={180}
+                height={38}
+              />
+            </div>
+            <p className={styles.platName}>Operating Framework</p>
+            <p className={styles.platRole}>Execution Architecture</p>
             <p className={styles.platDesc}>
-              Strategic roll-up of ASCs, orthopedic practices, home health, PT/OT,
-              and wound clinics — integrated onto a single spine.
-            </p>
-          </div>
-          <div className={cx(styles.platCard, styles.reveal, styles.d4)}>
-            <div className={styles.platCode}>SPR</div>
-            <p className={styles.platName}>Spear</p>
-            <p className={styles.platRole}>Poseidon OS + Trident AI</p>
-            <p className={styles.platDesc}>
-              Workflow orchestration and documentation intelligence. The operating
-              system that runs underneath every CarePath pathway.
-            </p>
-          </div>
-          <div className={cx(styles.platCard, styles.reveal, styles.d5)}>
-            <div className={styles.platCode}>SNS</div>
-            <p className={styles.platName}>SENSARS</p>
-            <p className={styles.platRole}>FDA Breakthrough Device</p>
-            <p className={styles.platDesc}>
-              Neuroprosthetics advancing sensory feedback for prosthetic limb
-              users. Board-level participation by StrykeFox leadership.
-            </p>
-          </div>
-          <div className={cx(styles.platCard, styles.reveal, styles.d6)}>
-            <div className={styles.platCode}>EGR</div>
-            <p className={styles.platName}>Egeiro Holdings</p>
-            <p className={styles.platRole}>Institutional Parent</p>
-            <p className={styles.platDesc}>
-              The long-horizon holding architecture. Capital structure,
-              acquisition strategy, and enterprise map for the Healthcare Lineage.
+              Scalable operating systems, workflow orchestration, and performance frameworks that power modern healthcare delivery across all care settings.
             </p>
           </div>
         </div>

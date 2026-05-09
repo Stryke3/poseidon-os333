@@ -488,14 +488,19 @@
 }
 
 .platCard {
-  background: #070e1c;
+  background: linear-gradient(135deg, rgba(15, 31, 53, 0.95), rgba(10, 21, 37, 0.98));
   padding: 2.25rem 2rem;
-  transition: background 0.3s;
+  transition: all 0.3s ease;
   position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(16px);
 }
 
 .platCard:hover {
-  background: #0a1525;
+  background: linear-gradient(135deg, rgba(20, 38, 65, 0.98), rgba(15, 28, 48, 1));
+  transform: translateY(-2px);
+  border-color: rgba(6, 182, 212, 0.15);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
 .platCard::before {
@@ -504,24 +509,24 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, #2563eb, #06b6d4);
-  transform: scaleX(0);
-  transform-origin: left;
-  transition: transform 0.4s;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.3), transparent);
+  opacity: 0;
+  transition: opacity 0.4s ease;
 }
 
 .platCard:hover::before {
-  transform: scaleX(1);
+  opacity: 1;
 }
 
 .platCode {
   font-size: 2.5rem;
-  font-weight: 600;
-  color: rgba(6, 182, 212, 0.07);
+  font-weight: 700;
+  color: rgba(6, 182, 212, 0.12);
   line-height: 1;
   margin-bottom: 1.25rem;
   letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
 }
 
 .platLogo {
@@ -548,17 +553,17 @@
 
 .platRole {
   font-size: 0.52rem;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: #06b6d4;
+  color: rgba(6, 182, 212, 0.8);
   margin-bottom: 0.85rem;
 }
 
 .platDesc {
   font-size: 0.73rem;
   line-height: 1.75;
-  color: rgba(150, 180, 220, 0.45);
+  color: rgba(200, 220, 245, 0.55);
 }
 
 .founder {
