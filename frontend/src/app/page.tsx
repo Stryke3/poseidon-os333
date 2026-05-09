@@ -21,7 +21,7 @@ const lora = Lora({
 const mommyCareUrl =
   process.env.NEXT_PUBLIC_MOMMY_CARE_URL ||
   process.env.NEXT_PUBLIC_MOMMY_CARE_SUBDOMAIN ||
-  "https://mommy-care.strykefox.com"
+  "https://mommy-care-five.vercel.app"
 
 const physicianPortalUrl =
   process.env.NEXT_PUBLIC_PHYSICIAN_PORTAL_URL ||
@@ -210,7 +210,7 @@ export default function HomePage() {
               height={220}
             />
           </div>
-          <p className={styles.matSubdomain}>[MOMMY_CARE_SUBDOMAIN]</p>
+          <p className={styles.matSubdomain}>{mommyCareUrl}</p>
         </div>
       </section>
 
