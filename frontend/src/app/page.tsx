@@ -1,353 +1,385 @@
-import Link from "next/link"
-import {
-  Activity,
-  ArrowRight,
-  Baby,
-  Bone,
-  BrainCircuit,
-  CheckCircle2,
-  ClipboardCheck,
-  Database,
-  FileCheck2,
-  HeartPulse,
-  Lock,
-  Network,
-  Orbit,
-  ShieldCheck,
-  Stethoscope,
-  Truck,
-  UserRoundCheck,
-  Waves,
-  Workflow,
-} from "lucide-react"
+"use client"
 
-const workflowNodes = [
-  { label: "Clinical Trigger", detail: "Case signal captured", icon: Activity },
-  { label: "Eligibility", detail: "Coverage verified", icon: ShieldCheck },
-  { label: "Documentation", detail: "Record assembled", icon: FileCheck2 },
-  { label: "Fulfillment", detail: "Pathway executed", icon: Truck },
-  { label: "POD", detail: "Delivery proof locked", icon: ClipboardCheck },
-  { label: "Billing Packet", detail: "Revenue-ready file", icon: CheckCircle2 },
-]
+import { useEffect } from "react"
+import Image from "next/image"
+import { DM_Sans, Lora } from "next/font/google"
+import styles from "./page.module.css"
 
-const pathwayCards = [
-  { title: "Surgical", icon: Stethoscope, copy: "Procedure-adjacent recovery coordination with documentation controls." },
-  { title: "Orthopedic", icon: Bone, copy: "Brace, mobility, and recovery pathways organized around medical necessity." },
-  { title: "Maternal", icon: Baby, copy: "Continuity infrastructure for perinatal and postpartum support pathways." },
-  { title: "Mobility", icon: Orbit, copy: "Patient movement, device readiness, and fulfillment visibility in one record." },
-  { title: "Wound", icon: HeartPulse, copy: "Document-heavy pathways governed by payer logic and supply continuity." },
-  { title: "Post-Acute", icon: Waves, copy: "Recovery transitions coordinated beyond the visit and into the home." },
-]
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  weight: ["200", "300", "400", "500", "600"],
+  variable: "--font-dm-sans",
+})
 
-const providerBullets = [
-  "Less staff drag",
-  "Cleaner documentation",
-  "Patient continuity",
-  "Fulfillment visibility",
-]
+const lora = Lora({
+  subsets: ["latin"],
+  style: ["italic"],
+  weight: ["400"],
+  variable: "--font-lora",
+})
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+const mommyCareUrl =
+  process.env.NEXT_PUBLIC_MOMMY_CARE_URL ||
+  process.env.NEXT_PUBLIC_MOMMY_CARE_SUBDOMAIN ||
+  "https://mommy-care.strykefox.com"
+
+const physicianPortalUrl =
+  process.env.NEXT_PUBLIC_PHYSICIAN_PORTAL_URL ||
+  process.env.NEXT_PUBLIC_REP_PORTAL_URL ||
+  "/login"
+
+const contactHandlerUrl = "/founder#contact"
+
+const cx = (...classes: Array<string | false | null | undefined>) =>
+  classes.filter(Boolean).join(" ")
+
+function HeartlineIcon() {
   return (
-    <div className="mb-5 inline-flex items-center gap-2 border border-blue-500/25 bg-blue-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-blue-400 shadow-[0_0_30px_rgba(59,130,246,0.12)] backdrop-blur">
-      <span className="h-1.5 w-1.5 rounded-full bg-blue-400 shadow-[0_0_16px_rgba(96,165,250,0.95)]" />
-      {children}
-    </div>
+    <svg viewBox="0 0 24 24">
+      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+    </svg>
   )
 }
 
-function GlassPanel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+function ClockIcon() {
   return (
-    <div className={`border border-white/10 bg-slate-950/45 shadow-2xl shadow-black/40 backdrop-blur-xl ${className}`}>
-      {children}
-    </div>
+    <svg viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
   )
 }
 
-function WorkflowStrip() {
+function HomeIcon() {
   return (
-    <section id="workflow" className="relative border-y border-white/10 bg-[#06101d]/80 px-4 py-14 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl">
-        <div className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-end">
-          <div>
-            <SectionLabel>Pipeline Control</SectionLabel>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-100 sm:text-4xl">
-              The pathway moves as one controlled system.
-            </h2>
-          </div>
-          <p className="max-w-xl text-sm leading-6 text-slate-400">
-            Every handoff is visible. Every document has a place. Every billing packet inherits the record that came before it.
-          </p>
-        </div>
-
-        <GlassPanel className="overflow-hidden rounded-sm p-4 sm:p-6">
-          <div className="grid gap-4 lg:grid-cols-6 lg:gap-0">
-            {workflowNodes.map((node, index) => {
-              const Icon = node.icon
-              return (
-                <div key={node.label} className="relative">
-                  {index < workflowNodes.length - 1 ? (
-                    <div className="absolute left-[calc(50%+34px)] top-8 hidden h-px w-[calc(100%-68px)] bg-gradient-to-r from-blue-500/80 via-blue-500/25 to-transparent lg:block" />
-                  ) : null}
-                  <div className="group relative flex h-full flex-col border border-white/10 bg-[#0B1829]/75 p-4 transition duration-300 hover:border-blue-500/40 hover:bg-blue-500/[0.07] hover:shadow-[0_0_35px_rgba(43,111,212,0.16)]">
-                    <div className="mb-5 flex h-16 w-16 items-center justify-center border border-blue-500/30 bg-blue-500/10">
-                      <Icon className="h-6 w-6 text-blue-400" strokeWidth={1.5} />
-                    </div>
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-blue-400">
-                      0{index + 1}
-                    </div>
-                    <h3 className="mt-2 text-base font-semibold text-slate-100">{node.label}</h3>
-                    <p className="mt-2 text-xs leading-5 text-slate-500">{node.detail}</p>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </GlassPanel>
-      </div>
-    </section>
+    <svg viewBox="0 0 24 24">
+      <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+      <polyline points="9,22 9,12 15,12 15,22" />
+    </svg>
   )
 }
 
-function EngineSection() {
+function HeartIcon() {
   return (
-    <section id="engine" className="relative px-4 py-24 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl">
-        <div className="mb-10 max-w-3xl">
-          <SectionLabel>Intelligence Engine</SectionLabel>
-          <h2 className="text-3xl font-semibold tracking-tight text-slate-100 sm:text-5xl">
-            Poseidon preserves the record. Trident finds the gaps.
-          </h2>
-        </div>
-
-        <div className="grid gap-5 lg:grid-cols-2">
-          <GlassPanel className="relative overflow-hidden rounded-sm p-8">
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent" />
-            <div className="mb-8 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center border border-blue-500/30 bg-blue-500/10">
-                  <Database className="h-6 w-6 text-blue-400" strokeWidth={1.5} />
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-blue-400">Poseidon OS</p>
-                  <h3 className="text-2xl font-semibold text-slate-100">Workflow Orchestration</h3>
-                </div>
-              </div>
-              <Lock className="h-5 w-5 text-slate-500" strokeWidth={1.5} />
-            </div>
-            <p className="text-sm leading-7 text-slate-400">
-              Intake, routing, fulfillment tracking, proof-of-delivery, billing readiness, and operational lineage live inside one controlled pathway record.
-            </p>
-            <div className="mt-8 grid gap-3 sm:grid-cols-3">
-              {["Intake", "Routing", "Fulfillment"].map((item) => (
-                <div key={item} className="border border-white/10 bg-white/[0.03] p-4">
-                  <div className="mb-3 h-px w-10 bg-blue-500" />
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">{item}</p>
-                </div>
-              ))}
-            </div>
-          </GlassPanel>
-
-          <GlassPanel className="relative overflow-hidden rounded-sm p-8">
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent" />
-            <div className="mb-8 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center border border-blue-500/30 bg-blue-500/10">
-                  <BrainCircuit className="h-6 w-6 text-blue-400" strokeWidth={1.5} />
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-blue-400">Trident AI</p>
-                  <h3 className="text-2xl font-semibold text-slate-100">Documentation Intelligence</h3>
-                </div>
-              </div>
-              <Network className="h-5 w-5 text-slate-500" strokeWidth={1.5} />
-            </div>
-            <p className="text-sm leading-7 text-slate-400">
-              Payer rules, compliance signals, missing-document detection, and reimbursement readiness are reviewed before the pathway reaches billing.
-            </p>
-            <div className="mt-8 space-y-3">
-              {["Payer rule scan", "Clinical document gap check", "Revenue packet readiness"].map((item) => (
-                <div key={item} className="flex items-center justify-between border border-white/10 bg-white/[0.03] px-4 py-3">
-                  <span className="text-sm text-slate-300">{item}</span>
-                  <span className="text-[10px] uppercase tracking-[0.2em] text-blue-400">active</span>
-                </div>
-              ))}
-            </div>
-          </GlassPanel>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function PathwayCard({ title, copy, icon: Icon }: { title: string; copy: string; icon: typeof Activity }) {
-  return (
-    <div className="group relative overflow-hidden border border-white/10 bg-[#0B1829]/70 p-6 backdrop-blur transition duration-300 hover:-translate-y-1 hover:border-blue-500/40 hover:shadow-[0_0_45px_rgba(43,111,212,0.18)]">
-      <div className="absolute inset-x-0 top-0 h-px origin-left scale-x-0 bg-blue-500 transition duration-300 group-hover:scale-x-100" />
-      <div className="mb-8 flex h-12 w-12 items-center justify-center border border-blue-500/25 bg-blue-500/10">
-        <Icon className="h-6 w-6 text-blue-400" strokeWidth={1.5} />
-      </div>
-      <h3 className="text-xl font-semibold tracking-tight text-slate-100">{title}</h3>
-      <p className="mt-4 text-sm leading-6 text-slate-500">{copy}</p>
-    </div>
-  )
-}
-
-function PathwaysSection() {
-  return (
-    <section id="pathways" className="relative border-y border-white/10 bg-[#06101d]/85 px-4 py-24 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl">
-        <div className="mb-12 grid gap-8 lg:grid-cols-[0.85fr_1.15fr] lg:items-end">
-          <div>
-            <SectionLabel>Owned Pathways</SectionLabel>
-            <h2 className="text-3xl font-semibold tracking-tight text-slate-100 sm:text-5xl">
-              We do not think in product categories.
-            </h2>
-          </div>
-          <p className="text-lg leading-8 text-slate-400">
-            We think in pathways. The product mix changes. The pathway logic does not.
-          </p>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {pathwayCards.map((card) => (
-            <PathwayCard key={card.title} {...card} />
-          ))}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function ProviderClose() {
-  return (
-    <section id="providers" className="relative px-4 py-24 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl">
-        <GlassPanel className="relative overflow-hidden rounded-sm p-8 sm:p-12 lg:p-16">
-          <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full border border-blue-500/20" />
-          <div className="relative grid gap-10 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
-            <div>
-              <SectionLabel>Provider Alignment</SectionLabel>
-              <h2 className="max-w-3xl text-4xl font-semibold tracking-tight text-slate-100 sm:text-6xl">
-                Your staff focuses on patients. We own the pathway.
-              </h2>
-              <p className="mt-6 max-w-2xl text-base leading-7 text-slate-400">
-                CarePath absorbs the operational drag between clinical need and billing-ready documentation, preserving continuity without turning your team into a fulfillment desk.
-              </p>
-            </div>
-
-            <div className="grid gap-3">
-              {providerBullets.map((item) => (
-                <div key={item} className="flex items-center gap-3 border border-white/10 bg-white/[0.03] px-4 py-4">
-                  <CheckCircle2 className="h-5 w-5 text-blue-400" strokeWidth={1.5} />
-                  <span className="text-sm font-medium text-slate-200">{item}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </GlassPanel>
-      </div>
-    </section>
-  )
-}
-
-function Hero() {
-  return (
-    <section className="relative min-h-screen overflow-hidden px-4 pb-20 pt-6 sm:px-6 lg:px-8">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(43,111,212,0.18),transparent_32%),linear-gradient(180deg,#020713_0%,#07111F_45%,#030712_100%)]" />
-      <div className="absolute inset-0 opacity-[0.22] [background-image:linear-gradient(rgba(148,163,184,0.14)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.14)_1px,transparent_1px)] [background-size:28px_28px]" />
-      <div className="absolute left-0 right-0 top-32 h-px bg-gradient-to-r from-transparent via-blue-500/40 to-transparent" />
-
-      <div className="relative z-10 mx-auto max-w-7xl">
-        <nav className="flex items-center justify-between border border-white/10 bg-slate-950/35 px-4 py-3 backdrop-blur-xl">
-          <Link href="/" className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center border border-blue-500/30 bg-blue-500/10">
-              <Workflow className="h-5 w-5 text-blue-400" strokeWidth={1.5} />
-            </div>
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-100">StrykeFox</p>
-              <p className="text-[10px] uppercase tracking-[0.22em] text-blue-400">CarePath</p>
-            </div>
-          </Link>
-          <div className="hidden items-center gap-8 text-xs uppercase tracking-[0.18em] text-slate-400 md:flex">
-            <a href="#workflow" className="transition hover:text-blue-400">Workflow</a>
-            <a href="#engine" className="transition hover:text-blue-400">Poseidon</a>
-            <a href="#pathways" className="transition hover:text-blue-400">Pathways</a>
-          </div>
-          <Link href="/login" className="border border-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-300 transition hover:border-blue-500/40 hover:text-white">
-            Login
-          </Link>
-        </nav>
-
-        <div className="grid min-h-[calc(100vh-100px)] items-center gap-12 py-16 lg:grid-cols-[1fr_520px]">
-          <div>
-            <SectionLabel>Elite Care-Pathway Infrastructure</SectionLabel>
-            <h1 className="text-[17vw] font-black uppercase leading-[0.78] tracking-[-0.09em] text-slate-100 sm:text-[132px] lg:text-[160px]">
-              CAREPATH
-            </h1>
-            <p className="mt-8 text-3xl font-semibold tracking-tight text-blue-400 sm:text-5xl">
-              Verify. Document. Deliver.
-            </p>
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-400">
-              The care-pathway infrastructure layer for modern healthcare recovery coordination. Not a product catalog. An operating system.
-            </p>
-            <div className="mt-10 flex flex-col gap-3 sm:flex-row">
-              <a href="#providers" className="group inline-flex items-center justify-center gap-2 bg-blue-600 px-6 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-white shadow-[0_0_40px_rgba(37,99,235,0.35)] transition hover:bg-blue-500">
-                Partner With Us
-                <ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" />
-              </a>
-              <Link href="/login" className="inline-flex items-center justify-center border border-blue-500/30 bg-white/[0.02] px-6 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-200 backdrop-blur transition hover:border-blue-500/70 hover:bg-blue-500/10">
-                Provider Login
-              </Link>
-            </div>
-          </div>
-
-          <GlassPanel className="relative overflow-hidden rounded-sm p-5">
-            <div className="absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(43,111,212,0.16)_1px,transparent_1px),linear-gradient(90deg,rgba(43,111,212,0.16)_1px,transparent_1px)] [background-size:18px_18px]" />
-            <div className="relative">
-              <div className="mb-5 flex items-center justify-between border-b border-white/10 pb-4">
-                <div>
-                  <p className="text-[10px] uppercase tracking-[0.24em] text-blue-400">Command Layer</p>
-                  <p className="mt-1 text-lg font-semibold text-slate-100">Pathway Control Plane</p>
-                </div>
-                <UserRoundCheck className="h-5 w-5 text-blue-400" strokeWidth={1.5} />
-              </div>
-              <div className="space-y-3">
-                {workflowNodes.slice(0, 5).map((node, index) => {
-                  const Icon = node.icon
-                  return (
-                    <div key={node.label} className="flex items-center gap-3 border border-white/10 bg-[#06101d]/80 p-3">
-                      <div className="flex h-10 w-10 items-center justify-center border border-blue-500/25 bg-blue-500/10">
-                        <Icon className="h-5 w-5 text-blue-400" strokeWidth={1.5} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="truncate text-sm font-medium text-slate-200">{node.label}</p>
-                          <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">0{index + 1}</span>
-                        </div>
-                        <div className="mt-2 h-1 overflow-hidden bg-white/5">
-                          <div className="h-full bg-blue-500" style={{ width: `${88 - index * 9}%` }} />
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          </GlassPanel>
-        </div>
-      </div>
-    </section>
+    <svg viewBox="0 0 24 24">
+      <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+    </svg>
   )
 }
 
 export default function HomePage() {
+  useEffect(() => {
+    document.title = "CarePath by StrykeFox"
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) entry.target.classList.add(styles.in)
+        })
+      },
+      { threshold: 0.1 },
+    )
+
+    const revealNodes = document.querySelectorAll(`.${styles.reveal}`)
+    revealNodes.forEach((element) => observer.observe(element))
+
+    const handleScroll = () => {
+      const nav = document.getElementById("nav")
+      if (nav) {
+        nav.style.background =
+          window.scrollY > 60 ? "rgba(2,5,8,.97)" : "rgba(4,9,15,.88)"
+      }
+    }
+
+    window.addEventListener("scroll", handleScroll)
+    handleScroll()
+
+    return () => {
+      revealNodes.forEach((element) => observer.unobserve(element))
+      observer.disconnect()
+      window.removeEventListener("scroll", handleScroll)
+    }
+  }, [])
+
   return (
-    <main className="min-h-screen bg-[#030712] font-sans text-slate-200">
-      <Hero />
-      <WorkflowStrip />
-      <EngineSection />
-      <PathwaysSection />
-      <ProviderClose />
+    <main className={cx(styles.page, dmSans.variable, lora.variable)}>
+      <nav id="nav" className={styles.nav}>
+        <a href="/" className={styles.brand}>
+          <div className={styles.brandLogo}>
+            <Image
+              src="/images/sfm-logo.jpeg"
+              alt="StrykeFox Medical"
+              width={28}
+              height={28}
+              priority
+            />
+          </div>
+          <span className={styles.brandName}>
+            STRYKE<span>FOX</span>
+          </span>
+          <div className={styles.brandSep} />
+          <span className={styles.brandBy}>CarePath</span>
+        </a>
+        <div className={styles.navR}>
+          <a href="#pathways" className={styles.navA}>
+            Pathways
+          </a>
+          <a href="#platform" className={styles.navA}>
+            Platform
+          </a>
+          <a href="#founder" className={styles.navA}>
+            Founder
+          </a>
+          <a href={contactHandlerUrl} className={styles.navCta}>
+            Partner With Us
+          </a>
+        </div>
+      </nav>
+
+      <section className={styles.hero} id="pathways">
+        <div className={styles.heroBg} />
+        <div className={styles.heroGrid} />
+        <div className={styles.heroPulse} />
+        <div className={cx(styles.heroPulse, styles.heroPulse2)} />
+        <div className={styles.heroInner}>
+          <p className={styles.heroBy}>by StrykeFox Medical</p>
+          <h1 className={styles.heroTitle}>
+            CARE<span>PATH</span>
+          </h1>
+          <p className={styles.heroTagline}>
+            The recovery pathway for every patient, every moment.
+          </p>
+          <div className={styles.pathways}>
+            <div className={styles.pathway}>
+              <div className={styles.pathwayIcon}>
+                <HeartlineIcon />
+              </div>
+              <p className={styles.pathwayBy}>CarePath</p>
+              <p className={styles.pathwayName}>Surgical</p>
+            </div>
+            <div className={styles.pathway}>
+              <div className={styles.pathwayIcon}>
+                <ClockIcon />
+              </div>
+              <p className={styles.pathwayBy}>CarePath</p>
+              <p className={styles.pathwayName}>Mobility</p>
+            </div>
+            <div className={styles.pathway}>
+              <div className={styles.pathwayIcon}>
+                <HomeIcon />
+              </div>
+              <p className={styles.pathwayBy}>CarePath</p>
+              <p className={styles.pathwayName}>Recovery</p>
+            </div>
+            <div className={styles.pathway}>
+              <div className={styles.pathwayIcon}>
+                <HeartIcon />
+              </div>
+              <p className={styles.pathwayBy}>CarePath</p>
+              <p className={styles.pathwayName}>Maternity</p>
+            </div>
+          </div>
+          <div className={styles.heroCta}>
+            <a href={contactHandlerUrl} className={styles.btnMain}>
+              Partner With CarePath
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.maternity}>
+        <div className={styles.matLeft}>
+          <p className={styles.matEye}>CarePath Maternity</p>
+          <h2 className={styles.matTitle}>
+            She gave everything.
+            <br />
+            <em>Now it&apos;s her turn.</em>
+          </h2>
+          <div className={styles.matCtas}>
+            <a href={mommyCareUrl} className={styles.btnRose}>
+              Start Your Recovery
+            </a>
+          </div>
+        </div>
+        <div className={styles.matRight}>
+          <div className={styles.matLogoWrap}>
+            <Image
+              src="/images/mommy-care-en.png"
+              alt="Mommy Care Kit"
+              width={220}
+              height={220}
+            />
+          </div>
+          <p className={styles.matSubdomain}>[MOMMY_CARE_SUBDOMAIN]</p>
+        </div>
+      </section>
+
+      <section className={styles.platform} id="platform">
+        <div className={cx(styles.platHead, styles.reveal)}>
+          <p className={styles.secEye}>The Platform</p>
+          <h2 className={styles.secH}>
+            StrykeFox Medical. <em>Every layer.</em>
+          </h2>
+        </div>
+        <div className={styles.platGrid}>
+          <div className={cx(styles.platCard, styles.reveal, styles.d1)}>
+            <div className={styles.platLogo}>
+              <Image
+                src="/images/sfm-logo.jpeg"
+                alt="StrykeFox Medical"
+                width={160}
+                height={38}
+              />
+            </div>
+            <p className={styles.platName}>StrykeFox Medical</p>
+            <p className={styles.platRole}>Operating Platform</p>
+            <p className={styles.platDesc}>
+              Provider relationships, DME, biologics, implants, and billing. The
+              healthcare operations engine behind CarePath.
+            </p>
+          </div>
+          <div className={cx(styles.platCard, styles.reveal, styles.d2)}>
+            <div className={styles.platLogo}>
+              <Image
+                src="/images/nsi-logo.png"
+                alt="NorthStar Surgical Innovations"
+                width={180}
+                height={38}
+              />
+            </div>
+            <p className={styles.platName}>NorthStar Surgical</p>
+            <p className={styles.platRole}>Clinical Innovation</p>
+            <p className={styles.platDesc}>
+              3D-printed implants, Bluetooth surgical navigation, FDA-cleared
+              international devices, biologics, and physician training.
+            </p>
+          </div>
+          <div className={cx(styles.platCard, styles.reveal, styles.d3)}>
+            <div className={styles.platCode}>S13</div>
+            <p className={styles.platName}>SoC13</p>
+            <p className={styles.platRole}>Acquisition Vehicle</p>
+            <p className={styles.platDesc}>
+              Strategic roll-up of ASCs, orthopedic practices, home health, PT/OT,
+              and wound clinics — integrated onto a single spine.
+            </p>
+          </div>
+          <div className={cx(styles.platCard, styles.reveal, styles.d4)}>
+            <div className={styles.platCode}>SPR</div>
+            <p className={styles.platName}>Spear</p>
+            <p className={styles.platRole}>Poseidon OS + Trident AI</p>
+            <p className={styles.platDesc}>
+              Workflow orchestration and documentation intelligence. The operating
+              system that runs underneath every CarePath pathway.
+            </p>
+          </div>
+          <div className={cx(styles.platCard, styles.reveal, styles.d5)}>
+            <div className={styles.platCode}>SNS</div>
+            <p className={styles.platName}>SENSARS</p>
+            <p className={styles.platRole}>FDA Breakthrough Device</p>
+            <p className={styles.platDesc}>
+              Neuroprosthetics advancing sensory feedback for prosthetic limb
+              users. Board-level participation by StrykeFox leadership.
+            </p>
+          </div>
+          <div className={cx(styles.platCard, styles.reveal, styles.d6)}>
+            <div className={styles.platCode}>EGR</div>
+            <p className={styles.platName}>Egeiro Holdings</p>
+            <p className={styles.platRole}>Institutional Parent</p>
+            <p className={styles.platDesc}>
+              The long-horizon holding architecture. Capital structure,
+              acquisition strategy, and enterprise map for the Healthcare Lineage.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.founder} id="founder">
+        <div className={styles.founderInner}>
+          <div className={styles.reveal}>
+            <p className={styles.fQuote}>
+              &quot;Vertical stacks create operational control. Horizontal
+              expansion unlocks scale. The result is{" "}
+              <strong>
+                better outcomes for patients, better tools for physicians, and a
+                system whose complexity is invisible to the people it serves.
+              </strong>
+              &quot;
+            </p>
+            <p className={styles.fAttr}>Adam W. Stryker — Founder &amp; CEO</p>
+          </div>
+          <div className={cx(styles.fCard, styles.reveal, styles.d2)}>
+            <h3 className={styles.fName}>Adam W. Stryker</h3>
+            <p className={styles.fTitle}>
+              Founder &amp; CEO — StrykeFox Medical
+            </p>
+            <p className={styles.fBio}>
+              Healthcare operator and platform builder. Architect of vertically
+              integrated healthcare infrastructure built for national scale.
+            </p>
+            <div className={styles.fCreds}>
+              <span className={styles.fCred}>
+                Board Member — SENSARS Neuroprosthetics | FDA Breakthrough Device
+              </span>
+              <span className={styles.fCred}>
+                Inc. 5000 Class of 2019 — Top 300 Healthcare Executive
+              </span>
+              <span className={styles.fCred}>
+                SVP/CTO — Americans for Prosperity | $889M, 35 States
+              </span>
+              <span className={styles.fCred}>
+                Director, Government Relations — Las Vegas Sands
+              </span>
+              <span className={styles.fCred}>
+                MBA Candidate — Pepperdine Graziadio Business School
+              </span>
+            </div>
+            <a
+              href="https://www.adamwstryker.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.fLink}
+            >
+              adamwstryker.com
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.contact} id="contact">
+        <div className={styles.reveal}>
+          <p className={cx(styles.secEye, styles.secEyeCenter)}>
+            Partner With CarePath
+          </p>
+          <h2 className={styles.cTitle}>
+            Own the <em>pathway.</em>
+          </h2>
+          <p className={styles.cLora}>&quot;The thread belongs to someone now.&quot;</p>
+          <p className={styles.cDesc}>
+            CarePath partners with surgical groups, orthopedic practices, ASCs, OB
+            groups, and discharge-heavy providers who are ready to deliver what
+            comes next.
+          </p>
+          <div className={styles.cCtas}>
+              <a href={contactHandlerUrl} className={styles.btnMain}>
+                Contact Our Team
+              </a>
+            <a href={physicianPortalUrl} className={styles.btnGhost}>
+              Rep Portal
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <footer className={styles.footer}>
+        <span className={styles.ftBrand}>
+          CARE<span>PATH</span> by StrykeFox Medical
+        </span>
+        <span className={styles.ftLegal}>
+          © 2026 StrykeFox Medical LLC | Las Vegas, NV | NPI: 1821959420 |
+          Compliance-First. Patient-First.
+        </span>
+        <span className={styles.ftTag}>Verify · Document · Deliver</span>
+      </footer>
     </main>
   )
 }
