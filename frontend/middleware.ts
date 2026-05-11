@@ -8,8 +8,8 @@ export default withAuth({
 
 export const config = {
   matcher: [
-    // Leave Next internals and public auth/health routes alone so the login page can
-    // load its own chunks without being bounced through auth middleware.
-    "/((?!login|founder|api/auth|api/health|api/public-inquiry|api/core|_next|favicon.ico).*)",
+    // Leave Next internals, public marketing routes, and public API routes alone.
+    // Root "/" (CarePath landing) and /api/carepath-intake must be publicly accessible.
+    "/((?!$|login|founder|api/auth|api/health|api/public-inquiry|api/carepath-intake|api/core|images|_next|favicon.ico).*)",
   ],
 }
