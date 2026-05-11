@@ -258,13 +258,13 @@ export default function HomePage() {
           <div className={cx(styles.platCard, styles.reveal, styles.d3)}>
             <div className={styles.platLogo}>
               <Image
-                src="/images/operating-framework.svg"
-                alt="Operating Framework"
+                src="/images/northstar-logo.svg"
+                alt="NorthStar Framework"
                 width={180}
                 height={38}
               />
             </div>
-            <p className={styles.platName}>Operating Framework</p>
+            <p className={styles.platName}>NorthStar Framework</p>
             <p className={styles.platRole}>Execution Architecture</p>
             <p className={styles.platDesc}>
               Scalable operating systems, workflow orchestration, and performance frameworks that power modern healthcare delivery across all care settings.

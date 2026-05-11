@@ -1,0 +1,20 @@
+<svg viewBox="0 0 180 38" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="northstarGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#F0B432;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#D7C28A;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- North Star Icon -->
+  <circle cx="25" cy="19" r="12" fill="url(#northstarGrad)" opacity="0.9"/>
+  <path d="M25 13 L28 20 L25 25 L22 20 Z" fill="#fff" opacity="0.8"/>
+  <path d="M25 7 L27 13 L25 19 L23 13 Z" fill="#fff" opacity="0.6"/>
+  <path d="M25 31 L27 25 L25 19 L23 25 Z" fill="#fff" opacity="0.6"/>
+  <path d="M19 19 L13 17 L25 19 L13 21 Z" fill="#fff" opacity="0.6"/>
+  <path d="M31 19 L37 17 L25 19 L37 21 Z" fill="#fff" opacity="0.6"/>
+  
+  <!-- NorthStar Text -->
+  <text x="50" y="24" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#F0B432">NorthStar</text>
+  <text x="125" y="24" font-family="Arial, sans-serif" font-size="8" font-weight="500" fill="#666" text-anchor="end">Framework</text>
+</svg>
