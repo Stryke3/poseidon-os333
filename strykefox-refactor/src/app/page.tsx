@@ -412,7 +412,7 @@ export default function HomePage() {
             providers who need disciplined recovery coordination without turning their practice into a supply operation.
           </p>
           <div className="contact-options">
-            <a href="mailto:adam.stryker@strykefox.com" className="btn-primary">Contact Our Team</a>
+            <a href="mailto:adam.stryker@strykefox.com" className="btn-primary">Partner With StrykeFox</a>
             <a href="/physicians" className="btn-secondary">Rep Portal</a>
           </div>
         </div>
