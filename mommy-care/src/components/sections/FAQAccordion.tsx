@@ -13,60 +13,60 @@ interface FAQItem {
 
 const faqItems: FAQItem[] = [
   {
-    category: "Seguro",
-    question: "¿El kit está cubierto por mi seguro?",
-    answer: "Sí, el kit está cubierto por la mayoría de seguros médicos, incluyendo Medicaid, Medicare y planes privados. Verificamos tu cobertura antes de enviarte el kit y te avisamos si hay algún costo."
+    category: "Insurance",
+    question: "Is the kit covered by my insurance?",
+    answer: "Yes, the kit is covered by most health insurance plans, including Medicaid, Medicare, and most private plans. We verify your coverage before shipping and let you know if there are any costs."
   },
   {
-    category: "Seguro",
-    question: "¿Me avisarán si hay algún costo?",
-    answer: "Absolutamente. Te contactamos antes de enviar cualquier producto para explicarte los costos, si los hubiera. No hay sorpresas ni cargos ocultos. Tú decides si continuar."
+    category: "Insurance",
+    question: "Will you notify me if there's any cost?",
+    answer: "Absolutely. We contact you before sending any product to explain any costs that may apply. No surprises, no hidden charges. You decide whether to continue."
   },
   {
-    category: "Seguro",
-    question: "¿Afectará mi plan de seguro?",
-    answer: "No, recibir el kit no afecta tu plan de seguro. Es un beneficio preventivo cubierto por la mayoría de planes para ayudarte a tener un embarazo más saludable."
+    category: "Insurance",
+    question: "Will it affect my insurance plan?",
+    answer: "No, receiving the kit does not affect your insurance plan. It is a preventive benefit covered by most plans to help you have a healthier pregnancy."
   },
   {
-    category: "Productos",
-    question: "¿Necesito receta médica?",
-    answer: "Para algunos productos sí, pero nosotros te ayudamos a obtenerla. Nuestro equipo médico puede evaluar tu caso y proporcionar la documentación necesaria."
+    category: "Products",
+    question: "Do I need a prescription?",
+    answer: "Some products do require a prescription, but we help you get one. Our medical team can evaluate your case and provide the necessary documentation."
   },
   {
-    category: "Productos",
-    question: "¿Son seguros los productos durante el embarazo?",
-    answer: "Sí, todos nuestros productos están aprobados por la FDA y son específicamente diseñados para ser seguros durante el embarazo y el posparto. No contienen medicamentos."
+    category: "Products",
+    question: "Are the products safe during pregnancy?",
+    answer: "Yes, all our products are FDA-cleared and specifically designed to be safe during pregnancy and postpartum. They contain no medications and are 100% non-invasive."
   },
   {
-    category: "Envío",
-    question: "¿Cuánto tiempo tarda en llegar?",
-    answer: "Una vez aprobado tu seguro, el kit suele llegar en 3-5 días hábiles. Enviamos por UPS con seguimiento en tiempo real."
-  },
-  {
-    category: "General",
-    question: "¿Puedo pedir el kit si no hablo inglés?",
-    answer: "¡Por supuesto! Nuestro equipo habla español y podemos atenderte en tu idioma. Todo nuestro proceso está disponible en español."
+    category: "Shipping",
+    question: "How long does delivery take?",
+    answer: "Once your insurance is approved, the kit typically arrives in 3–5 business days. We ship via UPS with real-time tracking."
   },
   {
     category: "General",
-    question: "¿Qué incluye exactamente el kit?",
-    answer: "El kit incluye faja de soporte 3-en-1, soporte lumbar, medias de compresión, unidad TENS con suministros, y dispositivo PlasmaFlow para prevención de coágulos."
+    question: "What exactly is included in the kit?",
+    answer: "The kit includes a 3-in-1 support band, lumbar support, compression stockings, a TENS unit with supplies, and a PlasmaFlow device for blood clot prevention."
+  },
+  {
+    category: "General",
+    question: "Is support available in Spanish?",
+    answer: "Yes! Our team is fully bilingual. We offer complete support in both English and Spanish throughout the entire process."
   }
 ];
 
 export default function FAQAccordion() {
   const [openItems, setOpenItems] = useState<number[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string>("Todos");
+  const [selectedCategory, setSelectedCategory] = useState<string>("All");
 
-  const categories = ["Todos", ...Array.from(new Set(faqItems.map(item => item.category)))];
-  
-  const filteredItems = selectedCategory === "Todos" 
-    ? faqItems 
+  const categories = ["All", ...Array.from(new Set(faqItems.map(item => item.category)))];
+
+  const filteredItems = selectedCategory === "All"
+    ? faqItems
     : faqItems.filter(item => item.category === selectedCategory);
 
   const toggleItem = (index: number) => {
-    setOpenItems(prev => 
-      prev.includes(index) 
+    setOpenItems(prev =>
+      prev.includes(index)
         ? prev.filter(i => i !== index)
         : [...prev, index]
     );
@@ -77,10 +77,10 @@ export default function FAQAccordion() {
       <div className="container mx-auto px-4">
         <div className="text-center mb-12">
           <h2 className="text-3xl md:text-4xl font-serif text-warm mb-4">
-            Preguntas Frecuentes
+            Frequently Asked Questions
           </h2>
           <p className="text-gray-600 max-w-2xl mx-auto">
-            Todo lo que necesitas saber sobre el kit de cuidado para mamá
+            Everything you need to know about the Mommy Care Kit
           </p>
         </div>
 
@@ -106,9 +106,9 @@ export default function FAQAccordion() {
           {filteredItems.map((item, index) => {
             const isOpen = openItems.includes(index);
             const originalIndex = faqItems.indexOf(item);
-            
+
             return (
-              <div 
+              <div
                 key={originalIndex}
                 className="bg-white rounded-xl shadow-md overflow-hidden"
               >
@@ -128,7 +128,7 @@ export default function FAQAccordion() {
                     <ChevronDown className="w-5 h-5 text-gray-400 flex-shrink-0" />
                   )}
                 </button>
-                
+
                 {isOpen && (
                   <div className="px-6 pb-4">
                     <p className="text-gray-600 leading-relaxed">{item.answer}</p>
@@ -143,16 +143,16 @@ export default function FAQAccordion() {
         <div className="text-center mt-12">
           <div className="bg-accent/20 rounded-2xl p-8 max-w-2xl mx-auto">
             <h3 className="text-xl font-serif text-warm mb-4">
-              ¿Aún tienes preguntas?
+              Still have questions?
             </h3>
             <p className="text-gray-600 mb-6">
-              Nuestro equipo está aquí para ayudarte. Hablamos español y podemos responder todas tus dudas.
+              Our team is here to help — in English and Spanish.
             </p>
-            <a 
+            <a
               href="/contacto"
               className="inline-flex items-center space-x-2 bg-secondary text-white px-6 py-3 rounded-full hover:bg-opacity-90 transition-colors font-medium"
             >
-              <span>Contactar al Equipo</span>
+              <span>Contact Our Team</span>
             </a>
           </div>
         </div>

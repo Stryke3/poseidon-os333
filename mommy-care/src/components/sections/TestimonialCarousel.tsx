@@ -20,32 +20,32 @@ interface Testimonial {
 const testimonials: Testimonial[] = [
   {
     id: 1,
-    name: "María González",
+    name: "María G.",
     location: "Houston, TX",
     rating: 5,
-    content: "El kit cambió completamente mi experiencia de posparto. La faja lumbar me salvó cuando no podía dormir por el dolor de espalda. Y lo mejor es que mi seguro lo cubrió al 100%.",
-    favoriteProduct: "Faja de soporte 3-en-1",
-    imageAlt: "María González con su bebé",
+    content: "This kit completely changed my postpartum experience. The lumbar support saved me when I couldn't sleep from back pain. And the best part — my insurance covered it 100%.",
+    favoriteProduct: "3-in-1 Support Band",
+    imageAlt: "Happy mother with her baby",
     imageSrc: "/api/placeholder/80/80"
   },
   {
     id: 2,
-    name: "Ana Rodríguez",
+    name: "Ana R.",
     location: "Los Angeles, CA",
     rating: 5,
-    content: "Como mamá primeriza, estaba nerviosa por todo. Pero el equipo me habló en español y me explicó cada producto. Las medias de compresión fueron un milagro para mis piernas hinchadas.",
-    favoriteProduct: "Medias de compresión",
-    imageAlt: "Ana Rodríguez sonriendo",
+    content: "As a first-time mom I was nervous about everything. The team walked me through every product and the compression stockings were a miracle for my swollen legs.",
+    favoriteProduct: "Compression Stockings",
+    imageAlt: "Smiling new mother",
     imageSrc: "/api/placeholder/80/80"
   },
   {
     id: 3,
-    name: "Carmen López",
+    name: "Carmen L.",
     location: "Miami, FL",
     rating: 5,
-    content: "La unidad TENS me ayudó mucho con el dolor después del parto. Es increíble que todo esto esté cubierto por el seguro. ¡Recomendado 100% para todas las mamás latinas!",
+    content: "The TENS unit helped me so much with postpartum pain without any medication. It's incredible that all of this is covered by insurance. 100% recommended!",
     favoriteProduct: "TENS Unit",
-    imageAlt: "Carmen López con su familia",
+    imageAlt: "Mother with her family",
     imageSrc: "/api/placeholder/80/80"
   }
 ];
@@ -68,10 +68,10 @@ export default function TestimonialCarousel() {
       <div className="container mx-auto px-4">
         <div className="text-center mb-12">
           <h2 className="text-3xl md:text-4xl font-serif text-warm mb-4">
-            Historias de Mamás Reales
+            Real Mom Stories
           </h2>
           <p className="text-gray-600 max-w-2xl mx-auto">
-            Conoce a algunas de las miles de mamás latinas que han transformado su embarazo y posparto con nuestro kit
+            Thousands of mothers have transformed their pregnancy and postpartum experience with the Mommy Care Kit
           </p>
         </div>
 
@@ -99,7 +99,7 @@ export default function TestimonialCarousel() {
                 </div>
 
                 <blockquote className="text-lg text-gray-700 mb-6 leading-relaxed">
-                  "{currentTestimonial.content}"
+                  &ldquo;{currentTestimonial.content}&rdquo;
                 </blockquote>
 
                 <div className="mb-4">
@@ -113,7 +113,7 @@ export default function TestimonialCarousel() {
 
                 <div className="bg-accent/20 rounded-lg px-4 py-2 inline-block">
                   <p className="text-sm text-warm">
-                    <span className="font-medium">Producto favorito:</span> {currentTestimonial.favoriteProduct}
+                    <span className="font-medium">Favorite product:</span> {currentTestimonial.favoriteProduct}
                   </p>
                 </div>
               </div>
@@ -124,7 +124,7 @@ export default function TestimonialCarousel() {
               <button
                 onClick={prevTestimonial}
                 className="w-10 h-10 rounded-full bg-primary/20 hover:bg-primary/30 transition-colors flex items-center justify-center group"
-                aria-label="Anterior testimonio"
+                aria-label="Previous testimonial"
               >
                 <ChevronLeft className="w-5 h-5 text-warm group-hover:text-primary" />
               </button>
@@ -137,7 +137,7 @@ export default function TestimonialCarousel() {
                     className={`w-2 h-2 rounded-full transition-colors ${
                       index === currentIndex ? 'bg-secondary' : 'bg-gray-300'
                     }`}
-                    aria-label={`Ir al testimonio ${index + 1}`}
+                    aria-label={`Go to testimonial ${index + 1}`}
                   />
                 ))}
               </div>
@@ -145,7 +145,7 @@ export default function TestimonialCarousel() {
               <button
                 onClick={nextTestimonial}
                 className="w-10 h-10 rounded-full bg-primary/20 hover:bg-primary/30 transition-colors flex items-center justify-center group"
-                aria-label="Siguiente testimonio"
+                aria-label="Next testimonial"
               >
                 <ChevronRight className="w-5 h-5 text-warm group-hover:text-primary" />
               </button>
@@ -157,15 +157,15 @@ export default function TestimonialCarousel() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-16 max-w-4xl mx-auto">
           <div className="text-center">
             <div className="text-3xl font-bold text-secondary mb-2">50,000+</div>
-            <div className="text-gray-600">Mamás Felices</div>
+            <div className="text-gray-600">Happy Moms</div>
           </div>
           <div className="text-center">
             <div className="text-3xl font-bold text-secondary mb-2">4.9/5</div>
-            <div className="text-gray-600">Calificación Promedio</div>
+            <div className="text-gray-600">Average Rating</div>
           </div>
           <div className="text-center">
             <div className="text-3xl font-bold text-secondary mb-2">98%</div>
-            <div className="text-gray-600">Recomendarían</div>
+            <div className="text-gray-600">Would Recommend</div>
           </div>
         </div>
       </div>
