@@ -34,7 +34,7 @@ export default function Footer() {
               </div>
               <div className="flex items-center space-x-2 text-accent">
                 <MapPin className="w-4 h-4" />
-                <span className="text-sm font-medium">We Speak English</span>
+                <span className="text-sm font-medium">English &amp; Spanish Support</span>
               </div>
             </div>
           </div>

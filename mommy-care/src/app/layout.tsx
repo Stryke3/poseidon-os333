@@ -6,11 +6,11 @@ import Analytics from "@/components/ui/Analytics";
 
 export const metadata: Metadata = {
   title: "Mommy Care Kit for Pregnancy & Postpartum — Covered by Your Insurance | Mommy Care Kit",
-  description: "Get your pregnancy and postpartum care kit covered by most medical insurance. FDA-approved, safe, drug-free products. We speak English.",
+  description: "Get your pregnancy and postpartum care kit covered by most medical insurance. FDA-approved, safe, drug-free products. Bilingual English and Spanish support.",
   keywords: "pregnancy kit, postpartum care, pregnancy insurance, free pregnancy products, belly band, compression stockings pregnancy, TENS pregnancy, mommy care kit, maternity care",
   openGraph: {
     title: "Mommy Care Kit — Covered by Your Insurance",
-    description: "FDA-approved products for your pregnancy and postpartum journey. No cost with most insurance. English-speaking support.",
+    description: "FDA-approved products for your pregnancy and postpartum journey. No cost with most insurance. Bilingual English and Spanish support.",
     locale: "en_US",
     type: "website",
   },

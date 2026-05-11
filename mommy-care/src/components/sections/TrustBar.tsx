@@ -18,8 +18,8 @@ const trustItems = [
   },
   {
     icon: Users,
-    title: "English Support",
-    description: "We speak English, we understand you"
+    title: "Bilingual Care",
+    description: "Support in English and Spanish — we're here for you"
   }
 ];
 

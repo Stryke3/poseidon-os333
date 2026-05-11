@@ -214,7 +214,7 @@ export default function Home() {
             </a>
           </div>
           <p className="text-white/80 text-sm mt-4">
-            Just 5 minutes • No commitment • We speak English
+            Just 5 minutes • No commitment • English &amp; Spanish support
           </p>
         </div>
       </section>

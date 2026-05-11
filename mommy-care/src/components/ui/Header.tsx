@@ -110,7 +110,7 @@ export default function Header() {
       {/* Language Badge */}
       <div className="bg-accent text-center py-2">
         <p className="text-sm font-medium text-warm">
-          🌟 English Support - Service in your language
+          🌟 Bilingual Support — English &amp; Spanish
         </p>
       </div>
     </header>
