@@ -86,33 +86,25 @@ export default function Home() {
         <div className="container mx-auto px-4">
           <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-serif text-warm mb-4">
-              Maternal Care Reality in the U.S.
+              Care That Makes a Difference
             </h2>
             <p className="text-warm-brown max-w-3xl mx-auto">
-              Statistics show why preventive care is crucial, especially for diverse mothers
+              Every mother deserves access to quality prenatal and postpartum support
             </p>
           </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-5xl mx-auto">
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
             <div className="bg-white rounded-xl shadow-lg p-6 text-center border border-terracotta-light/20">
               <div className="text-3xl font-bold text-rose-terracotta mb-2">37%</div>
-              <p className="text-warm-brown">of the population lives in a health desert</p>
+              <p className="text-warm-brown">of U.S. mothers live in a maternity care desert — we're closing that gap</p>
             </div>
             <div className="bg-white rounded-xl shadow-lg p-6 text-center border border-terracotta-light/20">
-              <div className="text-3xl font-bold text-rose-terracotta mb-2">45°</div>
-              <p className="text-warm-brown">U.S. ranks 45th in global maternal mortality</p>
+              <div className="text-3xl font-bold text-rose-terracotta mb-2">✓</div>
+              <p className="text-warm-brown">Covered by most major insurance plans at little to no cost to you</p>
             </div>
             <div className="bg-white rounded-xl shadow-lg p-6 text-center border border-terracotta-light/20">
-              <div className="text-3xl font-bold text-rose-terracotta mb-2">80%</div>
-              <p className="text-warm-brown">of maternal deaths are preventable</p>
-            </div>
-            <div className="bg-white rounded-xl shadow-lg p-6 text-center border border-terracotta-light/20">
-              <div className="text-3xl font-bold text-rose-terracotta mb-2">3x</div>
-              <p className="text-warm-brown">more likely to die for Black women</p>
-            </div>
-            <div className="bg-white rounded-xl shadow-lg p-6 text-center lg:col-span-2 border border-terracotta-light/20">
               <div className="text-3xl font-bold text-rose-terracotta mb-2">🌟</div>
-              <p className="text-warm-brown">Latina women face additional language and healthcare access barriers</p>
+              <p className="text-warm-brown">Bilingual support and culturally sensitive care designed for Latina mothers</p>
             </div>
           </div>
           

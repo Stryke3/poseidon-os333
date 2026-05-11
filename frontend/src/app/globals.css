@@ -5,16 +5,25 @@
 @tailwind utilities;
 
 :root {
-  /* Apple iOS Glassmorphism Design System */
-  --bg-primary: #060B14;
-  --bg-secondary: #0E1726;
-  --text-primary: #F5F7FA;
-  --text-secondary: #7C92A6;
-  --accent-cyan: #00E5FF;
-  --glass-bg: rgba(255, 255, 255, 0.05);
-  --glass-border: rgba(255, 255, 255, 0.1);
-  --glass-hover: rgba(255, 255, 255, 0.1);
-  --glass-border-hover: rgba(255, 255, 255, 0.2);
+  /* Modern Healthcare Glassmorphism Design System */
+  --bg-primary: #0A0E27;
+  --bg-secondary: #151932;
+  --bg-deep: #0D1117;
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --accent-cyan: #06B6D4;
+  --accent-purple: #8B5CF6;
+  --accent-blue: #3B82F6;
+  --accent-teal: #14B8A6;
+  --glass-bg: rgba(255, 255, 255, 0.08);
+  --glass-border: rgba(255, 255, 255, 0.15);
+  --glass-hover: rgba(255, 255, 255, 0.12);
+  --glass-border-hover: rgba(255, 255, 255, 0.25);
+  --glass-inner: rgba(139, 92, 246, 0.1);
+  --watermark: rgba(6, 182, 212, 0.03);
+  --gradient-health: linear-gradient(135deg, #0A0E27 0%, #151932 50%, #0D1117 100%);
+  --gradient-glass: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(6, 182, 212, 0.05) 100%);
 }
 
 *, *::before, *::after {
@@ -30,7 +39,7 @@ html {
 
 body {
   min-height: 100vh;
-  background: var(--bg-primary);
+  background: var(--gradient-health);
   color: var(--text-primary);
   font-family: 'Syne', sans-serif;
   font-size: 14px;
@@ -45,12 +54,32 @@ body::before {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background-image: 
-    linear-gradient(var(--bg-secondary) 1px, transparent 1px),
-    linear-gradient(90deg, var(--bg-secondary) 1px, transparent 1px);
-  background-size: 50px 50px;
-  opacity: 0.1;
+  background: var(--gradient-glass);
+  background-size: 100% 100%;
+  opacity: 0.4;
   z-index: 1;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: 
+    radial-gradient(circle at 20% 30%, var(--watermark) 2px, transparent 2px),
+    radial-gradient(circle at 80% 70%, var(--watermark) 1px, transparent 1px),
+    radial-gradient(circle at 40% 80%, var(--watermark) 1.5px, transparent 1.5px),
+    radial-gradient(circle at 70% 20%, var(--watermark) 1px, transparent 1px);
+  background-size: 200px 200px, 150px 150px, 180px 180px, 160px 160px;
+  opacity: 0.6;
+  z-index: 2;
+  animation: watermarkFloat 20s ease-in-out infinite;
+}
+
+@keyframes watermarkFloat {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  33% { transform: translate(10px, -10px) rotate(1deg); }
+  66% { transform: translate(-5px, 5px) rotate(-1deg); }
 }
 
 body::selection {
@@ -87,7 +116,7 @@ canvas {
   font-family: 'JetBrains Mono', monospace;
 }
 
-/* Apple iOS Glassmorphism Components */
+/* Modern Healthcare Glassmorphism Components */
 .glass-panel {
   background: var(--glass-bg);
   backdrop-filter: blur(20px) saturate(180%);
@@ -97,6 +126,53 @@ canvas {
   box-shadow: 
     0 8px 32px rgba(0, 0, 0, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.glass-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, 
+    var(--glass-inner) 0%, 
+    transparent 50%, 
+    var(--glass-inner) 100%);
+  border-radius: 16px;
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.glass-panel:hover {
+  background: var(--glass-hover);
+  border-color: var(--glass-border-hover);
+  transform: translateY(-2px);
+  box-shadow: 
+    0 16px 48px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.glass-panel::after {
+  content: "";
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: conic-gradient(from 0deg, 
+    transparent 0deg,
+    var(--accent-cyan) 90deg,
+    transparent 180deg,
+    var(--accent-purple) 270deg,
+    transparent 360deg);
+  opacity: 0.1;
+  animation: rotate 20s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes rotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 .glass-panel-strong {

@@ -6,8 +6,8 @@ import "./globals.css"
 import Providers from "./providers"
 
 export const metadata: Metadata = {
-  title: "Poseidon with Trident Technology - Clinical. Revenue. Control.",
-  description: "Poseidon with Trident Technology - Clinical. Revenue. Control.",
+  title: "StrykeFox Medical - Healthcare Platform & Clinical Solutions",
+  description: "StrykeFox Medical delivers comprehensive healthcare platforms, clinical solutions, and operational excellence for modern healthcare delivery.",
 }
 
 export default async function RootLayout({
