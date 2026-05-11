@@ -170,7 +170,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .mommy-care-hero h1 {
-  font-size: clamp(32px, 5vw, 48px);
+  font-size: 32px;
   font-weight: 600;
   color: #2C1810;
   line-height: 1.2;
@@ -183,13 +183,21 @@ h1, h2, h3, h4, h5, h6 {
   margin-right: auto;
 }
 
+@media (min-width: 640px) {
+  .mommy-care-hero h1 { font-size: 40px; }
+}
+
+@media (min-width: 1024px) {
+  .mommy-care-hero h1 { font-size: 48px; }
+}
+
 .mommy-care-hero h1 span {
   color: #C97C5D;
   font-weight: 700;
 }
 
 .mommy-care-hero p {
-  font-size: clamp(16px, 2.5vw, 20px);
+  font-size: 16px;
   color: #6B5B54;
   max-width: 600px;
   margin: 0 auto 40px;
@@ -197,6 +205,14 @@ h1, h2, h3, h4, h5, h6 {
   z-index: 2;
   line-height: 1.7;
   font-weight: 400;
+}
+
+@media (min-width: 768px) {
+  .mommy-care-hero p { font-size: 18px; }
+}
+
+@media (min-width: 1024px) {
+  .mommy-care-hero p { font-size: 20px; }
 }
 
 .cta-button {

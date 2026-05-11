@@ -479,7 +479,7 @@
   max-width: 1240px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 1px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -584,10 +584,6 @@
 .founderInner {
   max-width: 1240px;
   margin: 0 auto;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6rem;
-  align-items: center;
 }
 
 .fQuote {
@@ -704,15 +700,106 @@
   content: "→";
 }
 
-.contact {
-  padding: 8rem 4rem;
+/* ── NSI nav tag ─────────────────────────────────────────────────────────── */
+.nsiTag {
+  font-size: 0.48rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #f0b432;
+  border: 1px solid rgba(240, 180, 50, 0.35);
+  border-radius: 3px;
+  padding: 2px 5px;
+  line-height: 1;
+}
+
+/* ── Founder section overhaul ────────────────────────────────────────────── */
+.fQuoteWrap {
+  max-width: 860px;
+  margin: 0 auto 4rem;
   text-align: center;
+}
+
+.founderCards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  max-width: 1240px;
+  margin: 0 auto;
+}
+
+.fCardTop {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.fAvatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.5), rgba(6, 182, 212, 0.35));
+  border: 1px solid rgba(6, 182, 212, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #06b6d4;
+  flex-shrink: 0;
+}
+
+.fAvatarGold {
+  background: linear-gradient(135deg, rgba(240, 180, 50, 0.35), rgba(240, 180, 50, 0.15));
+  border-color: rgba(240, 180, 50, 0.4);
+  color: #f0b432;
+}
+
+.fCardGold {
+  border-color: rgba(240, 180, 50, 0.15);
+}
+
+.fCardGold .fTitle {
+  color: #f0b432;
+}
+
+.fCardGold .fCred::before {
+  background: #f0b432;
+}
+
+/* ── Contact / referral section ─────────────────────────────────────────── */
+.contact {
+  padding: 7rem 4rem;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   background: linear-gradient(180deg, #070e1c 0%, #04090f 100%);
 }
 
+.contactInner {
+  max-width: 1240px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1.6fr;
+  gap: 5rem;
+  align-items: start;
+}
+
+.contactHead {
+  position: sticky;
+  top: 80px;
+}
+
+.contactForm {
+  background: rgba(10, 21, 37, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  padding: 2.5rem;
+  backdrop-filter: blur(20px);
+}
+
 .cTitle {
-  font-size: clamp(2.2rem, 4vw, 3.8rem);
+  font-size: clamp(2rem, 3.5vw, 3.2rem);
   font-weight: 300;
   color: #fff;
   letter-spacing: -0.025em;
@@ -734,18 +821,50 @@
 }
 
 .cDesc {
-  font-size: 0.88rem;
+  font-size: 0.82rem;
   line-height: 1.8;
   color: rgba(200, 220, 245, 0.6);
-  max-width: 480px;
-  margin: 0 auto 3rem;
+  max-width: 400px;
+  margin-bottom: 2rem;
 }
 
 .cCtas {
   display: flex;
-  justify-content: center;
   gap: 1rem;
   flex-wrap: wrap;
+  margin-bottom: 2.5rem;
+}
+
+/* ── NSI info panel ─────────────────────────────────────────────────────── */
+.nsiPanel {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  padding: 1rem 1.2rem;
+  background: rgba(240, 180, 50, 0.05);
+  border: 1px solid rgba(240, 180, 50, 0.15);
+  border-radius: 12px;
+}
+
+.nsiPanelLogo {
+  border-radius: 7px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.nsiPanelName {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #f0b432;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-bottom: 0.3rem;
+}
+
+.nsiPanelDesc {
+  font-size: 0.65rem;
+  line-height: 1.6;
+  color: rgba(200, 220, 245, 0.5);
 }
 
 .btnGhost {
@@ -892,12 +1011,21 @@
   }
 
   .platGrid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, 1fr);
   }
 
-  .founderInner {
+  .founderCards {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+  .contactInner {
     grid-template-columns: 1fr;
     gap: 3rem;
+  }
+
+  .contactHead {
+    position: static;
   }
 
   .platform,

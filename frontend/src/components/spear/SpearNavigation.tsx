@@ -3,18 +3,17 @@
 import React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { 
-  Command, 
-  FileText, 
-  Database, 
-  Brain, 
-  Zap, 
-  DollarSign, 
-  Puzzle, 
-  Settings, 
-  LogOut,
+import {
+  Command,
+  FileText,
+  Database,
+  Brain,
+  Zap,
+  DollarSign,
+  Puzzle,
+  Settings,
   Activity,
-  Archive
+  LogOut
 } from "lucide-react"
 
 const T = {

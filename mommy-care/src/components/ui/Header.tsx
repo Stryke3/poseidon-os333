@@ -16,9 +16,9 @@ export default function Header() {
         <div className="flex items-center justify-between">
           {/* Logo */}
           <Link href="/" className="flex items-center space-x-3">
-            <img 
-              src="/assets/mommy-care-logo.png" 
-              alt="Mommy Care Kit Logo" 
+            <img
+              src={`${process.env.NEXT_PUBLIC_BASE_PATH || ''}/assets/mommy-care-logo.png`}
+              alt="Mommy Care Kit Logo"
               className="w-10 h-10"
             />
             <div>

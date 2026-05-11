@@ -4,6 +4,7 @@ import { useEffect } from "react"
 import Image from "next/image"
 import { DM_Sans, Lora } from "next/font/google"
 import styles from "./page.module.css"
+import CarePathIntakeForm from "@/components/public/CarePathIntakeForm"
 
 const dmSans = DM_Sans({
   subsets: ["latin"],
@@ -28,7 +29,7 @@ const physicianPortalUrl =
   process.env.NEXT_PUBLIC_REP_PORTAL_URL ||
   "/login"
 
-const contactHandlerUrl = "/founder#contact"
+const contactHandlerUrl = "#contact"
 
 const cx = (...classes: Array<string | false | null | undefined>) =>
   classes.filter(Boolean).join(" ")
@@ -119,6 +120,8 @@ export default function HomePage() {
           </span>
           <div className={styles.brandSep} />
           <span className={styles.brandBy}>CarePath</span>
+          <div className={styles.brandSep} />
+          <span className={styles.nsiTag}>NSI</span>
         </a>
         <div className={styles.navR}>
           <a href="#pathways" className={styles.navA}>
@@ -128,10 +131,10 @@ export default function HomePage() {
             Platform
           </a>
           <a href="#founder" className={styles.navA}>
-            Founder
+            Founders
           </a>
-          <a href={contactHandlerUrl} className={styles.navCta}>
-            Partner With Us
+          <a href="#referral" className={styles.navCta}>
+            Submit Referral
           </a>
         </div>
       </nav>
@@ -267,12 +270,43 @@ export default function HomePage() {
               Scalable operating systems, workflow orchestration, and performance frameworks that power modern healthcare delivery across all care settings.
             </p>
           </div>
+          <div className={cx(styles.platCard, styles.reveal, styles.d4)}>
+            <div className={styles.platLogo}>
+              <Image
+                src="/images/soc13-logo-simple.svg"
+                alt="SoC13 Acquisition Group"
+                width={180}
+                height={38}
+              />
+            </div>
+            <p className={styles.platName}>SoC13 Acquisition Group</p>
+            <p className={styles.platRole}>Strategic Acquisitions</p>
+            <p className={styles.platDesc}>
+              Specialized acquisition group focused on strategic healthcare assets, medical technology companies, and service platforms that complement and expand the StrykeFox ecosystem.
+            </p>
+          </div>
+          <div className={cx(styles.platCard, styles.reveal, styles.d5)}>
+            <div className={styles.platLogo}>
+              <Image
+                src="/images/nsi-platform.svg"
+                alt="NorthStar Surgical Innovations"
+                width={180}
+                height={38}
+              />
+            </div>
+            <p className={styles.platName}>NorthStar Surgical</p>
+            <p className={styles.platRole}>Medical Innovation</p>
+            <p className={styles.platDesc}>
+              Practical TKA solutions, workflow impact, and speed to market. Innovation built around how ASCs operate with blocking systems, saw development, and operator-validated gaps.
+            </p>
+          </div>
         </div>
       </section>
 
       <section className={styles.founder} id="founder">
         <div className={styles.founderInner}>
-          <div className={styles.reveal}>
+          {/* Full-width quote */}
+          <div className={cx(styles.fQuoteWrap, styles.reveal)}>
             <p className={styles.fQuote}>
               &quot;Vertical stacks create operational control. Horizontal
               expansion unlocks scale. The result is{" "}
@@ -282,67 +316,129 @@ export default function HomePage() {
               </strong>
               &quot;
             </p>
-            <p className={styles.fAttr}>Adam W. Stryker — Founder &amp; CEO</p>
+            <p className={styles.fAttr}>Adam W. Stryker — Co-Founder &amp; CEO</p>
           </div>
-          <div className={cx(styles.fCard, styles.reveal, styles.d2)}>
-            <h3 className={styles.fName}>Adam W. Stryker</h3>
-            <p className={styles.fTitle}>
-              Founder &amp; CEO — StrykeFox Medical
-            </p>
-            <p className={styles.fBio}>
-              Healthcare operator and platform builder. Architect of vertically
-              integrated healthcare infrastructure built for national scale.
-            </p>
-            <div className={styles.fCreds}>
-              <span className={styles.fCred}>
-                Board Member — SENSARS Neuroprosthetics | FDA Breakthrough Device
-              </span>
-              <span className={styles.fCred}>
-                Inc. 5000 Class of 2019 — Top 300 Healthcare Executive
-              </span>
-              <span className={styles.fCred}>
-                SVP/CTO — Americans for Prosperity | $889M, 35 States
-              </span>
-              <span className={styles.fCred}>
-                Director, Government Relations — Las Vegas Sands
-              </span>
-              <span className={styles.fCred}>
-                MBA Candidate — Pepperdine Graziadio Business School
-              </span>
+
+          {/* Two co-founder cards side by side */}
+          <div className={styles.founderCards}>
+            {/* Adam Stryker */}
+            <div className={cx(styles.fCard, styles.reveal, styles.d1)}>
+              <div className={styles.fCardTop}>
+                <div className={styles.fAvatar}>AWS</div>
+                <div>
+                  <h3 className={styles.fName}>Adam W. Stryker</h3>
+                  <p className={styles.fTitle}>Co-Founder &amp; CEO — StrykeFox Medical</p>
+                </div>
+              </div>
+              <p className={styles.fBio}>
+                Healthcare operator and platform builder. Architect of vertically
+                integrated healthcare infrastructure built for national scale.
+                Founder of NorthStar Surgical Institute (NSI) and developer of
+                Poseidon OS — the CRM·EMR that powers CarePath.
+              </p>
+              <div className={styles.fCreds}>
+                <span className={styles.fCred}>
+                  Board Member — SENSARS Neuroprosthetics | FDA Breakthrough Device
+                </span>
+                <span className={styles.fCred}>
+                  Inc. 5000 Class of 2019 — Top 300 Healthcare Executive
+                </span>
+                <span className={styles.fCred}>
+                  SVP/CTO — Americans for Prosperity | $889M, 35 States
+                </span>
+                <span className={styles.fCred}>
+                  Director, Government Relations — Las Vegas Sands
+                </span>
+                <span className={styles.fCred}>
+                  MBA Candidate — Pepperdine Graziadio Business School
+                </span>
+              </div>
+              <a
+                href="https://www.adamwstryker.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.fLink}
+              >
+                adamwstryker.com
+              </a>
             </div>
-            <a
-              href="https://www.adamwstryker.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className={styles.fLink}
-            >
-              adamwstryker.com
-            </a>
+
+            {/* Ben Fox */}
+            <div className={cx(styles.fCard, styles.fCardGold, styles.reveal, styles.d2)}>
+              <div className={styles.fCardTop}>
+                <div className={cx(styles.fAvatar, styles.fAvatarGold)}>BF</div>
+                <div>
+                  <h3 className={styles.fName}>Ben Fox</h3>
+                  <p className={styles.fTitle}>Co-Founder &amp; SVP — StrykeFox Medical</p>
+                </div>
+              </div>
+              <p className={styles.fBio}>
+                Operations and business development executive driving StrykeFox
+                Medical&apos;s physician network expansion, territory strategy,
+                and clinical partnerships across key national markets. The
+                operator who closes the last mile.
+              </p>
+              <div className={styles.fCreds}>
+                <span className={styles.fCred}>
+                  Co-Founder — StrykeFox Medical | National Launch Architect
+                </span>
+                <span className={styles.fCred}>
+                  SVP Business Development — Physician Network &amp; Territory Strategy
+                </span>
+                <span className={styles.fCred}>
+                  Clinical Partnerships — ASC, Orthopedic &amp; Surgical Group Expansion
+                </span>
+                <span className={styles.fCred}>
+                  CarePath Field Operations — DME, Biologics &amp; Surgical Supply
+                </span>
+                <span className={styles.fCred}>
+                  NorthStar Surgical Institute (NSI) — Commercial Lead
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      <section className={styles.contact} id="contact">
-        <div className={styles.reveal}>
-          <p className={cx(styles.secEye, styles.secEyeCenter)}>
-            Partner With CarePath
-          </p>
-          <h2 className={styles.cTitle}>
-            Own the <em>pathway.</em>
-          </h2>
-          <p className={styles.cLora}>&quot;The thread belongs to someone now.&quot;</p>
-          <p className={styles.cDesc}>
-            CarePath partners with surgical groups, orthopedic practices, ASCs, OB
-            groups, and discharge-heavy providers who are ready to deliver what
-            comes next.
-          </p>
-          <div className={styles.cCtas}>
-              <a href={contactHandlerUrl} className={styles.btnMain}>
-                Contact Our Team
+      <section className={styles.contact} id="referral">
+        <div className={styles.contactInner}>
+          <div className={cx(styles.contactHead, styles.reveal)}>
+            <p className={cx(styles.secEye)}>
+              Submit a CarePath Referral
+            </p>
+            <h2 className={styles.cTitle}>
+              Own the <em>pathway.</em>
+            </h2>
+            <p className={styles.cLora}>&quot;The thread belongs to someone now.&quot;</p>
+            <p className={styles.cDesc}>
+              CarePath partners with surgical groups, orthopedic practices, ASCs,
+              OB groups, and discharge-heavy providers ready to deliver what comes
+              next. Submit a referral below — our team responds within 24 hours.
+            </p>
+            <div className={styles.cCtas}>
+              <a href={physicianPortalUrl} className={styles.btnGhost}>
+                Rep Portal →
               </a>
-            <a href={physicianPortalUrl} className={styles.btnGhost}>
-              Rep Portal
-            </a>
+            </div>
+            <div className={styles.nsiPanel}>
+              <Image
+                src="/images/nsi-logo.png"
+                alt="NorthStar Surgical Institute"
+                width={40}
+                height={40}
+                className={styles.nsiPanelLogo}
+              />
+              <div>
+                <p className={styles.nsiPanelName}>NorthStar Surgical Institute</p>
+                <p className={styles.nsiPanelDesc}>
+                  Practical TKA solutions · Blocking systems · Saw development ·
+                  Operator-validated innovation.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className={cx(styles.contactForm, styles.reveal, styles.d2)}>
+            <CarePathIntakeForm />
           </div>
         </div>
       </section>
