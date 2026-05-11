@@ -29,6 +29,8 @@ const physicianPortalUrl =
   process.env.NEXT_PUBLIC_REP_PORTAL_URL ||
   "/login"
 
+const spearLoginUrl = "/login"
+
 const contactHandlerUrl = "#contact"
 
 const cx = (...classes: Array<string | false | null | undefined>) =>
@@ -133,6 +135,9 @@ export default function HomePage() {
           <a href="#founder" className={styles.navA}>
             Founders
           </a>
+          <a href={spearLoginUrl} className={styles.navA}>
+            SPEAR Login
+          </a>
           <a href="#referral" className={styles.navCta}>
             Submit Referral
           </a>
@@ -141,10 +146,46 @@ export default function HomePage() {
 
       <section className={styles.hero} id="pathways">
         <div className={styles.heroBg} />
+        <div className={cx(styles.heroPhoto, styles.heroPhotoLeft)}>
+          <Image
+            src="/images/operating-room.svg"
+            alt=""
+            fill
+            sizes="42vw"
+            priority
+          />
+        </div>
+        <div className={cx(styles.heroPhoto, styles.heroPhotoRight)}>
+          <Image
+            src="/images/surgical-equipment.svg"
+            alt=""
+            fill
+            sizes="36vw"
+            priority
+          />
+        </div>
+        <div className={styles.heroLogoWatermark}>
+          <Image
+            src="/images/strykefox-medical-logo.png"
+            alt=""
+            fill
+            sizes="44vw"
+            priority
+          />
+        </div>
         <div className={styles.heroGrid} />
         <div className={styles.heroPulse} />
         <div className={cx(styles.heroPulse, styles.heroPulse2)} />
         <div className={styles.heroInner}>
+          <div className={styles.heroLogo}>
+            <Image
+              src="/images/strykefox-medical-logo.png"
+              alt="StrykeFox Medical"
+              width={190}
+              height={285}
+              priority
+            />
+          </div>
           <p className={styles.heroBy}>by StrykeFox Medical</p>
           <h1 className={styles.heroTitle}>
             CARE<span>PATH</span>
@@ -191,6 +232,14 @@ export default function HomePage() {
       </section>
 
       <section className={styles.maternity}>
+        <div className={styles.maternityWatermark}>
+          <Image
+            src="/images/medical-tray.svg"
+            alt=""
+            fill
+            sizes="48vw"
+          />
+        </div>
         <div className={styles.matLeft}>
           <p className={styles.matEye}>CarePath Maternity</p>
           <h2 className={styles.matTitle}>
@@ -207,10 +256,10 @@ export default function HomePage() {
         <div className={styles.matRight}>
           <div className={styles.matLogoWrap}>
             <Image
-              src="/images/mommy-care-en.png"
+              src="/images/mommy-care-kit-logo.png"
               alt="Mommy Care Kit"
-              width={220}
-              height={220}
+              width={300}
+              height={300}
             />
           </div>
           <p className={styles.matSubdomain}>{mommyCareUrl}</p>
@@ -400,24 +449,30 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className={styles.contact} id="referral">
+      <section className={styles.contact} id="contact">
         <div className={styles.contactInner}>
           <div className={cx(styles.contactHead, styles.reveal)}>
             <p className={cx(styles.secEye)}>
-              Submit a CarePath Referral
+              Transform Healthcare Delivery
             </p>
             <h2 className={styles.cTitle}>
-              Own the <em>pathway.</em>
+              Build the <em>future.</em>
             </h2>
-            <p className={styles.cLora}>&quot;The thread belongs to someone now.&quot;</p>
+            <p className={styles.cLora}>&quot;Healthcare delivery reimagined through operational excellence.&quot;</p>
             <p className={styles.cDesc}>
-              CarePath partners with surgical groups, orthopedic practices, ASCs,
-              OB groups, and discharge-heavy providers ready to deliver what comes
-              next. Submit a referral below — our team responds within 24 hours.
+              StrykeFox Medical partners with healthcare providers to transform delivery 
+              through vertically integrated platforms, operational excellence, and technology-driven 
+              solutions. Join us in building the future of healthcare.
             </p>
             <div className={styles.cCtas}>
-              <a href={physicianPortalUrl} className={styles.btnGhost}>
-                Rep Portal →
+              <a href="/mommy-care" className={styles.btnGhost}>
+                Mommy Care Kit →
+              </a>
+              <a href="/el-kit-de-cuidado" className={styles.btnGhost}>
+                El Kit de Cuidado →
+              </a>
+              <a href={physicianPortalUrl} className={styles.btnMain}>
+                Partner With Us
               </a>
             </div>
             <div className={styles.nsiPanel}>
