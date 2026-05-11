@@ -204,7 +204,7 @@ export default function HomePage() {
             {navItems.map(([label, href]) => (
               <li key={label}><a href={href}>{label}</a></li>
             ))}
-            <li><a href="#contact" className="nav-cta">Partner With Us</a></li>
+            <li><a href="#contact" className="nav-cta">Partner With StrykeFox</a></li>
           </ul>
 
           <button className="mobile-menu-button" onClick={() => setMenuOpen((open) => !open)} aria-label="Toggle navigation">
@@ -214,7 +214,7 @@ export default function HomePage() {
 
         {menuOpen ? (
           <div className="mobile-menu">
-            {[...navItems, ['Partner With Us', '#contact']].map(([label, href]) => (
+            {[...navItems, ['Partner With StrykeFox', '#contact']].map(([label, href]) => (
               <a key={label} href={href} onClick={() => setMenuOpen(false)}>{label}</a>
             ))}
           </div>
@@ -358,7 +358,7 @@ export default function HomePage() {
             <p className="provider-pitch">
               We take the recovery product workflow off your staff while preserving documentation, visibility, and patient continuity.
             </p>
-            <a href="#contact" className="btn-primary">Partner With CarePath</a>
+            <a href="#contact" className="btn-primary">Partner With StrykeFox</a>
           </div>
 
           <div className="value-list reveal reveal-delay-2">
@@ -445,7 +445,7 @@ export default function HomePage() {
           <div>
             <p className="footer-col-title">Connect</p>
             <ul className="footer-links">
-              {['For Providers', 'Rep Portal', 'Maternal Portal', 'Partner With Us', 'Compliance'].map((item) => (
+              {['For Providers', 'Rep Portal', 'Maternal Portal', 'Partner With StrykeFox', 'Compliance'].map((item) => (
                 <li key={item}><a href="#contact">{item}</a></li>
               ))}
             </ul>
