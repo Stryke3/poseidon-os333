@@ -225,7 +225,7 @@ export default function HomePage() {
           </div>
           <div className={styles.heroCta}>
             <a href={contactHandlerUrl} className={styles.btnMain}>
-              Partner With CarePath
+              Partner With StrykeFox
             </a>
           </div>
         </div>
@@ -472,7 +472,7 @@ export default function HomePage() {
                 El Kit de Cuidado →
               </a>
               <a href={physicianPortalUrl} className={styles.btnMain}>
-                Partner With Us
+                Partner With StrykeFox
               </a>
             </div>
             <div className={styles.nsiPanel}>
