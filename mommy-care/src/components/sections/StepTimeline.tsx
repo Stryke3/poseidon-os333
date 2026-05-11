@@ -3,21 +3,21 @@ import { CheckCircle, FileCheck, Package, Heart } from 'lucide-react';
 const steps = [
   {
     icon: FileCheck,
-    title: "Completa el Formulario",
-    description: "Responde unas preguntas simples sobre tu embarazo y seguro. Solo toma 5 minutos.",
-    detail: "Información básica y segura"
+    title: "Complete the Form",
+    description: "Answer a few simple questions about your pregnancy and insurance. Takes just 5 minutes.",
+    detail: "Safe and secure"
   },
   {
     icon: CheckCircle,
-    title: "Verificamos tu Seguro",
-    description: "Nuestro equipo revisa tu cobertura y te confirma si calificas. Sin costo para ti.",
-    detail: "Respuesta en 24-48 horas"
+    title: "We Verify Your Coverage",
+    description: "Our team checks your coverage and confirms if you qualify — at no cost to you.",
+    detail: "Response within 24–48 hours"
   },
   {
     icon: Package,
-    title: "Recibe tu Kit",
-    description: "Tu kit llega directamente a tu puerta con instrucciones en español.",
-    detail: "Envío gratis en 3-5 días"
+    title: "Receive Your Kit",
+    description: "Your kit ships directly to your door with clear instructions included.",
+    detail: "Free shipping in 3–5 days"
   }
 ];
 
@@ -27,10 +27,10 @@ export default function StepTimeline() {
       <div className="container mx-auto px-4">
         <div className="text-center mb-12">
           <h2 className="text-3xl md:text-4xl font-serif text-warm mb-4">
-            ¿Cómo Funciona?
+            How It Works
           </h2>
           <p className="text-gray-600 max-w-2xl mx-auto">
-            Obtener tu kit de cuidado es fácil y rápido. Tres simples pasos y estarás en camino a un embarazo más cómodo.
+            Getting your Mommy Care Kit is simple. Three easy steps and you're on your way to a more comfortable pregnancy.
           </p>
         </div>
 
@@ -107,8 +107,8 @@ export default function StepTimeline() {
             <div>
               <h4 className="font-semibold text-warm mb-2">Importante:</h4>
               <p className="text-gray-600 text-sm leading-relaxed">
-                Te avisamos si hay algún costo antes de enviar tu kit. Siempre tendrás la opción de decidir si continuar. 
-                No hay sorpresas ni cargos ocultos. Tu tranquilidad es nuestra prioridad.
+                We'll let you know if there's any cost before shipping your kit. You always have the option to decide whether to continue.
+                No surprises, no hidden charges. Your peace of mind is our priority.
               </p>
             </div>
           </div>
@@ -122,10 +122,10 @@ export default function StepTimeline() {
             rel="noopener noreferrer"
             className="inline-flex items-center space-x-2 bg-secondary text-white px-8 py-4 rounded-full hover:bg-opacity-90 transition-colors font-medium text-lg shadow-lg"
           >
-            <span>Comenzar Ahora</span>
+            <span>Get Started Now</span>
           </a>
           <p className="text-sm text-gray-500 mt-3">
-            Solo 5 minutos para cambiar tu experiencia de embarazo
+            Just 5 minutes to change your pregnancy experience
           </p>
         </div>
       </div>
