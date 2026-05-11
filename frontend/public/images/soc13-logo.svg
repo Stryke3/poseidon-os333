@@ -1,0 +1,88 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <!-- Outer blue border circle -->
+  <circle cx="100" cy="100" r="95" fill="#003366" stroke="#001a33" stroke-width="2"/>
+  
+  <!-- Gold inner border -->
+  <circle cx="100" cy="100" r="88" fill="none" stroke="#FFD700" stroke-width="3"/>
+  
+  <!-- American flag background pattern -->
+  <defs>
+    <pattern id="flagPattern" x="0" y="0" width="20" height="10" patternUnits="userSpaceOnUse">
+      <rect width="20" height="5" fill="#B22234"/>
+      <rect y="5" width="20" height="5" fill="white"/>
+    </pattern>
+  </defs>
+  <circle cx="100" cy="100" r="85" fill="url(#flagPattern)" opacity="0.3"/>
+  
+  <!-- Blue canton area -->
+  <rect x="40" y="40" width="60" height="40" fill="#002868" opacity="0.4"/>
+  
+  <!-- Stars in canton -->
+  <g fill="white" opacity="0.6">
+    <circle cx="50" cy="50" r="1.5"/>
+    <circle cx="60" cy="50" r="1.5"/>
+    <circle cx="70" cy="50" r="1.5"/>
+    <circle cx="80" cy="50" r="1.5"/>
+    <circle cx="90" cy="50" r="1.5"/>
+    <circle cx="55" cy="60" r="1.5"/>
+    <circle cx="65" cy="60" r="1.5"/>
+    <circle cx="75" cy="60" r="1.5"/>
+    <circle cx="85" cy="60" r="1.5"/>
+    <circle cx="50" cy="70" r="1.5"/>
+    <circle cx="60" cy="70" r="1.5"/>
+    <circle cx="70" cy="70" r="1.5"/>
+    <circle cx="80" cy="70" r="1.5"/>
+    <circle cx="90" cy="70" r="1.5"/>
+  </g>
+  
+  <!-- Golden hexagonal shield -->
+  <polygon points="100,45 130,65 130,105 100,125 70,105 70,65" fill="#FFD700" stroke="#B8860B" stroke-width="2"/>
+  
+  <!-- Building silhouette inside shield -->
+  <rect x="85" y="75" width="30" height="35" fill="black"/>
+  <polygon points="85,75 100,65 115,75" fill="black"/>
+  <rect x="90" y="80" width="4" height="6" fill="#FFD700"/>
+  <rect x="98" y="80" width="4" height="6" fill="#FFD700"/>
+  <rect x="106" y="80" width="4" height="6" fill="#FFD700"/>
+  <rect x="90" y="90" width="4" height="6" fill="#FFD700"/>
+  <rect x="98" y="90" width="4" height="6" fill="#FFD700"/>
+  <rect x="106" y="90" width="4" height="6" fill="#FFD700"/>
+  
+  <!-- XIII text below building -->
+  <text x="100" y="115" font-family="serif" font-size="8" font-weight="bold" text-anchor="middle" fill="black">XIII</text>
+  
+  <!-- Golden eagle above shield -->
+  <g fill="#FFD700" stroke="#B8860B" stroke-width="0.5">
+    <ellipse cx="100" cy="30" rx="8" ry="6"/>
+    <polygon points="92,30 85,28 88,32"/>
+    <polygon points="108,30 115,28 112,32"/>
+    <polygon points="95,28 93,25 96,27"/>
+    <polygon points="105,28 107,25 104,27"/>
+    <circle cx="97" cy="29" r="1" fill="black"/>
+    <circle cx="103" cy="29" r="1" fill="black"/>
+    <polygon points="100,32 98,35 102,35"/>
+  </g>
+  
+  <!-- Crossed daggers below shield -->
+  <g>
+    <!-- Blue dagger -->
+    <line x1="75" y1="140" x2="95" y2="120" stroke="#0066CC" stroke-width="3"/>
+    <polygon points="95,120 92,118 94,122" fill="#0066CC"/>
+    <rect x="73" y="138" width="4" height="8" fill="#0066CC"/>
+    
+    <!-- Red dagger -->
+    <line x1="125" y1="140" x2="105" y2="120" stroke="#CC0000" stroke-width="3"/>
+    <polygon points="105,120 108,118 106,122" fill="#CC0000"/>
+    <rect x="123" y="138" width="4" height="8" fill="#CC0000"/>
+  </g>
+  
+  <!-- SoC13 text at top -->
+  <text x="100" y="20" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#FFD700">SoC13</text>
+  
+  <!-- Stars flanking SoC13 text -->
+  <polygon points="75,18 76,20 78,20 76,22 77,24 75,22 73,24 74,22 72,20 74,20" fill="#FFD700"/>
+  <polygon points="125,18 126,20 128,20 126,22 127,24 125,22 123,24 124,22 122,20 124,20" fill="#FFD700"/>
+  
+  <!-- SEALED BID text at bottom -->
+  <text x="100" y="180" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#FFD700">SEALED BID</text>
+</svg>
