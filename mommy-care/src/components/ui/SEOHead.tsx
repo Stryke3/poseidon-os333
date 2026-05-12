@@ -14,7 +14,7 @@ export default function SEOHead({
   title = "Pregnancy and Postpartum Care Kit — Covered by Your Insurance | Mommy Care Kit",
   description = "Get your pregnancy and postpartum care kit covered by most insurance plans. FDA-approved, safe and medication-free products. Bilingual English and Spanish support.",
   keywords = "pregnancy kit, postpartum care, pregnancy insurance, free pregnancy products, belly band, compression stockings pregnancy, TENS pregnancy, mommy care, bilingual pregnancy care",
-  image = "/api/placeholder/1200/630",
+  image = "/assets/mommy-care-logo.png",
   url = "https://mommycarekit.com",
   type = "website",
   schemaData

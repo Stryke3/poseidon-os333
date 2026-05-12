@@ -8,11 +8,7 @@ const PAGE_URL = `${SITE_URL}/founder`
 
 // TODO: Replace with real public URLs once assets are deployed
 const IMAGE_URL = `${SITE_URL}/founder-portrait.jpg`
-const LOGO_URL = `${SITE_URL}/images/strykefox-logo.png` // TODO: confirm public logo path
-const LINKEDIN_URL = "https://www.linkedin.com/in/REPLACE_ME" // TODO: replace with real LinkedIn
-const FACEBOOK_URL = "https://www.facebook.com/REPLACE_ME" // TODO: replace with real Facebook
-const COMPANY_LINKEDIN_URL = "https://www.linkedin.com/company/REPLACE_ME" // TODO: replace
-const COMPANY_FACEBOOK_URL = "https://www.facebook.com/REPLACE_ME" // TODO: replace
+const LOGO_URL = `${SITE_URL}/images/strykefox-medical-logo.png`
 
 export const metadata: Metadata = {
   title: "Adam Stryker | Founder | Healthcare Operator | StrykeFox Medical",
@@ -79,7 +75,6 @@ const profileJsonLd = {
       name: "StrykeFox Medical",
       url: SITE_URL,
     },
-    sameAs: [LINKEDIN_URL, FACEBOOK_URL], // TODO: replace placeholders
     knowsAbout: [
       "Medical devices",
       "Durable medical equipment",
@@ -107,7 +102,6 @@ const organizationJsonLd = {
     name: "Adam Stryker",
     url: PAGE_URL,
   },
-  sameAs: [COMPANY_LINKEDIN_URL, COMPANY_FACEBOOK_URL], // TODO: replace placeholders
 }
 
 const philosophyPoints = [
@@ -255,28 +249,9 @@ export default function FounderPage() {
                     Industry Presence
                   </p>
                   <ul className="mt-4 space-y-2.5 text-sm leading-6 text-slate-200/76">
-                    <li>
-                      <a
-                        href={LINKEDIN_URL}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="transition hover:text-white"
-                      >
-                        LinkedIn — Thought Leadership
-                      </a>
-                    </li>
-                    <li>
-                      <a
-                        href={FACEBOOK_URL}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="transition hover:text-white"
-                      >
-                        Facebook — Public Profile
-                      </a>
-                    </li>
                     <li>Speaker — Healthcare Infrastructure</li>
                     <li>Founder — StrykeFox Medical Platform</li>
+                    <li>Builder — Physician Enablement Systems</li>
                   </ul>
                 </div>
               </aside>

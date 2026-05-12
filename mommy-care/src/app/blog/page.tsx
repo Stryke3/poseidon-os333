@@ -119,7 +119,7 @@ export default function BlogPage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div className="relative h-64 lg:h-auto">
                   <Image
-                    src="/api/placeholder/600/400"
+                    src="/assets/mommy-care-logo.png"
                     alt={post.imageAlt}
                     fill
                     className="object-cover"
@@ -167,7 +167,7 @@ export default function BlogPage() {
               <article key={post.id} className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-xl transition-shadow">
                 <div className="relative h-48">
                   <Image
-                    src="/api/placeholder/400/250"
+                    src="/assets/mommy-care-logo.png"
                     alt={post.imageAlt}
                     fill
                     className="object-cover"

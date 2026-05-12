@@ -14,7 +14,7 @@ export default function BenefitCard({
   title, 
   description, 
   imageAlt,
-  imageSrc = "/api/placeholder/300/200"
+  imageSrc = "/assets/mommy-care-logo.png"
 }: BenefitCardProps) {
   return (
     <div className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-xl transition-all duration-300 border border-terracotta-light/20">

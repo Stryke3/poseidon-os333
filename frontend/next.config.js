@@ -57,6 +57,9 @@ const securityHeaders = [
 
 const nextConfig = {
   output: "standalone",
+  images: {
+    unoptimized: true,
+  },
   reactStrictMode: true,
   async headers() {
     return [

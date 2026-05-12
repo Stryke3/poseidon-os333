@@ -1,5 +1,3 @@
-"use client"
-
 'use client';
 
 import { useState } from 'react';
@@ -26,7 +24,7 @@ const testimonials: Testimonial[] = [
     content: "This kit completely changed my postpartum experience. The lumbar support saved me when I couldn't sleep from back pain. And the best part — my insurance covered it 100%.",
     favoriteProduct: "3-in-1 Support Band",
     imageAlt: "Happy mother with her baby",
-    imageSrc: "/api/placeholder/80/80"
+    imageSrc: "/assets/mommy-care-logo.png"
   },
   {
     id: 2,
@@ -36,7 +34,7 @@ const testimonials: Testimonial[] = [
     content: "As a first-time mom I was nervous about everything. The team walked me through every product and the compression stockings were a miracle for my swollen legs.",
     favoriteProduct: "Compression Stockings",
     imageAlt: "Smiling new mother",
-    imageSrc: "/api/placeholder/80/80"
+    imageSrc: "/assets/mommy-care-logo.png"
   },
   {
     id: 3,
@@ -46,7 +44,7 @@ const testimonials: Testimonial[] = [
     content: "The TENS unit helped me so much with postpartum pain without any medication. It's incredible that all of this is covered by insurance. 100% recommended!",
     favoriteProduct: "TENS Unit",
     imageAlt: "Mother with her family",
-    imageSrc: "/api/placeholder/80/80"
+    imageSrc: "/assets/mommy-care-logo.png"
   }
 ];
 
@@ -82,7 +80,7 @@ export default function TestimonialCarousel() {
               <div className="flex-shrink-0">
                 <div className="relative w-24 h-24 md:w-32 md:h-32">
                   <Image
-                    src={currentTestimonial.imageSrc || "/api/placeholder/80/80"}
+                    src={currentTestimonial.imageSrc || "/assets/mommy-care-logo.png"}
                     alt={currentTestimonial.imageAlt}
                     fill
                     className="rounded-full object-cover"

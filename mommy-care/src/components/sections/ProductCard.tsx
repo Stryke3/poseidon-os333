@@ -12,7 +12,7 @@ export default function ProductCard({
   name, 
   description, 
   imageAlt,
-  imageSrc = "/api/placeholder/250/250",
+  imageSrc = "/assets/mommy-care-logo.png",
   featured = false
 }: ProductCardProps) {
   return (

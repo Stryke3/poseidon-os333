@@ -16,7 +16,7 @@ const reviews = [
     favoriteProduct: "Faja de soporte 3-en-1",
     verified: true,
     imageAlt: "María González con su bebé",
-    imageSrc: "/api/placeholder/80/80"
+    imageSrc: "/assets/mommy-care-logo.png"
   },
   {
     id: 2,
@@ -29,7 +29,7 @@ const reviews = [
     favoriteProduct: "Medias de compresión",
     verified: true,
     imageAlt: "Ana Rodríguez sonriendo",
-    imageSrc: "/api/placeholder/80/80"
+    imageSrc: "/assets/mommy-care-logo.png"
   },
   {
     id: 3,
@@ -42,7 +42,7 @@ const reviews = [
     favoriteProduct: "TENS Unit",
     verified: true,
     imageAlt: "Carmen López con su familia",
-    imageSrc: "/api/placeholder/80/80"
+    imageSrc: "/assets/mommy-care-logo.png"
   },
   {
     id: 4,
@@ -55,7 +55,7 @@ const reviews = [
     favoriteProduct: "Soporte lumbar",
     verified: true,
     imageAlt: "Sofia Martinez embarazada",
-    imageSrc: "/api/placeholder/80/80"
+    imageSrc: "/assets/mommy-care-logo.png"
   },
   {
     id: 5,
@@ -68,7 +68,7 @@ const reviews = [
     favoriteProduct: "PlasmaFlow",
     verified: true,
     imageAlt: "Patricia Morales en consulta médica",
-    imageSrc: "/api/placeholder/80/80"
+    imageSrc: "/assets/mommy-care-logo.png"
   },
   {
     id: 6,
@@ -81,7 +81,7 @@ const reviews = [
     favoriteProduct: "Faja de soporte 3-en-1",
     verified: true,
     imageAlt: "Lucia Hernandez con sus hijos",
-    imageSrc: "/api/placeholder/80/80"
+    imageSrc: "/assets/mommy-care-logo.png"
   }
 ];
 
@@ -222,7 +222,7 @@ export default function ReviewsPage() {
                   <div className="flex-shrink-0">
                     <div className="relative w-16 h-16">
                       <Image
-                        src={review.imageSrc || "/api/placeholder/80/80"}
+                        src={review.imageSrc || "/assets/mommy-care-logo.png"}
                         alt={review.imageAlt}
                         fill
                         className="rounded-full object-cover"

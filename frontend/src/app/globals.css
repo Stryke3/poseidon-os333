@@ -1,29 +1,44 @@
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Apple iOS Glassmorphism Design System */
 :root {
-  /* Modern Healthcare Glassmorphism Design System */
-  --bg-primary: #0A0E27;
-  --bg-secondary: #151932;
-  --bg-deep: #0D1117;
-  --text-primary: #F8FAFC;
-  --text-secondary: #94A3B8;
-  --text-muted: #64748B;
-  --accent-cyan: #06B6D4;
-  --accent-purple: #8B5CF6;
-  --accent-blue: #3B82F6;
-  --accent-teal: #14B8A6;
-  --glass-bg: rgba(255, 255, 255, 0.08);
-  --glass-border: rgba(255, 255, 255, 0.15);
-  --glass-hover: rgba(255, 255, 255, 0.12);
-  --glass-border-hover: rgba(255, 255, 255, 0.25);
-  --glass-inner: rgba(139, 92, 246, 0.1);
-  --watermark: rgba(6, 182, 212, 0.03);
-  --gradient-health: linear-gradient(135deg, #0A0E27 0%, #151932 50%, #0D1117 100%);
-  --gradient-glass: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(6, 182, 212, 0.05) 100%);
+  /* Surgical Institutional Background System */
+  --bg-primary: #060B14;
+  --bg-secondary: #0E1726;
+  --bg-tertiary: #1A2332;
+  --bg-grid: #0E1726;
+  
+  /* Typography System */
+  --font-header: 'Syne', sans-serif;
+  --font-technical: 'JetBrains Mono', monospace;
+  
+  /* Surgical Color Palette */
+  --surgical-white: #F5F7FA;
+  --muted-steel: #7C92A6;
+  --status-cyan: #06B6D4;
+  --accent-cyan: #0891B2;
+  --accent-cyan-hover: #0E7490;
+  
+  /* Apple iOS Glassmorphism System */
+  --glass-bg: rgba(255, 255, 255, 0.05);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-hover: rgba(255, 255, 255, 0.08);
+  --glass-border-hover: rgba(255, 255, 255, 0.15);
+  --glass-inner: rgba(255, 255, 255, 0.02);
+  
+  /* Button System */
+  --btn-gloss-bg: rgba(255, 255, 255, 0.1);
+  --btn-gloss-border: rgba(255, 255, 255, 0.2);
+  --btn-gloss-hover: rgba(255, 255, 255, 0.2);
+  
+  /* Grid Overlay System */
+  --grid-color: rgba(14, 23, 38, 0.8);
+  --grid-size: 40px;
 }
 
 *, *::before, *::after {
@@ -39,9 +54,9 @@ html {
 
 body {
   min-height: 100vh;
-  background: var(--gradient-health);
-  color: var(--text-primary);
-  font-family: 'Syne', sans-serif;
+  background: var(--bg-primary);
+  color: var(--surgical-white);
+  font-family: var(--font-header);
   font-size: 14px;
   line-height: 1.6;
   overflow-x: hidden;
@@ -53,10 +68,11 @@ body::before {
   content: "";
   position: fixed;
   inset: 0;
+  background-image: 
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: var(--grid-size) var(--grid-size);
   pointer-events: none;
-  background: var(--gradient-glass);
-  background-size: 100% 100%;
-  opacity: 0.4;
   z-index: 1;
 }
 
@@ -65,13 +81,10 @@ body::after {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background-image: 
-    radial-gradient(circle at 20% 30%, var(--watermark) 2px, transparent 2px),
-    radial-gradient(circle at 80% 70%, var(--watermark) 1px, transparent 1px),
-    radial-gradient(circle at 40% 80%, var(--watermark) 1.5px, transparent 1.5px),
-    radial-gradient(circle at 70% 20%, var(--watermark) 1px, transparent 1px);
-  background-size: 200px 200px, 150px 150px, 180px 180px, 160px 160px;
-  opacity: 0.6;
+  background: radial-gradient(circle at 20% 80%, rgba(6, 182, 212, 0.08) 0%, transparent 50%),
+              radial-gradient(circle at 80% 20%, rgba(139, 92, 246, 0.06) 0%, transparent 50%),
+              radial-gradient(circle at 40% 40%, rgba(240, 180, 50, 0.04) 0%, transparent 40%);
+  opacity: 0.8;
   z-index: 2;
   animation: watermarkFloat 20s ease-in-out infinite;
 }
@@ -80,6 +93,101 @@ body::after {
   0%, 100% { transform: translate(0, 0) rotate(0deg); }
   33% { transform: translate(10px, -10px) rotate(1deg); }
   66% { transform: translate(-5px, 5px) rotate(-1deg); }
+}
+
+/* Apple iOS Glassmorphism Components */
+.btn-gloss {
+  background: var(--btn-gloss-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--btn-gloss-border);
+  border-radius: 12px;
+  color: var(--surgical-white);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+  padding: 12px 24px;
+  font-family: var(--font-technical);
+  font-weight: 500;
+  font-size: 14px;
+  letter-spacing: 0.05em;
+}
+
+.btn-gloss:hover {
+  background: var(--btn-gloss-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(6, 182, 212, 0.3);
+}
+
+.btn-ghost-gloss {
+  background: transparent;
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  color: var(--surgical-white);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+  padding: 12px 24px;
+  font-family: var(--font-technical);
+  font-weight: 500;
+  font-size: 14px;
+  letter-spacing: 0.05em;
+}
+
+.btn-ghost-gloss:hover {
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+}
+
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.glass-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, 
+    var(--glass-inner) 0%, 
+    transparent 50%, 
+    var(--glass-inner) 100%);
+  border-radius: 16px;
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.glass-panel:hover {
+  background: var(--glass-hover);
+  border-color: var(--glass-border-hover);
+  transform: translateY(-2px);
+  box-shadow: 
+    0 16px 48px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+/* Typography Classes */
+.font-syne {
+  font-family: var(--font-header);
+}
+
+.font-mono {
+  font-family: var(--font-technical);
 }
 
 body::selection {

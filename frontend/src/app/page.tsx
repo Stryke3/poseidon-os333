@@ -19,10 +19,7 @@ const lora = Lora({
   variable: "--font-lora",
 })
 
-const mommyCareUrl =
-  process.env.NEXT_PUBLIC_MOMMY_CARE_URL ||
-  process.env.NEXT_PUBLIC_MOMMY_CARE_SUBDOMAIN ||
-  "https://mommy-care-five.vercel.app"
+const mommyCareUrl = "/mommy-care"
 
 const physicianPortalUrl =
   process.env.NEXT_PUBLIC_PHYSICIAN_PORTAL_URL ||
@@ -169,64 +166,50 @@ export default function HomePage() {
             src="/images/strykefox-medical-logo.png"
             alt=""
             fill
-            sizes="44vw"
+            sizes="48vw"
             priority
           />
         </div>
         <div className={styles.heroGrid} />
         <div className={styles.heroPulse} />
-        <div className={cx(styles.heroPulse, styles.heroPulse2)} />
         <div className={styles.heroInner}>
-          <div className={styles.heroLogo}>
-            <Image
-              src="/images/strykefox-medical-logo.png"
-              alt="StrykeFox Medical"
-              width={190}
-              height={285}
-              priority
-            />
-          </div>
-          <p className={styles.heroBy}>by StrykeFox Medical</p>
-          <h1 className={styles.heroTitle}>
-            CARE<span>PATH</span>
-          </h1>
-          <p className={styles.heroTagline}>
-            The recovery pathway for every patient, every moment.
-          </p>
-          <div className={styles.pathways}>
-            <div className={styles.pathway}>
-              <div className={styles.pathwayIcon}>
-                <HeartlineIcon />
+          <div className={styles.heroContent}>
+            <h1 className={styles.matTitle}>Verified. Documented. Delivered.</h1>
+            <p className={styles.matDesc}>
+              Care-pathway infrastructure for modern healthcare recovery coordination.
+              Patient Identified → Eligibility Verified → Documentation Generated → Product Coordinated → POD Captured → Billing Packet Delivered.
+            </p>
+            <p className={styles.matSubDesc}>
+              The recovery pathway for every patient, every moment.
+            </p>
+            <div className={styles.pathways}>
+              <div className={styles.pathway}>
+                <div className={styles.pathwayIcon}>
+                  <HeartlineIcon />
+                </div>
+                <p className={styles.pathwayBy}>CarePath</p>
+                <p className={styles.pathwayName}>Surgical</p>
               </div>
-              <p className={styles.pathwayBy}>CarePath</p>
-              <p className={styles.pathwayName}>Surgical</p>
-            </div>
-            <div className={styles.pathway}>
-              <div className={styles.pathwayIcon}>
-                <ClockIcon />
+              <div className={styles.pathway}>
+                <div className={styles.pathwayIcon}>
+                  <ClockIcon />
+                </div>
+                <p className={styles.pathwayBy}>CarePath</p>
+                <p className={styles.pathwayName}>Mobility</p>
               </div>
-              <p className={styles.pathwayBy}>CarePath</p>
-              <p className={styles.pathwayName}>Mobility</p>
-            </div>
-            <div className={styles.pathway}>
-              <div className={styles.pathwayIcon}>
-                <HomeIcon />
+              <div className={styles.pathway}>
+                <div className={styles.pathwayIcon}>
+                  <HomeIcon />
+                </div>
+                <p className={styles.pathwayBy}>CarePath</p>
+                <p className={styles.pathwayName}>Recovery</p>
               </div>
-              <p className={styles.pathwayBy}>CarePath</p>
-              <p className={styles.pathwayName}>Recovery</p>
             </div>
-            <div className={styles.pathway}>
-              <div className={styles.pathwayIcon}>
-                <HeartIcon />
-              </div>
-              <p className={styles.pathwayBy}>CarePath</p>
-              <p className={styles.pathwayName}>Maternity</p>
+            <div className={styles.heroCta}>
+              <a href={contactHandlerUrl} className="btn-gloss">
+                Partner With StrykeFox
+              </a>
             </div>
-          </div>
-          <div className={styles.heroCta}>
-            <a href={contactHandlerUrl} className={styles.btnMain}>
-              Partner With StrykeFox
-            </a>
           </div>
         </div>
       </section>
