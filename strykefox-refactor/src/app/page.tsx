@@ -17,12 +17,11 @@ import {
   X,
 } from 'lucide-react';
 
-const navItems = [
-  ['Pathways', '#pathways'],
-  ['Technology', '#technology'],
-  ['Platform', '#platform'],
-  ['Providers', '#providers'],
-  ['Maternal', '#maternal'],
+const navItems: [string, string, boolean?][] = [
+  ['CarePath', '/carepath'],
+  ['Northstar Surgical Innovations', '/northstar-surgical-innovations'],
+  ['SPEAR', '/login'],
+  ['SoC13', '/soc13'],
 ];
 
 const workflowSteps = [
@@ -133,11 +132,11 @@ const techCards = [
   },
 ];
 
-const entities = [
-  ['SFM', 'StrykeFox Medical', 'Operating Platform', 'Provider relationships, billing operations, vendor relationships, DME distribution, biologics, implants, and fulfillment economics.'],
-  ['SPEAR', 'Spear LLC', 'Operating Engine', 'Poseidon OS workflow orchestration and Trident AI documentation intelligence: the spine that powers every CarePath lane.'],
-  ['S13', 'SoC13', 'Acquisition Vehicle', 'The strategic roll-up vehicle for ASCs, orthopedic practices, home health, PT/OT, wound clinics, and express care nodes.'],
-  ['NSI', 'NorthStar Surgical', 'Clinical Innovation', '3D-printed implants, surgical navigation, international medical devices, biologics, and physician training aligned to the platform.'],
+const entities: [string, string, string, string, string, string][] = [
+  ['SFM', 'StrykeFox Medical', 'Operating Platform', 'Provider relationships, billing operations, vendor relationships, DME distribution, biologics, implants, and fulfillment economics.', '/carepath', 'Explore CarePath'],
+  ['SPEAR', 'Spear LLC', 'Operating Engine', 'Poseidon OS workflow orchestration and Trident AI documentation intelligence: the spine that powers every CarePath lane.', '/login', 'Explore SPEAR'],
+  ['S13', 'SoC13', 'Acquisition Vehicle', 'The strategic roll-up vehicle for ASCs, orthopedic practices, home health, PT/OT, wound clinics, and express care nodes.', '/soc13', 'Platform Expansion'],
+  ['NSI', 'NorthStar Surgical', 'Clinical Innovation', '3D-printed implants, surgical navigation, international medical devices, biologics, and physician training aligned to the platform.', '/northstar-surgical-innovations', 'Explore NSI'],
 ];
 
 const providerValues = [
@@ -195,16 +194,21 @@ export default function HomePage() {
     <main>
       <nav>
         <div className="nav-inner">
-          <a href="#" className="nav-brand" aria-label="StrykeFox CarePath home">
+          <a href="/" className="nav-brand" aria-label="StrykeFox Medical home">
             <div className="nav-logo-text">STRYKE<span>FOX</span></div>
-            <div className="nav-sub">CarePath</div>
+            <div className="nav-sub">Medical</div>
           </a>
 
           <ul className="nav-links">
             {navItems.map(([label, href]) => (
-              <li key={label}><a href={href}>{label}</a></li>
+              <li key={label}>
+                <a
+                  href={href}
+                  {...(href === '/login' ? { 'aria-label': 'Open SPEAR login' } : {})}
+                >{label}</a>
+              </li>
             ))}
-            <li><a href="#contact" className="nav-cta">Partner With StrykeFox</a></li>
+            <li><a href="/carepath" className="nav-cta">Enter Platform</a></li>
           </ul>
 
           <button className="mobile-menu-button" onClick={() => setMenuOpen((open) => !open)} aria-label="Toggle navigation">
@@ -214,8 +218,13 @@ export default function HomePage() {
 
         {menuOpen ? (
           <div className="mobile-menu">
-            {[...navItems, ['Partner With StrykeFox', '#contact']].map(([label, href]) => (
-              <a key={label} href={href} onClick={() => setMenuOpen(false)}>{label}</a>
+            {[...navItems, ['Enter Platform', '/carepath'] as [string, string]].map(([label, href]) => (
+              <a
+                key={label}
+                href={href}
+                onClick={() => setMenuOpen(false)}
+                {...(href === '/login' ? { 'aria-label': 'Open SPEAR login' } : {})}
+              >{label}</a>
             ))}
           </div>
         ) : null}
@@ -241,7 +250,7 @@ export default function HomePage() {
               coordinated, documented, and delivered.
             </p>
             <div className="hero-cta-group">
-              <a href="#providers" className="btn-primary">For Providers</a>
+              <a href="/carepath" className="btn-primary">Enter Platform</a>
               <a href="#pathways" className="btn-secondary">View Pathways</a>
             </div>
           </div>
@@ -339,12 +348,17 @@ export default function HomePage() {
         />
 
         <div className="entities-grid">
-          {entities.map(([code, title, role, desc], index) => (
+          {entities.map(([code, title, role, desc, href, ctaLabel], index) => (
             <article className={`entity-card reveal reveal-delay-${(index % 3) + 1}`} key={code}>
               <div className="entity-code-large">{code}</div>
               <h3 className="entity-title">{title}</h3>
               <p className="entity-role-tag">{role}</p>
               <p className="entity-desc">{desc}</p>
+              <a
+                href={href}
+                className="entity-cta"
+                {...(href === '/login' ? { 'aria-label': 'Open SPEAR login' } : {})}
+              >{ctaLabel}</a>
             </article>
           ))}
         </div>
@@ -418,42 +432,69 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section className="section founder-section" id="leadership">
+        <SectionHeader
+          eyebrow="Leadership"
+          title={<>Platform <em>Leadership</em></>}
+        />
+        <div className="founder-grid">
+          <article className="founder-card reveal reveal-delay-1">
+            <div className="founder-avatar"><span>AS</span></div>
+            <h3 className="founder-name">Adam Stryker</h3>
+            <p className="founder-role">Founder / Platform Architect</p>
+            <p className="founder-bio">
+              Healthcare operator, investor, and systems architect focused on integrated medical infrastructure, regulated healthcare platforms, surgical innovation, and operating leverage.
+            </p>
+            <a href="https://www.adamwstryker.com" target="_blank" rel="noopener noreferrer" className="founder-link">Personal Website</a>
+          </article>
+          <article className="founder-card reveal reveal-delay-2">
+            <div className="founder-avatar"><span>BF</span></div>
+            <h3 className="founder-name">Ben Fox</h3>
+            <p className="founder-role">Co-Founder / Market Development</p>
+            <p className="founder-bio">
+              Healthcare growth operator focused on provider relationships, market execution, and field-level expansion across the StrykeFox Medical platform.
+            </p>
+            <a href="/" className="founder-link">StrykeFox Medical</a>
+          </article>
+        </div>
+      </section>
+
       <footer>
         <div className="footer-inner">
           <div>
             <div className="footer-brand-name">STRYKE<span>FOX</span> MEDICAL</div>
-            <div className="footer-brand-tag">CarePath Infrastructure Platform</div>
+            <div className="footer-brand-tag">Healthcare Infrastructure Platform</div>
             <p className="footer-desc">
-              StrykeFox CarePath is the care-pathway infrastructure layer for surgical, orthopedic, maternal, mobility,
-              wound, and post-acute recovery coordination. Powered by Spear: Poseidon OS and Trident.
+              Healthcare infrastructure, engineered for what comes next.
             </p>
-          </div>
-          <div>
-            <p className="footer-col-title">Pathways</p>
-            <ul className="footer-links">
-              {pathways.map((pathway) => <li key={pathway.name}><a href="#pathways">CarePath {pathway.name}</a></li>)}
-            </ul>
           </div>
           <div>
             <p className="footer-col-title">Platform</p>
             <ul className="footer-links">
-              {['StrykeFox Medical', 'Poseidon OS', 'Trident', 'SoC13', 'NorthStar Surgical'].map((item) => (
-                <li key={item}><a href="#platform">{item}</a></li>
-              ))}
+              <li><a href="/carepath">CarePath</a></li>
+              <li><a href="/northstar-surgical-innovations">Northstar Surgical Innovations</a></li>
+              <li><a href="/login" aria-label="Open SPEAR login">SPEAR</a></li>
+              <li><a href="/soc13">SoC13</a></li>
+            </ul>
+          </div>
+          <div>
+            <p className="footer-col-title">External</p>
+            <ul className="footer-links">
+              <li><a href="https://www.adamwstryker.com" target="_blank" rel="noopener noreferrer">Adam Stryker</a></li>
+              <li><a href="https://www.sensars.com" target="_blank" rel="noopener noreferrer">Sensars</a></li>
             </ul>
           </div>
           <div>
             <p className="footer-col-title">Connect</p>
             <ul className="footer-links">
-              {['For Providers', 'Rep Portal', 'Maternal Portal', 'Partner With StrykeFox', 'Compliance'].map((item) => (
-                <li key={item}><a href="#contact">{item}</a></li>
-              ))}
+              <li><a href="mailto:adam.stryker@strykefox.com">Partner With StrykeFox</a></li>
+              <li><a href="#contact">Contact</a></li>
             </ul>
           </div>
         </div>
         <div className="footer-bottom">
           <p className="footer-legal">2026 StrykeFox Medical LLC - Las Vegas, NV | NPI: 1821959420 | Compliance-First. Patient-First.</p>
-          <p className="footer-compliance">Verify . Document . Deliver</p>
+          <p className="footer-compliance">Healthcare infrastructure, engineered for what comes next.</p>
         </div>
       </footer>
     </main>

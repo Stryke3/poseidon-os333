@@ -679,6 +679,27 @@ nav {
   margin-bottom: 1rem;
 }
 
+.entity-cta {
+  display: inline-block;
+  margin-top: 1.5rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border-bright);
+  color: var(--chrome);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-decoration: none;
+  text-transform: uppercase;
+  transition: border-color 0.3s, color 0.3s, background 0.3s;
+}
+
+.entity-cta:hover {
+  border-color: var(--blue-bright);
+  color: var(--white);
+  background: rgba(43, 111, 212, 0.1);
+}
+
 .provider-section {
   background: linear-gradient(135deg, rgba(30, 77, 140, 0.2), rgba(11, 24, 41, 0) 65%), var(--navy-mid);
 }
@@ -804,6 +825,91 @@ nav {
   justify-content: center;
 }
 
+.founder-section {
+  border-top: 1px solid var(--border);
+  background: var(--navy-mid);
+}
+
+.founder-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin-top: 4rem;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+
+.founder-card {
+  padding: 3rem;
+  background: var(--navy);
+}
+
+.founder-avatar {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-bright);
+  background: rgba(43, 111, 212, 0.08);
+}
+
+.founder-avatar span {
+  color: var(--blue-bright);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.founder-name {
+  margin-bottom: 0.25rem;
+  color: var(--white);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.founder-role {
+  margin-bottom: 1.25rem;
+  color: var(--blue-bright);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+}
+
+.founder-bio {
+  margin-bottom: 1.5rem;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1.75;
+}
+
+.founder-link {
+  display: inline-block;
+  padding: 0.45rem 1rem;
+  border: 1px solid var(--border-bright);
+  color: var(--chrome);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-decoration: none;
+  text-transform: uppercase;
+  transition: border-color 0.3s, color 0.3s, background 0.3s;
+}
+
+.founder-link:hover {
+  border-color: var(--blue-bright);
+  color: var(--white);
+  background: rgba(43, 111, 212, 0.1);
+}
+
 footer {
   padding: 3rem;
   border-top: 1px solid var(--border);
@@ -888,6 +994,290 @@ footer {
   font-weight: 700;
   letter-spacing: 0.2em;
   text-transform: uppercase;
+}
+
+/* ---- CarePath Intake ---- */
+.intake-form {
+  margin-top: 3rem;
+  padding: 2.5rem;
+  border: 1px solid var(--border);
+  background: rgba(19, 34, 56, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.intake-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.intake-field-full {
+  grid-column: 1 / -1;
+}
+
+.intake-label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--blue-bright);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+}
+
+.intake-input-placeholder {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  background: rgba(11, 24, 41, 0.6);
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.intake-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.intake-chip {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--border);
+  background: rgba(194, 205, 216, 0.05);
+  color: var(--chrome-dim);
+  font-size: 0.6rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.intake-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.intake-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.intake-note {
+  margin-top: 1rem;
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  font-style: italic;
+}
+
+/* ---- NSI Page ---- */
+.nsi-hero-bg {
+  background:
+    radial-gradient(ellipse 60% 50% at 70% 40%, rgba(30, 77, 140, 0.3) 0%, transparent 70%),
+    radial-gradient(ellipse 40% 60% at 20% 70%, rgba(43, 111, 212, 0.1) 0%, transparent 60%),
+    linear-gradient(180deg, var(--navy) 0%, #080f1c 100%);
+}
+
+.nsi-title {
+  letter-spacing: 0.04em;
+}
+
+.nsi-hero-logo {
+  width: 100%;
+  max-width: 240px;
+  margin: 2rem auto;
+  display: block;
+  filter: brightness(0) invert(0.75);
+}
+
+.nsi-mark-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 280px;
+}
+
+.sensars-section {
+  background: linear-gradient(135deg, rgba(30, 77, 140, 0.15), rgba(11, 24, 41, 0) 65%), var(--navy-mid);
+}
+
+/* ---- One-Pager Cards ---- */
+.onepager-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  margin-top: 4rem;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+
+.onepager-card {
+  padding: 2.5rem;
+  background: var(--navy);
+  border: none;
+  transition: background 0.4s;
+}
+
+.onepager-card:hover {
+  background: rgba(19, 34, 56, 0.95);
+}
+
+.onepager-icon {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-bright);
+  background: rgba(43, 111, 212, 0.06);
+  color: var(--blue-bright);
+}
+
+.onepager-type {
+  color: var(--blue-bright);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+.onepager-title {
+  margin: 0.5rem 0;
+  color: var(--white);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.onepager-desc {
+  margin-bottom: 1.5rem;
+  color: var(--text-dim);
+  font-size: 0.76rem;
+  line-height: 1.7;
+}
+
+.onepager-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 1rem;
+  border: 1px solid var(--border-bright);
+  color: var(--chrome);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-decoration: none;
+  text-transform: uppercase;
+  transition: border-color 0.3s, color 0.3s, background 0.3s;
+}
+
+.onepager-btn:hover {
+  border-color: var(--blue-bright);
+  color: var(--white);
+  background: rgba(43, 111, 212, 0.1);
+}
+
+/* ---- SoC13 Page ---- */
+.soc13-hero-bg {
+  background:
+    radial-gradient(ellipse 60% 50% at 30% 40%, rgba(30, 77, 140, 0.2) 0%, transparent 70%),
+    linear-gradient(180deg, var(--navy) 0%, #080f1c 100%);
+}
+
+.soc13-title {
+  letter-spacing: 0.06em;
+}
+
+.soc13-mark-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 280px;
+}
+
+.soc13-roman {
+  color: rgba(194, 205, 216, 0.08);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 8rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.15em;
+}
+
+.soc13-mark-label {
+  margin-top: 1rem;
+  color: var(--text-dim);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+}
+
+.thesis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1px;
+  margin-top: 4rem;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+
+.thesis-card {
+  padding: 2.5rem;
+  background: var(--navy);
+  border: none;
+  transition: background 0.4s;
+}
+
+.thesis-card:hover {
+  background: rgba(19, 34, 56, 0.95);
+}
+
+.thesis-num {
+  margin-bottom: 1rem;
+  color: rgba(43, 111, 212, 0.3);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.thesis-title {
+  margin-bottom: 0.75rem;
+  color: var(--white);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.thesis-body {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1.75;
+}
+
+/* ---- Responsive additions ---- */
+@media (max-width: 1060px) {
+  .onepager-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .onepager-grid,
+  .intake-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .intake-field-full {
+    grid-column: auto;
+  }
 }
 
 .reveal {
@@ -980,6 +1370,7 @@ footer {
   .pathways-grid,
   .entities-grid,
   .maternal-cards,
+  .founder-grid,
   .footer-inner {
     grid-template-columns: 1fr;
   }
