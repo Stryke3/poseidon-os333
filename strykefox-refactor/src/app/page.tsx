@@ -24,6 +24,7 @@ const chapters = [
     cta: 'Explore CarePath',
     href: '/carepath',
     image: '/images/operating-room.svg',
+    imageType: 'svg' as const,
     chips: pathwayChips,
   },
   {
@@ -33,7 +34,8 @@ const chapters = [
     body: 'NSI advances surgical tools, device commercialization, Ex-Im pathways, and emerging medical technologies designed for real-world clinical flow.',
     cta: 'Explore NSI',
     href: '/northstar-surgical-innovations',
-    image: '/images/surgical-equipment.svg',
+    image: '/images/nsi-healthcare.jpg',
+    imageType: 'photo' as const,
     chips: null,
   },
   {
@@ -43,7 +45,8 @@ const chapters = [
     body: 'SPEAR powers execution through integrated data capture, analysis, learning, and field deployment.',
     cta: 'Explore SPEAR',
     href: '/login',
-    image: '/images/operating-framework.svg',
+    image: '/images/spear-columns.jpg',
+    imageType: 'photo' as const,
     chips: null,
     powered: 'Powered internally by Poseidon, Trident, and Aries.',
   },
@@ -54,7 +57,8 @@ const chapters = [
     body: 'SoC13 aligns verticals, integrates capabilities, and reduces friction across healthcare delivery.',
     cta: 'Platform Expansion',
     href: '/soc13',
-    image: '/images/soc13-logo.svg',
+    image: '/images/xiii-medallion.svg',
+    imageType: 'svg' as const,
     chips: null,
   },
 ];
@@ -120,7 +124,8 @@ export default function HomePage() {
       <section className="hero-section">
         <div className="hero-gradient" />
         <div className="hero-content reveal visible">
-          <div className="hero-logo-mark" aria-hidden="true">✦</div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/images/compass-rose.svg" alt="" className="hero-compass-img" aria-hidden="true" />
           <h1 className="hero-wordmark">
             <span className="hw-stryke">STRYKE</span><span className="hw-k">K</span><span className="hw-fox">FOX</span>
             <span className="hw-medical">MEDICAL</span>
@@ -171,7 +176,7 @@ export default function HomePage() {
                 {ch.cta} <ChevronRight size={14} />
               </a>
             </div>
-            <div className="chapter-image reveal reveal-delay-2">
+            <div className={`chapter-image ${ch.imageType === 'photo' ? 'chapter-image-photo' : ''} reveal reveal-delay-2`}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={ch.image} alt={ch.tag} loading="lazy" />
             </div>
@@ -179,37 +184,29 @@ export default function HomePage() {
         </section>
       ))}
 
-      {/* ---- FOUNDER / PLATFORM LEADERSHIP ---- */}
+      {/* ---- PLATFORM LEADERSHIP ---- */}
       <section className="founder-section">
         <div className="section-container">
           <div className="reveal">
-            <p className="section-label">Platform Leadership</p>
-            <h2 className="section-heading">Leadership</h2>
+            <h2 className="leadership-heading">Platform Leadership</h2>
           </div>
-          <div className="founder-grid">
-            <article className="founder-card reveal reveal-delay-1">
-              <div className="founder-avatar"><span>AS</span></div>
-              <h3 className="founder-name">Adam Stryker</h3>
-              <p className="founder-role">Founder / Platform Architect</p>
-              <p className="founder-bio">
-                Healthcare operator, investor, and systems architect focused on integrated medical infrastructure,
-                regulated healthcare platforms, surgical innovation, and operating leverage.
-              </p>
-              <a href="https://www.adamwstryker.com" target="_blank" rel="noopener noreferrer" className="founder-link">
-                Personal Website <ChevronRight size={12} />
-              </a>
+          <div className="founder-grid-compact">
+            <article className="founder-card-compact reveal reveal-delay-1">
+              <div className="founder-avatar-round"><span>AS</span></div>
+              <div className="founder-info">
+                <h3 className="founder-name">Adam Stryker</h3>
+                <p className="founder-role">Founder / Platform Architect</p>
+                <a href="https://www.adamwstryker.com" target="_blank" rel="noopener noreferrer" className="founder-link">
+                  adamwstryker.com <ChevronRight size={10} />
+                </a>
+              </div>
             </article>
-            <article className="founder-card reveal reveal-delay-2">
-              <div className="founder-avatar"><span>BF</span></div>
-              <h3 className="founder-name">Ben Fox</h3>
-              <p className="founder-role">Co-Founder / Market Development</p>
-              <p className="founder-bio">
-                Healthcare growth operator focused on provider relationships, market execution,
-                and field-level expansion across the StrykeFox Medical platform.
-              </p>
-              <a href="/" className="founder-link">
-                StrykeFox Medical <ChevronRight size={12} />
-              </a>
+            <article className="founder-card-compact reveal reveal-delay-2">
+              <div className="founder-avatar-round"><span>BF</span></div>
+              <div className="founder-info">
+                <h3 className="founder-name">Ben Fox</h3>
+                <p className="founder-role">Co-Founder / Market Development</p>
+              </div>
             </article>
           </div>
         </div>
@@ -217,40 +214,29 @@ export default function HomePage() {
 
       {/* ---- FOOTER ---- */}
       <footer className="home-footer">
-        <div className="footer-inner">
+        <div className="footer-inner-compact">
           <div className="footer-brand-col">
             <div className="footer-logo">
-              <span className="nav-stryke">STRYKE</span><span className="nav-k">K</span><span className="nav-fox">FOX</span>
-              <span className="nav-medical">MEDICAL</span>
+              <div className="nav-compass" aria-hidden="true">✦</div>
+              <div>
+                <span className="nav-stryke">STRYKE</span><span className="nav-k">K</span><span className="nav-fox">FOX</span>
+                <span className="nav-medical">MEDICAL</span>
+              </div>
             </div>
-            <p className="footer-tagline">Healthcare infrastructure, engineered for what comes next.</p>
           </div>
-          <div>
-            <p className="footer-col-title">Platform</p>
-            <ul className="footer-links">
-              <li><a href="/carepath">CarePath</a></li>
-              <li><a href="/northstar-surgical-innovations">Northstar Surgical Innovations</a></li>
-              <li><a href="/login" aria-label="Open SPEAR login">SPEAR</a></li>
-              <li><a href="/soc13">SoC13</a></li>
-            </ul>
-          </div>
-          <div>
-            <p className="footer-col-title">External</p>
-            <ul className="footer-links">
-              <li><a href="https://www.adamwstryker.com" target="_blank" rel="noopener noreferrer">Adam Stryker</a></li>
-              <li><a href="https://www.sensars.com" target="_blank" rel="noopener noreferrer">Sensars</a></li>
-            </ul>
-          </div>
-          <div>
-            <p className="footer-col-title">Connect</p>
-            <ul className="footer-links">
-              <li><a href="mailto:adam.stryker@strykefox.com">Partner With StrykeFox</a></li>
-            </ul>
-          </div>
+          <nav className="footer-nav">
+            <a href="/carepath">CarePath</a>
+            <a href="/northstar-surgical-innovations">Northstar Surgical Innovations</a>
+            <a href="/login" aria-label="Open SPEAR login">SPEAR</a>
+            <a href="/soc13">SoC13</a>
+          </nav>
         </div>
         <div className="footer-bottom">
-          <p className="footer-legal">&copy; 2026 StrykeFox Medical LLC &middot; Las Vegas, NV &middot; NPI: 1821959420</p>
-          <p className="footer-motto">Healthcare infrastructure, engineered for what comes next.</p>
+          <p className="footer-legal">&copy; 2025 StrykeFox Medical. All rights reserved.</p>
+          <div className="footer-legal-links">
+            <a href="/privacy" className="footer-legal-link">Privacy Policy</a>
+            <a href="/terms" className="footer-legal-link">Terms of Use</a>
+          </div>
         </div>
       </footer>
     </main>

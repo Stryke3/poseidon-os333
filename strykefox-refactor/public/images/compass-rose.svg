@@ -1,0 +1,25 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="compassGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a3c6e;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#3478c6;stop-opacity:1"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(100,100)">
+    <!-- Main 4-point star -->
+    <polygon points="0,-90 12,-20 0,-30 -12,-20" fill="url(#compassGrad)" opacity="0.9"/>
+    <polygon points="0,90 12,20 0,30 -12,20" fill="url(#compassGrad)" opacity="0.9"/>
+    <polygon points="-90,0 -20,12 -30,0 -20,-12" fill="url(#compassGrad)" opacity="0.9"/>
+    <polygon points="90,0 20,12 30,0 20,-12" fill="url(#compassGrad)" opacity="0.9"/>
+    <!-- Diagonal points -->
+    <polygon points="-60,-60 -14,-10 -10,-14" fill="url(#compassGrad)" opacity="0.5"/>
+    <polygon points="60,-60 14,-10 10,-14" fill="url(#compassGrad)" opacity="0.5"/>
+    <polygon points="-60,60 -14,10 -10,14" fill="url(#compassGrad)" opacity="0.5"/>
+    <polygon points="60,60 14,10 10,14" fill="url(#compassGrad)" opacity="0.5"/>
+    <!-- Center circle -->
+    <circle r="8" fill="url(#compassGrad)" opacity="0.8"/>
+    <circle r="4" fill="#ffffff" opacity="0.9"/>
+    <!-- Outer ring -->
+    <circle r="75" fill="none" stroke="url(#compassGrad)" stroke-width="0.5" opacity="0.3"/>
+  </g>
+</svg>
