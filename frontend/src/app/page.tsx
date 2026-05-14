@@ -1,496 +1,258 @@
-"use client"
+'use client';
 
-import { useEffect } from "react"
-import Image from "next/image"
-import { DM_Sans, Lora } from "next/font/google"
-import styles from "./page.module.css"
-import CarePathIntakeForm from "@/components/public/CarePathIntakeForm"
+import { useEffect, useState } from 'react';
+import { ChevronRight, Menu, X } from 'lucide-react';
 
-const dmSans = DM_Sans({
-  subsets: ["latin"],
-  weight: ["200", "300", "400", "500", "600"],
-  variable: "--font-dm-sans",
-})
+const navItems: [string, string][] = [
+  ['CarePath', '/carepath'],
+  ['Northstar Surgical Innovations', '/northstar-surgical-innovations'],
+  ['SPEAR', '/login'],
+  ['SoC13', '/soc13'],
+];
 
-const lora = Lora({
-  subsets: ["latin"],
-  style: ["italic"],
-  weight: ["400"],
-  variable: "--font-lora",
-})
+const pathwayChips = [
+  'Pre-Op', 'Surgical', 'Orthopedic', 'Spine', 'Biologics',
+  'Maternal', 'Mobility', 'Wound', 'El Cuidado', 'Post-Acute',
+];
 
-const mommyCareUrl = "/mommy-care"
-
-const physicianPortalUrl =
-  process.env.NEXT_PUBLIC_PHYSICIAN_PORTAL_URL ||
-  process.env.NEXT_PUBLIC_REP_PORTAL_URL ||
-  "/login"
-
-const spearLoginUrl = "/login"
-
-const contactHandlerUrl = "#contact"
-
-const cx = (...classes: Array<string | false | null | undefined>) =>
-  classes.filter(Boolean).join(" ")
-
-function HeartlineIcon() {
-  return (
-    <svg viewBox="0 0 24 24">
-      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-    </svg>
-  )
-}
-
-function ClockIcon() {
-  return (
-    <svg viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="10" />
-      <polyline points="12 6 12 12 16 14" />
-    </svg>
-  )
-}
-
-function HomeIcon() {
-  return (
-    <svg viewBox="0 0 24 24">
-      <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-      <polyline points="9,22 9,12 15,12 15,22" />
-    </svg>
-  )
-}
-
-function HeartIcon() {
-  return (
-    <svg viewBox="0 0 24 24">
-      <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
-    </svg>
-  )
-}
+const chapters = [
+  {
+    num: '01',
+    tag: 'CAREPATH',
+    title: 'Care that\nfollows the patient.',
+    body: 'From pre-op to recovery, CarePath organizes the healthcare lineage around documentation, coordination, and continuity.',
+    cta: 'Explore CarePath',
+    href: '/carepath',
+    image: '/images/operating-room.svg',
+    chips: pathwayChips,
+  },
+  {
+    num: '02',
+    tag: 'NORTHSTAR SURGICAL INNOVATIONS',
+    title: 'Innovation built around\nthe operating room.',
+    body: 'NSI advances surgical tools, device commercialization, Ex-Im pathways, and emerging medical technologies designed for real-world clinical flow.',
+    cta: 'Explore NSI',
+    href: '/northstar-surgical-innovations',
+    image: '/images/surgical-equipment.svg',
+    chips: null,
+  },
+  {
+    num: '03',
+    tag: 'SPEAR',
+    title: 'Deployment intelligence\nbehind the platform.',
+    body: 'SPEAR powers execution through integrated data capture, analysis, learning, and field deployment.',
+    cta: 'Explore SPEAR',
+    href: '/login',
+    image: '/images/operating-framework.svg',
+    chips: null,
+    powered: 'Powered internally by Poseidon, Trident, and Aries.',
+  },
+  {
+    num: '04',
+    tag: 'SOC13',
+    title: 'Expansion by design.',
+    body: 'SoC13 aligns verticals, integrates capabilities, and reduces friction across healthcare delivery.',
+    cta: 'Platform Expansion',
+    href: '/soc13',
+    image: '/images/soc13-logo.svg',
+    chips: null,
+  },
+];
 
 export default function HomePage() {
-  useEffect(() => {
-    document.title = "CarePath by StrykeFox"
+  const [menuOpen, setMenuOpen] = useState(false);
 
+  useEffect(() => {
+    const reveals = document.querySelectorAll('.sfm-reveal');
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          if (entry.isIntersecting) entry.target.classList.add(styles.in)
-        })
+          if (entry.isIntersecting) entry.target.classList.add('visible');
+        });
       },
-      { threshold: 0.1 },
-    )
-
-    const revealNodes = document.querySelectorAll(`.${styles.reveal}`)
-    revealNodes.forEach((element) => observer.observe(element))
-
-    const handleScroll = () => {
-      const nav = document.getElementById("nav")
-      if (nav) {
-        nav.style.background =
-          window.scrollY > 60 ? "rgba(2,5,8,.97)" : "rgba(4,9,15,.88)"
-      }
-    }
-
-    window.addEventListener("scroll", handleScroll)
-    handleScroll()
-
-    return () => {
-      revealNodes.forEach((element) => observer.unobserve(element))
-      observer.disconnect()
-      window.removeEventListener("scroll", handleScroll)
-    }
-  }, [])
+      { threshold: 0.12 },
+    );
+    reveals.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <main className={cx(styles.page, dmSans.variable, lora.variable)}>
-      <nav id="nav" className={styles.nav}>
-        <a href="/" className={styles.brand}>
-          <div className={styles.brandLogo}>
-            <Image
-              src="/images/sfm-logo.jpeg"
-              alt="StrykeFox Medical"
-              width={28}
-              height={28}
-              priority
-            />
-          </div>
-          <span className={styles.brandName}>
-            STRYKE<span>FOX</span>
-          </span>
-          <div className={styles.brandSep} />
-          <span className={styles.brandBy}>CarePath</span>
-          <div className={styles.brandSep} />
-          <span className={styles.nsiTag}>NSI</span>
-        </a>
-        <div className={styles.navR}>
-          <a href="#pathways" className={styles.navA}>
-            Pathways
+    <main className="home-main">
+      {/* ---- NAV ---- */}
+      <nav className="home-nav">
+        <div className="nav-inner">
+          <a href="/" className="nav-brand" aria-label="StrykeFox Medical home">
+            <div className="nav-compass" aria-hidden="true">&#10022;</div>
+            <div className="nav-wordmark">
+              <span className="nav-stryke">STRYKE</span><span className="nav-k">K</span><span className="nav-fox">FOX</span>
+              <span className="nav-medical">MEDICAL</span>
+            </div>
           </a>
-          <a href="#platform" className={styles.navA}>
-            Platform
-          </a>
-          <a href="#founder" className={styles.navA}>
-            Founders
-          </a>
-          <a href={spearLoginUrl} className={styles.navA}>
-            SPEAR Login
-          </a>
-          <a href="#referral" className={styles.navCta}>
-            Submit Referral
-          </a>
+          <ul className="nav-links">
+            {navItems.map(([label, href]) => (
+              <li key={label}>
+                <a
+                  href={href}
+                  {...(href === '/login' ? { 'aria-label': 'Open SPEAR login' } : {})}
+                >{label}</a>
+              </li>
+            ))}
+          </ul>
+          <button className="mobile-menu-btn" onClick={() => setMenuOpen((o) => !o)} aria-label="Toggle navigation">
+            {menuOpen ? <X size={22} /> : <Menu size={22} />}
+          </button>
         </div>
+        {menuOpen && (
+          <div className="mobile-menu">
+            {navItems.map(([label, href]) => (
+              <a
+                key={label}
+                href={href}
+                onClick={() => setMenuOpen(false)}
+                {...(href === '/login' ? { 'aria-label': 'Open SPEAR login' } : {})}
+              >{label}</a>
+            ))}
+          </div>
+        )}
       </nav>
 
-      <section className={styles.hero} id="pathways">
-        <div className={styles.heroBg} />
-        <div className={cx(styles.heroPhoto, styles.heroPhotoLeft)}>
-          <Image
-            src="/images/operating-room.svg"
-            alt=""
-            fill
-            sizes="42vw"
-            priority
-          />
-        </div>
-        <div className={cx(styles.heroPhoto, styles.heroPhotoRight)}>
-          <Image
-            src="/images/surgical-equipment.svg"
-            alt=""
-            fill
-            sizes="36vw"
-            priority
-          />
-        </div>
-        <div className={styles.heroLogoWatermark}>
-          <Image
-            src="/images/strykefox-medical-logo.png"
-            alt=""
-            fill
-            sizes="48vw"
-            priority
-          />
-        </div>
-        <div className={styles.heroGrid} />
-        <div className={styles.heroPulse} />
-        <div className={styles.heroInner}>
-          <div className={styles.heroContent}>
-            <h1 className={styles.matTitle}>Verified. Documented. Delivered.</h1>
-            <p className={styles.matDesc}>
-              Care-pathway infrastructure for modern healthcare recovery coordination.
-              Patient Identified → Eligibility Verified → Documentation Generated → Product Coordinated → POD Captured → Billing Packet Delivered.
-            </p>
-            <p className={styles.matSubDesc}>
-              The recovery pathway for every patient, every moment.
-            </p>
-            <div className={styles.pathways}>
-              <div className={styles.pathway}>
-                <div className={styles.pathwayIcon}>
-                  <HeartlineIcon />
-                </div>
-                <p className={styles.pathwayBy}>CarePath</p>
-                <p className={styles.pathwayName}>Surgical</p>
-              </div>
-              <div className={styles.pathway}>
-                <div className={styles.pathwayIcon}>
-                  <ClockIcon />
-                </div>
-                <p className={styles.pathwayBy}>CarePath</p>
-                <p className={styles.pathwayName}>Mobility</p>
-              </div>
-              <div className={styles.pathway}>
-                <div className={styles.pathwayIcon}>
-                  <HomeIcon />
-                </div>
-                <p className={styles.pathwayBy}>CarePath</p>
-                <p className={styles.pathwayName}>Recovery</p>
-              </div>
-            </div>
-            <div className={styles.heroCta}>
-              <a href={contactHandlerUrl} className="btn-gloss">
-                Partner With StrykeFox
-              </a>
-            </div>
-          </div>
+      {/* ---- HERO ---- */}
+      <section className="hero-section">
+        <div className="hero-gradient" />
+        <div className="hero-content sfm-reveal visible">
+          <div className="hero-logo-mark" aria-hidden="true">&#10022;</div>
+          <h1 className="hero-wordmark">
+            <span className="hw-stryke">STRYKE</span><span className="hw-k">K</span><span className="hw-fox">FOX</span>
+            <span className="hw-medical">MEDICAL</span>
+          </h1>
+          <p className="hero-headline">
+            Healthcare infrastructure,<br />engineered for what comes next.
+          </p>
+          <p className="hero-sub">CarePath. NSI. SPEAR. One operating platform.</p>
+          <a href="/carepath" className="hero-cta">
+            Enter Platform <ChevronRight size={16} />
+          </a>
         </div>
       </section>
 
-      <section className={styles.maternity}>
-        <div className={styles.maternityWatermark}>
-          <Image
-            src="/images/medical-tray.svg"
-            alt=""
-            fill
-            sizes="48vw"
-          />
-        </div>
-        <div className={styles.matLeft}>
-          <p className={styles.matEye}>CarePath Maternity</p>
-          <h2 className={styles.matTitle}>
-            She gave everything.
-            <br />
-            <em>Now it&apos;s her turn.</em>
-          </h2>
-          <div className={styles.matCtas}>
-            <a href={mommyCareUrl} className={styles.btnRose}>
-              Start Your Recovery
-            </a>
-          </div>
-        </div>
-        <div className={styles.matRight}>
-          <div className={styles.matLogoWrap}>
-            <Image
-              src="/images/mommy-care-kit-logo.png"
-              alt="Mommy Care Kit"
-              width={300}
-              height={300}
-            />
-          </div>
-          <p className={styles.matSubdomain}>{mommyCareUrl}</p>
-        </div>
-      </section>
-
-      <section className={styles.platform} id="platform">
-        <div className={cx(styles.platHead, styles.reveal)}>
-          <p className={styles.secEye}>The Platform</p>
-          <h2 className={styles.secH}>
-            StrykeFox Medical. <em>Every layer.</em>
-          </h2>
-        </div>
-        <div className={styles.platGrid}>
-          <div className={cx(styles.platCard, styles.reveal, styles.d1)}>
-            <div className={styles.platLogo}>
-              <Image
-                src="/images/platform-portfolio.svg"
-                alt="Platform Portfolio"
-                width={180}
-                height={38}
-              />
-            </div>
-            <p className={styles.platName}>Platform Portfolio</p>
-            <p className={styles.platRole}>Strategic Assets</p>
-            <p className={styles.platDesc}>
-              Comprehensive portfolio of healthcare platforms, technologies, and strategic assets designed for national scale and operational excellence.
-            </p>
-          </div>
-          <div className={cx(styles.platCard, styles.reveal, styles.d2)}>
-            <div className={styles.platLogo}>
-              <Image
-                src="/images/ctf-logo.svg"
-                alt="Candor Through Fire"
-                width={180}
-                height={38}
-              />
-            </div>
-            <p className={styles.platName}>Candor Through Fire</p>
-            <p className={styles.platRole}>Transformation Framework</p>
-            <p className={styles.platDesc}>
-              Radical transparency and proven methodologies for healthcare transformation. Building trust through measurable outcomes and uncompromising integrity.
-            </p>
-          </div>
-          <div className={cx(styles.platCard, styles.reveal, styles.d3)}>
-            <div className={styles.platLogo}>
-              <Image
-                src="/images/northstar-logo.svg"
-                alt="NorthStar Framework"
-                width={180}
-                height={38}
-              />
-            </div>
-            <p className={styles.platName}>NorthStar Framework</p>
-            <p className={styles.platRole}>Execution Architecture</p>
-            <p className={styles.platDesc}>
-              Scalable operating systems, workflow orchestration, and performance frameworks that power modern healthcare delivery across all care settings.
-            </p>
-          </div>
-          <div className={cx(styles.platCard, styles.reveal, styles.d4)}>
-            <div className={styles.platLogo}>
-              <Image
-                src="/images/soc13-logo-simple.svg"
-                alt="SoC13 Acquisition Group"
-                width={180}
-                height={38}
-              />
-            </div>
-            <p className={styles.platName}>SoC13 Acquisition Group</p>
-            <p className={styles.platRole}>Strategic Acquisitions</p>
-            <p className={styles.platDesc}>
-              Specialized acquisition group focused on strategic healthcare assets, medical technology companies, and service platforms that complement and expand the StrykeFox ecosystem.
-            </p>
-          </div>
-          <div className={cx(styles.platCard, styles.reveal, styles.d5)}>
-            <div className={styles.platLogo}>
-              <Image
-                src="/images/nsi-platform.svg"
-                alt="NorthStar Surgical Innovations"
-                width={180}
-                height={38}
-              />
-            </div>
-            <p className={styles.platName}>NorthStar Surgical</p>
-            <p className={styles.platRole}>Medical Innovation</p>
-            <p className={styles.platDesc}>
-              Practical TKA solutions, workflow impact, and speed to market. Innovation built around how ASCs operate with blocking systems, saw development, and operator-validated gaps.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section className={styles.founder} id="founder">
-        <div className={styles.founderInner}>
-          {/* Full-width quote */}
-          <div className={cx(styles.fQuoteWrap, styles.reveal)}>
-            <p className={styles.fQuote}>
-              &quot;Vertical stacks create operational control. Horizontal
-              expansion unlocks scale. The result is{" "}
-              <strong>
-                better outcomes for patients, better tools for physicians, and a
-                system whose complexity is invisible to the people it serves.
-              </strong>
-              &quot;
-            </p>
-            <p className={styles.fAttr}>Adam W. Stryker — Co-Founder &amp; CEO</p>
-          </div>
-
-          {/* Two co-founder cards side by side */}
-          <div className={styles.founderCards}>
-            {/* Adam Stryker */}
-            <div className={cx(styles.fCard, styles.reveal, styles.d1)}>
-              <div className={styles.fCardTop}>
-                <div className={styles.fAvatar}>AWS</div>
-                <div>
-                  <h3 className={styles.fName}>Adam W. Stryker</h3>
-                  <p className={styles.fTitle}>Co-Founder &amp; CEO — StrykeFox Medical</p>
-                </div>
-              </div>
-              <p className={styles.fBio}>
-                Healthcare operator and platform builder. Architect of vertically
-                integrated healthcare infrastructure built for national scale.
-                Founder of NorthStar Surgical Institute (NSI) and developer of
-                Poseidon OS — the CRM·EMR that powers CarePath.
+      {/* ---- CHAPTER SECTIONS ---- */}
+      {chapters.map((ch, i) => (
+        <section
+          className={`chapter-section ${i % 2 === 1 ? 'chapter-alt' : ''}`}
+          key={ch.num}
+        >
+          <div className="chapter-inner">
+            <div className="chapter-text sfm-reveal">
+              <p className="chapter-label">
+                <span className="chapter-num">{ch.num}</span>
+                <span className="chapter-divider" />
+                <span className="chapter-tag">{ch.tag}</span>
+                <span className="chapter-line" />
               </p>
-              <div className={styles.fCreds}>
-                <span className={styles.fCred}>
-                  Board Member — SENSARS Neuroprosthetics | FDA Breakthrough Device
-                </span>
-                <span className={styles.fCred}>
-                  Inc. 5000 Class of 2019 — Top 300 Healthcare Executive
-                </span>
-                <span className={styles.fCred}>
-                  SVP/CTO — Americans for Prosperity | $889M, 35 States
-                </span>
-                <span className={styles.fCred}>
-                  Director, Government Relations — Las Vegas Sands
-                </span>
-                <span className={styles.fCred}>
-                  MBA Candidate — Pepperdine Graziadio Business School
-                </span>
-              </div>
-              <a
-                href="https://www.adamwstryker.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={styles.fLink}
-              >
-                adamwstryker.com
-              </a>
-            </div>
-
-            {/* Ben Fox */}
-            <div className={cx(styles.fCard, styles.fCardGold, styles.reveal, styles.d2)}>
-              <div className={styles.fCardTop}>
-                <div className={cx(styles.fAvatar, styles.fAvatarGold)}>BF</div>
-                <div>
-                  <h3 className={styles.fName}>Ben Fox</h3>
-                  <p className={styles.fTitle}>Co-Founder &amp; SVP — StrykeFox Medical</p>
-                </div>
-              </div>
-              <p className={styles.fBio}>
-                Operations and business development executive driving StrykeFox
-                Medical&apos;s physician network expansion, territory strategy,
-                and clinical partnerships across key national markets. The
-                operator who closes the last mile.
-              </p>
-              <div className={styles.fCreds}>
-                <span className={styles.fCred}>
-                  Co-Founder — StrykeFox Medical | National Launch Architect
-                </span>
-                <span className={styles.fCred}>
-                  SVP Business Development — Physician Network &amp; Territory Strategy
-                </span>
-                <span className={styles.fCred}>
-                  Clinical Partnerships — ASC, Orthopedic &amp; Surgical Group Expansion
-                </span>
-                <span className={styles.fCred}>
-                  CarePath Field Operations — DME, Biologics &amp; Surgical Supply
-                </span>
-                <span className={styles.fCred}>
-                  NorthStar Surgical Institute (NSI) — Commercial Lead
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className={styles.contact} id="contact">
-        <div className={styles.contactInner}>
-          <div className={cx(styles.contactHead, styles.reveal)}>
-            <p className={cx(styles.secEye)}>
-              Transform Healthcare Delivery
-            </p>
-            <h2 className={styles.cTitle}>
-              Build the <em>future.</em>
-            </h2>
-            <p className={styles.cLora}>&quot;Healthcare delivery reimagined through operational excellence.&quot;</p>
-            <p className={styles.cDesc}>
-              StrykeFox Medical partners with healthcare providers to transform delivery 
-              through vertically integrated platforms, operational excellence, and technology-driven 
-              solutions. Join us in building the future of healthcare.
-            </p>
-            <div className={styles.cCtas}>
-              <a href="/mommy-care" className={styles.btnGhost}>
-                Mommy Care Kit →
-              </a>
-              <a href="/el-kit-de-cuidado" className={styles.btnGhost}>
-                El Kit de Cuidado →
-              </a>
-              <a href={physicianPortalUrl} className={styles.btnMain}>
-                Partner With StrykeFox
-              </a>
-            </div>
-            <div className={styles.nsiPanel}>
-              <Image
-                src="/images/nsi-logo.png"
-                alt="NorthStar Surgical Institute"
-                width={40}
-                height={40}
-                className={styles.nsiPanelLogo}
-              />
-              <div>
-                <p className={styles.nsiPanelName}>NorthStar Surgical Institute</p>
-                <p className={styles.nsiPanelDesc}>
-                  Practical TKA solutions · Blocking systems · Saw development ·
-                  Operator-validated innovation.
+              <h2 className="chapter-title">{ch.title}</h2>
+              <p className="chapter-body">{ch.body}</p>
+              {'powered' in ch && ch.powered && (
+                <p className="chapter-powered">
+                  <span className="powered-icon">&Psi;</span> {ch.powered}
                 </p>
-              </div>
+              )}
+              {ch.chips && (
+                <div className="chapter-chips">
+                  {ch.chips.map((chip) => (
+                    <span className="chip" key={chip}>{chip}</span>
+                  ))}
+                </div>
+              )}
+              <a
+                href={ch.href}
+                className="chapter-cta"
+                {...(ch.href === '/login' ? { 'aria-label': 'Open SPEAR login' } : {})}
+              >
+                {ch.cta} <ChevronRight size={14} />
+              </a>
+            </div>
+            <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={ch.image} alt={ch.tag} loading="lazy" />
             </div>
           </div>
-          <div className={cx(styles.contactForm, styles.reveal, styles.d2)}>
-            <CarePathIntakeForm />
+        </section>
+      ))}
+
+      {/* ---- FOUNDER / PLATFORM LEADERSHIP ---- */}
+      <section className="founder-section">
+        <div className="section-container">
+          <div className="sfm-reveal">
+            <p className="section-label">Platform Leadership</p>
+            <h2 className="section-heading">Leadership</h2>
+          </div>
+          <div className="founder-grid">
+            <article className="founder-card sfm-reveal sfm-reveal-delay-1">
+              <div className="founder-avatar"><span>AS</span></div>
+              <h3 className="founder-name">Adam Stryker</h3>
+              <p className="founder-role">Founder / Platform Architect</p>
+              <p className="founder-bio">
+                Healthcare operator, investor, and systems architect focused on integrated medical infrastructure,
+                regulated healthcare platforms, surgical innovation, and operating leverage.
+              </p>
+              <a href="https://www.adamwstryker.com" target="_blank" rel="noopener noreferrer" className="founder-link">
+                Personal Website <ChevronRight size={12} />
+              </a>
+            </article>
+            <article className="founder-card sfm-reveal sfm-reveal-delay-2">
+              <div className="founder-avatar"><span>BF</span></div>
+              <h3 className="founder-name">Ben Fox</h3>
+              <p className="founder-role">Co-Founder / Market Development</p>
+              <p className="founder-bio">
+                Healthcare growth operator focused on provider relationships, market execution,
+                and field-level expansion across the StrykeFox Medical platform.
+              </p>
+              <a href="/" className="founder-link">
+                StrykeFox Medical <ChevronRight size={12} />
+              </a>
+            </article>
           </div>
         </div>
       </section>
 
-      <footer className={styles.footer}>
-        <span className={styles.ftBrand}>
-          CARE<span>PATH</span> by StrykeFox Medical
-        </span>
-        <span className={styles.ftLegal}>
-          © 2026 StrykeFox Medical LLC | Las Vegas, NV | NPI: 1821959420 |
-          Compliance-First. Patient-First.
-        </span>
-        <span className={styles.ftTag}>Verify · Document · Deliver</span>
+      {/* ---- FOOTER ---- */}
+      <footer className="home-footer">
+        <div className="footer-inner">
+          <div className="footer-brand-col">
+            <div className="footer-logo">
+              <span className="nav-stryke">STRYKE</span><span className="nav-k">K</span><span className="nav-fox">FOX</span>
+              <span className="nav-medical">MEDICAL</span>
+            </div>
+            <p className="footer-tagline">Healthcare infrastructure, engineered for what comes next.</p>
+          </div>
+          <div>
+            <p className="footer-col-title">Platform</p>
+            <ul className="footer-links">
+              <li><a href="/carepath">CarePath</a></li>
+              <li><a href="/northstar-surgical-innovations">Northstar Surgical Innovations</a></li>
+              <li><a href="/login" aria-label="Open SPEAR login">SPEAR</a></li>
+              <li><a href="/soc13">SoC13</a></li>
+            </ul>
+          </div>
+          <div>
+            <p className="footer-col-title">External</p>
+            <ul className="footer-links">
+              <li><a href="https://www.adamwstryker.com" target="_blank" rel="noopener noreferrer">Adam Stryker</a></li>
+              <li><a href="https://www.sensars.com" target="_blank" rel="noopener noreferrer">Sensars</a></li>
+            </ul>
+          </div>
+          <div>
+            <p className="footer-col-title">Connect</p>
+            <ul className="footer-links">
+              <li><a href="mailto:adam.stryker@strykefox.com">Partner With StrykeFox</a></li>
+            </ul>
+          </div>
+        </div>
+        <div className="footer-bottom">
+          <p className="footer-legal">&copy; 2026 StrykeFox Medical LLC &middot; Las Vegas, NV &middot; NPI: 1821959420</p>
+          <p className="footer-motto">Healthcare infrastructure, engineered for what comes next.</p>
+        </div>
       </footer>
     </main>
-  )
+  );
 }
