@@ -1,0 +1,52 @@
+<svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="trayGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#e8f4f8;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#d1e7dd;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="metalGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f8f9fa;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#dee2e6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="400" height="300" fill="#f8f9fa"/>
+  
+  <!-- Medical tray -->
+  <rect x="50" y="180" width="300" height="80" rx="8" fill="url(#trayGradient)" stroke="#adb5bd" stroke-width="2"/>
+  <rect x="50" y="180" width="300" height="15" rx="8" fill="url(#metalGradient)" stroke="#adb5bd" stroke-width="1"/>
+  
+  <!-- Surgical instruments on tray -->
+  <g id="instruments">
+    <!-- Scalpel -->
+    <rect x="80" y="160" width="4" height="40" fill="#c0c0c0" stroke="#868686" stroke-width="0.5"/>
+    <polygon points="82,160 80,155 84,155" fill="#c0c0c0" stroke="#868686" stroke-width="0.5"/>
+    
+    <!-- Forceps -->
+    <path d="M120 165 Q125 175 130 185 L132 185 Q127 175 122 165" fill="#c0c0c0" stroke="#868686" stroke-width="0.5"/>
+    <circle cx="122" cy="165" r="2" fill="#c0c0c0" stroke="#868686" stroke-width="0.5"/>
+    <circle cx="130" cy="185" r="2" fill="#c0c0c0" stroke="#868686" stroke-width="0.5"/>
+    
+    <!-- Scissors -->
+    <g transform="translate(180, 170)">
+      <path d="M0 0 Q10 5 20 0 L20 2 Q10 7 0 2" fill="#c0c0c0" stroke="#868686" stroke-width="0.5"/>
+      <circle cx="0" cy="1" r="1.5" fill="#c0c0c0" stroke="#868686" stroke-width="0.5"/>
+      <circle cx="20" cy="1" r="1.5" fill="#c0c0c0" stroke="#868686" stroke-width="0.5"/>
+    </g>
+    
+    <!-- Needle driver -->
+    <rect x="240" y="165" width="3" height="35" fill="#c0c0c0" stroke="#868686" stroke-width="0.5"/>
+    <rect x="238" y="160" width="7" height="8" rx="1" fill="#c0c0c0" stroke="#868686" stroke-width="0.5"/>
+    
+    <!-- Retractor -->
+    <path d="M280 175 Q290 180 300 175 L300 185 Q290 190 280 185" fill="#c0c0c0" stroke="#868686" stroke-width="0.5"/>
+  </g>
+  
+  <!-- Sterile field indicator -->
+  <rect x="320" y="40" width="60" height="30" rx="4" fill="#28a745" opacity="0.8"/>
+  <text x="350" y="58" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="white">STERILE</text>
+  
+  <!-- Shadow -->
+  <ellipse cx="200" cy="270" rx="140" ry="20" fill="#000" opacity="0.1"/>
+</svg>

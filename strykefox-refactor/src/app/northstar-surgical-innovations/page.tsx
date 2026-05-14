@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { ExternalLink, FileText } from 'lucide-react';
+import { ExternalLink, FileText, ChevronRight } from 'lucide-react';
 
 const onePagers: { title: string; type: string; desc: string; href: string }[] = [
   {
@@ -41,11 +41,14 @@ export default function NorthstarPage() {
 
   return (
     <main>
-      <nav>
+      <nav className="subpage-nav">
         <div className="nav-inner">
           <a href="/" className="nav-brand" aria-label="StrykeFox Medical home">
-            <div className="nav-logo-text">STRYKE<span>FOX</span></div>
-            <div className="nav-sub">NSI</div>
+            <div className="nav-compass" aria-hidden="true">✦</div>
+            <div className="nav-wordmark">
+              <span className="nav-stryke">STRYKE</span><span className="nav-k">K</span><span className="nav-fox">FOX</span>
+              <span className="nav-medical">MEDICAL</span>
+            </div>
           </a>
           <ul className="nav-links">
             <li><a href="/carepath">CarePath</a></li>
@@ -56,35 +59,30 @@ export default function NorthstarPage() {
         </div>
       </nav>
 
-      <section className="hero nsi-hero">
-        <div className="hero-bg nsi-hero-bg" />
-        <div className="hero-grid" />
-        <div className="hero-line" />
-        <div className="hero-inner">
-          <div className="hero-left reveal visible">
-            <p className="hero-eyebrow">StrykeFox Medical | Northstar Surgical Innovations</p>
-            <h1 className="hero-title nsi-title">
-              NORTH<span className="path">STAR</span>
-            </h1>
-            <p className="hero-tagline">Innovation built around the operating room.</p>
-            <p className="hero-desc">
+      <section className="subpage-hero">
+        <div className="subpage-hero-inner">
+          <div className="reveal visible">
+            <p className="subpage-eyebrow">StrykeFox Medical | Northstar Surgical Innovations</p>
+            <h1 className="subpage-title">Northstar Surgical Innovations</h1>
+            <p className="subpage-tagline">Innovation built around the operating room.</p>
+            <p className="subpage-desc">
               Northstar advances surgical tools, device commercialization, Ex-Im pathways,
               and emerging medical technologies designed for real-world clinical flow.
             </p>
-            <div className="hero-cta-group">
-              <a href="#assets" className="btn-primary">View Platform Assets</a>
+            <div className="cta-group">
+              <a href="#assets" className="btn-primary">View Platform Assets <ChevronRight size={14} /></a>
               <a
                 href="https://www.sensars.com"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn-secondary"
               >
-                Visit Sensars <ExternalLink size={12} style={{ marginLeft: '0.5rem' }} />
+                Visit Sensars <ExternalLink size={12} />
               </a>
             </div>
           </div>
-          <div className="hero-workflow reveal reveal-delay-2 visible">
-            <div className="workflow-card nsi-mark-card">
+          <div className="reveal reveal-delay-2 visible">
+            <div className="nsi-mark-card">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/images/northstar-logo.svg"
@@ -96,34 +94,34 @@ export default function NorthstarPage() {
         </div>
       </section>
 
-      <section className="section-full sensars-section">
-        <div className="section-inner">
+      <div className="sub-section-alt sensars-section">
+        <div className="sub-section-inner">
           <div className="reveal">
-            <p className="section-eyebrow">Partner Technology</p>
-            <h2 className="section-title"><em>Sensars</em></h2>
-            <p className="section-body">
+            <p className="sub-section-eyebrow">Partner Technology</p>
+            <h2 className="sub-section-title"><em>Sensars</em></h2>
+            <p className="sub-section-body">
               Northstar supports Sensars commercialization strategy through healthcare operator insight,
               clinical-trial capital planning, and medtech platform positioning.
             </p>
-            <div className="hero-cta-group" style={{ marginTop: '2rem' }}>
+            <div className="cta-group" style={{ marginTop: '2rem' }}>
               <a
                 href="https://www.sensars.com"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn-primary"
               >
-                Visit Sensars <ExternalLink size={12} style={{ marginLeft: '0.5rem' }} />
+                Visit Sensars <ExternalLink size={12} />
               </a>
             </div>
           </div>
         </div>
-      </section>
+      </div>
 
-      <section className="section" id="assets">
+      <section className="sub-section" id="assets">
         <div className="reveal">
-          <p className="section-eyebrow">Reference Materials</p>
-          <h2 className="section-title">Platform <em>One-Pagers</em></h2>
-          <p className="section-body">
+          <p className="sub-section-eyebrow">Reference Materials</p>
+          <h2 className="sub-section-title">Platform <em>One-Pagers</em></h2>
+          <p className="sub-section-body">
             Review Northstar platform materials, commercialization summaries,
             and device-development references already included in the StrykeFox repository.
           </p>
@@ -131,24 +129,26 @@ export default function NorthstarPage() {
         <div className="onepager-grid">
           {onePagers.map((doc, index) => (
             <article className={`onepager-card reveal reveal-delay-${(index % 3) + 1}`} key={doc.title}>
-              <div className="onepager-icon"><FileText size={22} /></div>
+              <div className="onepager-icon"><FileText size={20} /></div>
               <p className="onepager-type">{doc.type}</p>
               <h3 className="onepager-title">{doc.title}</h3>
               <p className="onepager-desc">{doc.desc}</p>
               <a href={doc.href} target="_blank" rel="noopener noreferrer" className="onepager-btn">
-                Open One-Pager <ExternalLink size={11} style={{ marginLeft: '0.4rem' }} />
+                Open One-Pager <ExternalLink size={11} />
               </a>
             </article>
           ))}
         </div>
       </section>
 
-      <footer>
+      <footer className="home-footer">
         <div className="footer-inner">
-          <div>
-            <div className="footer-brand-name">STRYKE<span>FOX</span> MEDICAL</div>
-            <div className="footer-brand-tag">Healthcare Infrastructure Platform</div>
-            <p className="footer-desc">Healthcare infrastructure, engineered for what comes next.</p>
+          <div className="footer-brand-col">
+            <div className="footer-logo">
+              <span className="nav-stryke">STRYKE</span><span className="nav-k">K</span><span className="nav-fox">FOX</span>
+              <span className="nav-medical">MEDICAL</span>
+            </div>
+            <p className="footer-tagline">Healthcare infrastructure, engineered for what comes next.</p>
           </div>
           <div>
             <p className="footer-col-title">Platform</p>
@@ -174,8 +174,8 @@ export default function NorthstarPage() {
           </div>
         </div>
         <div className="footer-bottom">
-          <p className="footer-legal">2026 StrykeFox Medical LLC - Las Vegas, NV | NPI: 1821959420</p>
-          <p className="footer-compliance">Healthcare infrastructure, engineered for what comes next.</p>
+          <p className="footer-legal">&copy; 2026 StrykeFox Medical LLC &middot; Las Vegas, NV &middot; NPI: 1821959420</p>
+          <p className="footer-motto">Healthcare infrastructure, engineered for what comes next.</p>
         </div>
       </footer>
     </main>

@@ -54,43 +54,40 @@ export default function CarePathPage() {
 
   return (
     <main>
-      <nav>
+      <nav className="subpage-nav">
         <div className="nav-inner">
           <a href="/" className="nav-brand" aria-label="StrykeFox Medical home">
-            <div className="nav-logo-text">STRYKE<span>FOX</span></div>
-            <div className="nav-sub">CarePath</div>
+            <div className="nav-compass" aria-hidden="true">✦</div>
+            <div className="nav-wordmark">
+              <span className="nav-stryke">STRYKE</span><span className="nav-k">K</span><span className="nav-fox">FOX</span>
+              <span className="nav-medical">MEDICAL</span>
+            </div>
           </a>
           <ul className="nav-links">
             <li><a href="/carepath">CarePath</a></li>
             <li><a href="/northstar-surgical-innovations">Northstar Surgical Innovations</a></li>
             <li><a href="/login" aria-label="Open SPEAR login">SPEAR</a></li>
             <li><a href="/soc13">SoC13</a></li>
-            <li><a href="/carepath#intake" className="nav-cta">Start Intake</a></li>
           </ul>
         </div>
       </nav>
 
-      <section className="hero">
-        <div className="hero-bg" />
-        <div className="hero-grid" />
-        <div className="hero-line" />
-        <div className="hero-inner">
-          <div className="hero-left reveal visible">
-            <p className="hero-eyebrow">StrykeFox Medical | CarePath</p>
-            <h1 className="hero-title">
-              <span className="care">CARE</span><span className="path">PATH</span>
-            </h1>
-            <p className="hero-tagline">Care that follows the patient.</p>
-            <p className="hero-desc">
+      <section className="subpage-hero">
+        <div className="subpage-hero-inner">
+          <div className="reveal visible">
+            <p className="subpage-eyebrow">StrykeFox Medical | CarePath</p>
+            <h1 className="subpage-title">CarePath</h1>
+            <p className="subpage-tagline">Care that follows the patient.</p>
+            <p className="subpage-desc">
               CarePath organizes recovery products, documentation, fulfillment coordination,
               proof-of-delivery capture, and billing-ready packets across the patient journey.
             </p>
-            <div className="hero-cta-group">
-              <a href="#intake" className="btn-primary">Start CarePath Intake</a>
+            <div className="cta-group">
+              <a href="#intake" className="btn-primary">Start CarePath Intake <ChevronRight size={14} /></a>
               <a href="#pathways" className="btn-secondary">View Pathways</a>
             </div>
           </div>
-          <div className="hero-workflow reveal reveal-delay-2 visible">
+          <div className="reveal reveal-delay-2 visible">
             <div className="workflow-card">
               <p className="workflow-title">Core Operating Sequence</p>
               <div className="workflow-steps">
@@ -113,21 +110,20 @@ export default function CarePathPage() {
         </div>
       </section>
 
-      <section className="section" id="pathways">
+      <section className="sub-section" id="pathways">
         <div className="reveal">
-          <p className="section-eyebrow">Recovery Pathways</p>
-          <h2 className="section-title">The <em>Owned</em> Pathways</h2>
-          <p className="section-body">
+          <p className="sub-section-eyebrow">Recovery Pathways</p>
+          <h2 className="sub-section-title">The <em>Owned</em> Pathways</h2>
+          <p className="sub-section-body">
             CarePath does not think in product categories. It thinks in pathways.
-            The product mix changes. The pathway logic does not.
           </p>
         </div>
-        <div className="pathways-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+        <div className="pathway-grid">
           {pathways.map((pathway, index) => {
             const Icon = pathway.icon;
             return (
               <article className={`pathway-card reveal reveal-delay-${(index % 3) + 1}`} key={pathway.name}>
-                <div className="pathway-icon"><Icon size={22} /></div>
+                <div className="pathway-icon"><Icon size={20} /></div>
                 <p className="pathway-tag">CarePath</p>
                 <h3 className="pathway-name">{pathway.name}</h3>
                 <p className="pathway-desc">{pathway.desc}</p>
@@ -137,12 +133,12 @@ export default function CarePathPage() {
         </div>
       </section>
 
-      <section className="section-full" id="intake">
-        <div className="section-inner">
+      <div className="sub-section-alt" id="intake">
+        <div className="sub-section-inner">
           <div className="reveal">
-            <p className="section-eyebrow">Patient Intake</p>
-            <h2 className="section-title">Patient Pathway <em>Intake</em></h2>
-            <p className="section-body">
+            <p className="sub-section-eyebrow">Patient Intake</p>
+            <h2 className="sub-section-title">Patient Pathway <em>Intake</em></h2>
+            <p className="sub-section-body">
               Begin a CarePath intake by providing patient and provider details below.
             </p>
           </div>
@@ -175,14 +171,16 @@ export default function CarePathPage() {
             <p className="intake-note">Full intake form coming soon. Contact your StrykeFox representative to begin a pathway.</p>
           </div>
         </div>
-      </section>
+      </div>
 
-      <footer>
+      <footer className="home-footer">
         <div className="footer-inner">
-          <div>
-            <div className="footer-brand-name">STRYKE<span>FOX</span> MEDICAL</div>
-            <div className="footer-brand-tag">Healthcare Infrastructure Platform</div>
-            <p className="footer-desc">Healthcare infrastructure, engineered for what comes next.</p>
+          <div className="footer-brand-col">
+            <div className="footer-logo">
+              <span className="nav-stryke">STRYKE</span><span className="nav-k">K</span><span className="nav-fox">FOX</span>
+              <span className="nav-medical">MEDICAL</span>
+            </div>
+            <p className="footer-tagline">Healthcare infrastructure, engineered for what comes next.</p>
           </div>
           <div>
             <p className="footer-col-title">Platform</p>
@@ -208,8 +206,8 @@ export default function CarePathPage() {
           </div>
         </div>
         <div className="footer-bottom">
-          <p className="footer-legal">2026 StrykeFox Medical LLC - Las Vegas, NV | NPI: 1821959420</p>
-          <p className="footer-compliance">Healthcare infrastructure, engineered for what comes next.</p>
+          <p className="footer-legal">&copy; 2026 StrykeFox Medical LLC &middot; Las Vegas, NV &middot; NPI: 1821959420</p>
+          <p className="footer-motto">Healthcare infrastructure, engineered for what comes next.</p>
         </div>
       </footer>
     </main>

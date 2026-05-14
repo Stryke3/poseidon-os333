@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { ChevronRight } from 'lucide-react';
 
 const thesisBlocks = [
   {
@@ -42,11 +43,14 @@ export default function SoC13Page() {
 
   return (
     <main>
-      <nav>
+      <nav className="subpage-nav">
         <div className="nav-inner">
           <a href="/" className="nav-brand" aria-label="StrykeFox Medical home">
-            <div className="nav-logo-text">STRYKE<span>FOX</span></div>
-            <div className="nav-sub">SoC13</div>
+            <div className="nav-compass" aria-hidden="true">✦</div>
+            <div className="nav-wordmark">
+              <span className="nav-stryke">STRYKE</span><span className="nav-k">K</span><span className="nav-fox">FOX</span>
+              <span className="nav-medical">MEDICAL</span>
+            </div>
           </a>
           <ul className="nav-links">
             <li><a href="/carepath">CarePath</a></li>
@@ -57,27 +61,22 @@ export default function SoC13Page() {
         </div>
       </nav>
 
-      <section className="hero soc13-hero">
-        <div className="hero-bg soc13-hero-bg" />
-        <div className="hero-grid" />
-        <div className="hero-line" />
-        <div className="hero-inner">
-          <div className="hero-left reveal visible">
-            <p className="hero-eyebrow">StrykeFox Medical | SoC13</p>
-            <h1 className="hero-title soc13-title">
-              SOC<span className="path">13</span>
-            </h1>
-            <p className="hero-tagline">Expansion by design.</p>
-            <p className="hero-desc">
+      <section className="subpage-hero">
+        <div className="subpage-hero-inner">
+          <div className="reveal visible">
+            <p className="subpage-eyebrow">StrykeFox Medical | SoC13</p>
+            <h1 className="subpage-title">SoC13</h1>
+            <p className="subpage-tagline">Expansion by design.</p>
+            <p className="subpage-desc">
               SoC13 aligns verticals, integrates capabilities, and reduces friction across healthcare delivery
               through platform expansion, acquisition architecture, and healthcare lineage integration.
             </p>
-            <div className="hero-cta-group">
-              <a href="#thesis" className="btn-primary">Review Expansion Thesis</a>
+            <div className="cta-group">
+              <a href="#thesis" className="btn-primary">Review Expansion Thesis <ChevronRight size={14} /></a>
             </div>
           </div>
-          <div className="hero-workflow reveal reveal-delay-2 visible">
-            <div className="workflow-card soc13-mark-card">
+          <div className="reveal reveal-delay-2 visible">
+            <div className="soc13-mark-card">
               <div className="soc13-roman">XIII</div>
               <p className="soc13-mark-label">Expansion Architecture</p>
             </div>
@@ -85,11 +84,11 @@ export default function SoC13Page() {
         </div>
       </section>
 
-      <section className="section" id="thesis">
+      <section className="sub-section" id="thesis">
         <div className="reveal">
-          <p className="section-eyebrow">Expansion Thesis</p>
-          <h2 className="section-title">Disciplined <em>Growth</em></h2>
-          <p className="section-body">
+          <p className="sub-section-eyebrow">Expansion Thesis</p>
+          <h2 className="sub-section-title">Disciplined <em>Growth</em></h2>
+          <p className="sub-section-body">
             SoC13 is the strategic expansion vehicle for StrykeFox Medical.
             Each vertical acquired strengthens the platform operating base.
           </p>
@@ -105,41 +104,49 @@ export default function SoC13Page() {
         </div>
       </section>
 
-      <section className="section founder-section" id="leadership">
-        <div className="reveal">
-          <p className="section-eyebrow">Leadership</p>
-          <h2 className="section-title">Platform <em>Leadership</em></h2>
-        </div>
-        <div className="founder-grid">
-          <article className="founder-card reveal reveal-delay-1">
-            <div className="founder-avatar"><span>AS</span></div>
-            <h3 className="founder-name">Adam Stryker</h3>
-            <p className="founder-role">Founder / Platform Architect</p>
-            <p className="founder-bio">
-              Healthcare operator, investor, and systems architect focused on integrated medical infrastructure,
-              regulated healthcare platforms, surgical innovation, and operating leverage.
-            </p>
-            <a href="https://www.adamwstryker.com" target="_blank" rel="noopener noreferrer" className="founder-link">Personal Website</a>
-          </article>
-          <article className="founder-card reveal reveal-delay-2">
-            <div className="founder-avatar"><span>BF</span></div>
-            <h3 className="founder-name">Ben Fox</h3>
-            <p className="founder-role">Co-Founder / Market Development</p>
-            <p className="founder-bio">
-              Healthcare growth operator focused on provider relationships, market execution,
-              and field-level expansion across the StrykeFox Medical platform.
-            </p>
-            <a href="/" className="founder-link">StrykeFox Medical</a>
-          </article>
+      <section className="founder-section" id="leadership">
+        <div className="section-container">
+          <div className="reveal">
+            <p className="section-label">Leadership</p>
+            <h2 className="section-heading">Platform Leadership</h2>
+          </div>
+          <div className="founder-grid">
+            <article className="founder-card reveal reveal-delay-1">
+              <div className="founder-avatar"><span>AS</span></div>
+              <h3 className="founder-name">Adam Stryker</h3>
+              <p className="founder-role">Founder / Platform Architect</p>
+              <p className="founder-bio">
+                Healthcare operator, investor, and systems architect focused on integrated medical infrastructure,
+                regulated healthcare platforms, surgical innovation, and operating leverage.
+              </p>
+              <a href="https://www.adamwstryker.com" target="_blank" rel="noopener noreferrer" className="founder-link">
+                Personal Website <ChevronRight size={12} />
+              </a>
+            </article>
+            <article className="founder-card reveal reveal-delay-2">
+              <div className="founder-avatar"><span>BF</span></div>
+              <h3 className="founder-name">Ben Fox</h3>
+              <p className="founder-role">Co-Founder / Market Development</p>
+              <p className="founder-bio">
+                Healthcare growth operator focused on provider relationships, market execution,
+                and field-level expansion across the StrykeFox Medical platform.
+              </p>
+              <a href="/" className="founder-link">
+                StrykeFox Medical <ChevronRight size={12} />
+              </a>
+            </article>
+          </div>
         </div>
       </section>
 
-      <footer>
+      <footer className="home-footer">
         <div className="footer-inner">
-          <div>
-            <div className="footer-brand-name">STRYKE<span>FOX</span> MEDICAL</div>
-            <div className="footer-brand-tag">Healthcare Infrastructure Platform</div>
-            <p className="footer-desc">Healthcare infrastructure, engineered for what comes next.</p>
+          <div className="footer-brand-col">
+            <div className="footer-logo">
+              <span className="nav-stryke">STRYKE</span><span className="nav-k">K</span><span className="nav-fox">FOX</span>
+              <span className="nav-medical">MEDICAL</span>
+            </div>
+            <p className="footer-tagline">Healthcare infrastructure, engineered for what comes next.</p>
           </div>
           <div>
             <p className="footer-col-title">Platform</p>
@@ -165,8 +172,8 @@ export default function SoC13Page() {
           </div>
         </div>
         <div className="footer-bottom">
-          <p className="footer-legal">2026 StrykeFox Medical LLC - Las Vegas, NV | NPI: 1821959420</p>
-          <p className="footer-compliance">Healthcare infrastructure, engineered for what comes next.</p>
+          <p className="footer-legal">&copy; 2026 StrykeFox Medical LLC &middot; Las Vegas, NV &middot; NPI: 1821959420</p>
+          <p className="footer-motto">Healthcare infrastructure, engineered for what comes next.</p>
         </div>
       </footer>
     </main>
