@@ -1,0 +1,26 @@
+<svg viewBox="0 0 180 38" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="nsiGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#1e3a8a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3b82f6;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="starGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#fbbf24;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f59e0b;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- NSI Logo -->
+  <g transform="translate(10, 5)">
+    <!-- Star shape representing North Star -->
+    <path d="M15 2 L18.5 10 L27 10 L20.5 15 L24 23 L15 18 L6 23 L9.5 15 L3 10 L11.5 10 Z" 
+          fill="url(#starGradient)" stroke="#d97706" stroke-width="0.5"/>
+    
+    <!-- Surgical instrument integrated with star -->
+    <path d="M15 8 L15 18 M12 11 L18 11" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>
+  </g>
+  
+  <!-- NSI Text -->
+  <text x="45" y="24" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="url(#nsiGradient)">NORTHSTAR</text>
+  <text x="45" y="32" font-family="Arial, sans-serif" font-size="8" font-weight="500" fill="#64748b">SURGICAL INNOVATIONS</text>
+</svg>

@@ -1,0 +1,20 @@
+<svg viewBox="0 0 180 38" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="soc13Gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#003366;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0066cc;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Shield background -->
+  <rect x="2" y="5" width="30" height="28" rx="4" fill="url(#soc13Gradient)" stroke="#FFD700" stroke-width="1"/>
+  
+  <!-- XIII text -->
+  <text x="17" y="22" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#FFD700">XIII</text>
+  
+  <!-- SoC13 text -->
+  <text x="40" y="24" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#003366">SoC13</text>
+  
+  <!-- Acquisition Group text -->
+  <text x="85" y="24" font-family="Arial, sans-serif" font-size="8" fill="#666">Acquisition Group</text>
+</svg>

@@ -1,0 +1,35 @@
+<svg viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="medalGrad" cx="40%" cy="35%">
+      <stop offset="0%" style="stop-color:#e8edf4;stop-opacity:1"/>
+      <stop offset="50%" style="stop-color:#c5cfdd;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#8e9ab0;stop-opacity:1"/>
+    </radialGradient>
+    <radialGradient id="innerGrad" cx="45%" cy="40%">
+      <stop offset="0%" style="stop-color:#f0f3f7;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#cdd5e0;stop-opacity:1"/>
+    </radialGradient>
+  </defs>
+  <!-- Outer ring -->
+  <circle cx="150" cy="150" r="140" fill="url(#medalGrad)" stroke="#b0bdd0" stroke-width="2"/>
+  <circle cx="150" cy="150" r="130" fill="none" stroke="#a0aec0" stroke-width="1"/>
+  <circle cx="150" cy="150" r="125" fill="none" stroke="#d0d8e4" stroke-width="0.5"/>
+  <!-- Inner disc -->
+  <circle cx="150" cy="150" r="110" fill="url(#innerGrad)" stroke="#b8c4d4" stroke-width="1"/>
+  <!-- Decorative border dots -->
+  <g fill="#8e9ab0" opacity="0.4">
+    <circle cx="150" cy="30" r="2.5"/>
+    <circle cx="150" cy="270" r="2.5"/>
+    <circle cx="30" cy="150" r="2.5"/>
+    <circle cx="270" cy="150" r="2.5"/>
+    <circle cx="65" cy="65" r="2"/>
+    <circle cx="235" cy="65" r="2"/>
+    <circle cx="65" cy="235" r="2"/>
+    <circle cx="235" cy="235" r="2"/>
+  </g>
+  <!-- XIII text -->
+  <text x="150" y="165" text-anchor="middle" font-family="'Playfair Display', Georgia, serif" font-size="64" font-weight="600" fill="#5a6577" letter-spacing="6">XIII</text>
+  <!-- Small decorative lines -->
+  <line x1="80" y1="190" x2="220" y2="190" stroke="#b0bdd0" stroke-width="0.75"/>
+  <line x1="80" y1="115" x2="220" y2="115" stroke="#b0bdd0" stroke-width="0.75"/>
+</svg>
