@@ -130,7 +130,7 @@ export default function HomePage() {
           </div>
           <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
             <Image
-              src="/images/operating-room.svg"
+              src="/images/clinical-care.svg"
               alt="Nurse with patient in clinical setting"
               width={640}
               height={480}
@@ -226,8 +226,8 @@ export default function HomePage() {
           </div>
           <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
             <Image
-              src="/images/operating-framework.svg"
-              alt="SPEAR data visualization"
+              src="/images/spear-data-viz.svg"
+              alt="SPEAR deployment analytics"
               width={640}
               height={480}
               className="chapter-photo"

@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480">
+  <defs>
+    <linearGradient id="dbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d1f3c"/>
+      <stop offset="100%" stop-color="#1a3c6e"/>
+    </linearGradient>
+    <linearGradient id="bar1" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#0891b2"/>
+    </linearGradient>
+    <linearGradient id="bar2" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#f0b432"/>
+      <stop offset="100%" stop-color="#c9921a"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="480" fill="url(#dbg)"/>
+  <!-- Grid -->
+  <g stroke="#ffffff" stroke-opacity="0.05" stroke-width="1">
+    <line x1="80" y1="60" x2="80" y2="380"/>
+    <line x1="80" y1="380" x2="580" y2="380"/>
+    <line x1="80" y1="300" x2="580" y2="300" stroke-dasharray="4,4"/>
+    <line x1="80" y1="220" x2="580" y2="220" stroke-dasharray="4,4"/>
+    <line x1="80" y1="140" x2="580" y2="140" stroke-dasharray="4,4"/>
+  </g>
+  <!-- Y-axis labels -->
+  <text x="70" y="384" fill="#7c92a6" font-size="9" text-anchor="end" font-family="monospace">0</text>
+  <text x="70" y="304" fill="#7c92a6" font-size="9" text-anchor="end" font-family="monospace">25</text>
+  <text x="70" y="224" fill="#7c92a6" font-size="9" text-anchor="end" font-family="monospace">50</text>
+  <text x="70" y="144" fill="#7c92a6" font-size="9" text-anchor="end" font-family="monospace">75</text>
+  <text x="70" y="70" fill="#7c92a6" font-size="9" text-anchor="end" font-family="monospace">100</text>
+  <!-- Bars -->
+  <rect x="110" y="160" width="28" height="220" rx="3" fill="url(#bar1)" opacity="0.9"/>
+  <rect x="145" y="240" width="28" height="140" rx="3" fill="url(#bar2)" opacity="0.9"/>
+  <rect x="200" y="120" width="28" height="260" rx="3" fill="url(#bar1)" opacity="0.9"/>
+  <rect x="235" y="200" width="28" height="180" rx="3" fill="url(#bar2)" opacity="0.9"/>
+  <rect x="290" y="100" width="28" height="280" rx="3" fill="url(#bar1)" opacity="0.9"/>
+  <rect x="325" y="180" width="28" height="200" rx="3" fill="url(#bar2)" opacity="0.9"/>
+  <rect x="380" y="140" width="28" height="240" rx="3" fill="url(#bar1)" opacity="0.9"/>
+  <rect x="415" y="220" width="28" height="160" rx="3" fill="url(#bar2)" opacity="0.9"/>
+  <rect x="470" y="90" width="28" height="290" rx="3" fill="url(#bar1)" opacity="0.9"/>
+  <rect x="505" y="160" width="28" height="220" rx="3" fill="url(#bar2)" opacity="0.9"/>
+  <!-- X-axis labels -->
+  <text x="138" y="400" fill="#7c92a6" font-size="8" text-anchor="middle" font-family="monospace">Q1</text>
+  <text x="228" y="400" fill="#7c92a6" font-size="8" text-anchor="middle" font-family="monospace">Q2</text>
+  <text x="318" y="400" fill="#7c92a6" font-size="8" text-anchor="middle" font-family="monospace">Q3</text>
+  <text x="408" y="400" fill="#7c92a6" font-size="8" text-anchor="middle" font-family="monospace">Q4</text>
+  <text x="498" y="400" fill="#7c92a6" font-size="8" text-anchor="middle" font-family="monospace">YTD</text>
+  <!-- Line overlay -->
+  <polyline points="124,150 214,110 304,90 394,130 484,80" stroke="#0fa86a" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="124" cy="150" r="4" fill="#0fa86a"/>
+  <circle cx="214" cy="110" r="4" fill="#0fa86a"/>
+  <circle cx="304" cy="90" r="4" fill="#0fa86a"/>
+  <circle cx="394" cy="130" r="4" fill="#0fa86a"/>
+  <circle cx="484" cy="80" r="4" fill="#0fa86a"/>
+  <!-- Title -->
+  <text x="330" y="35" fill="#f5f7fa" font-size="14" text-anchor="middle" font-family="sans-serif" font-weight="600" letter-spacing="2">SPEAR DEPLOYMENT ANALYTICS</text>
+  <text x="330" y="52" fill="#7c92a6" font-size="9" text-anchor="middle" font-family="monospace">Poseidon · Trident · Aries</text>
+  <!-- Legend -->
+  <rect x="160" y="430" width="12" height="12" rx="2" fill="url(#bar1)"/>
+  <text x="178" y="440" fill="#7c92a6" font-size="9" font-family="monospace">Capture</text>
+  <rect x="260" y="430" width="12" height="12" rx="2" fill="url(#bar2)"/>
+  <text x="278" y="440" fill="#7c92a6" font-size="9" font-family="monospace">Deployment</text>
+  <rect x="380" y="430" width="12" height="12" rx="2" fill="#0fa86a"/>
+  <text x="398" y="440" fill="#7c92a6" font-size="9" font-family="monospace">Efficiency</text>
+  <!-- Floating metric cards -->
+  <rect x="540" y="80" width="80" height="50" rx="6" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.1"/>
+  <text x="580" y="100" fill="#06b6d4" font-size="16" text-anchor="middle" font-family="sans-serif" font-weight="700">94%</text>
+  <text x="580" y="118" fill="#7c92a6" font-size="7" text-anchor="middle" font-family="monospace">ACCURACY</text>
+  <rect x="540" y="145" width="80" height="50" rx="6" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.1"/>
+  <text x="580" y="165" fill="#f0b432" font-size="16" text-anchor="middle" font-family="sans-serif" font-weight="700">2.4K</text>
+  <text x="580" y="183" fill="#7c92a6" font-size="7" text-anchor="middle" font-family="monospace">DEPLOYED</text>
+  <rect x="540" y="210" width="80" height="50" rx="6" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.1"/>
+  <text x="580" y="230" fill="#0fa86a" font-size="16" text-anchor="middle" font-family="sans-serif" font-weight="700">↑18%</text>
+  <text x="580" y="248" fill="#7c92a6" font-size="7" text-anchor="middle" font-family="monospace">GROWTH</text>
+</svg>
