@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0d1f3c"/>
+      <stop offset="25%" stop-color="#1a3c6e"/>
+      <stop offset="45%" stop-color="#2a5da8"/>
+      <stop offset="60%" stop-color="#c9921a" stop-opacity="0.6"/>
+      <stop offset="75%" stop-color="#f0b432" stop-opacity="0.4"/>
+      <stop offset="90%" stop-color="#1a3c6e"/>
+      <stop offset="100%" stop-color="#0d1f3c"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="50%" cy="65%" r="30%">
+      <stop offset="0%" stop-color="#f0b432" stop-opacity="0.5"/>
+      <stop offset="40%" stop-color="#c9921a" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="transparent" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2a5da8" stop-opacity="0.4"/>
+      <stop offset="50%" stop-color="#1a3c6e" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#0d1f3c"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="20" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- Sky -->
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <!-- Sun glow -->
+  <rect width="1920" height="1080" fill="url(#sun)"/>
+  <!-- Horizon line -->
+  <rect y="650" width="1920" height="430" fill="url(#water)"/>
+  <!-- Cloud wisps -->
+  <ellipse cx="400" cy="300" rx="200" ry="30" fill="#ffffff" opacity="0.04"/>
+  <ellipse cx="1200" cy="250" rx="280" ry="25" fill="#ffffff" opacity="0.03"/>
+  <ellipse cx="800" cy="350" rx="160" ry="20" fill="#ffffff" opacity="0.05"/>
+  <ellipse cx="1500" cy="320" rx="220" ry="28" fill="#ffffff" opacity="0.03"/>
+  <!-- Water reflections -->
+  <rect y="660" x="200" width="400" height="1" fill="#f0b432" opacity="0.15"/>
+  <rect y="680" x="600" width="600" height="1" fill="#f0b432" opacity="0.12"/>
+  <rect y="700" x="400" width="500" height="1" fill="#c9921a" opacity="0.08"/>
+  <rect y="720" x="700" width="300" height="1" fill="#f0b432" opacity="0.06"/>
+  <rect y="750" x="500" width="800" height="1" fill="#2a5da8" opacity="0.1"/>
+  <!-- Subtle stars -->
+  <circle cx="200" cy="100" r="1" fill="#ffffff" opacity="0.3"/>
+  <circle cx="500" cy="80" r="1.2" fill="#ffffff" opacity="0.25"/>
+  <circle cx="900" cy="120" r="0.8" fill="#ffffff" opacity="0.2"/>
+  <circle cx="1400" cy="90" r="1" fill="#ffffff" opacity="0.3"/>
+  <circle cx="1700" cy="150" r="1.5" fill="#ffffff" opacity="0.2"/>
+  <circle cx="300" cy="200" r="0.8" fill="#ffffff" opacity="0.15"/>
+  <circle cx="1100" cy="180" r="1" fill="#ffffff" opacity="0.2"/>
+</svg>
