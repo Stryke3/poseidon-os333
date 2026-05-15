@@ -639,7 +639,7 @@ canvas {
 
 .mobile-menu a:hover { color: var(--blue); }
 
-/* HERO — LIGHT WITH GRADIENT */
+/* HERO — FULL-BLEED BACKGROUND */
 .hero-section {
   min-height: 100vh;
   display: flex;
@@ -649,16 +649,38 @@ canvas {
   overflow: hidden;
   padding: 8rem 2rem 4rem;
   text-align: center;
+  background: var(--navy);
+}
+
+.hero-bg-image {
+  position: absolute;
+  inset: 0;
   background:
-    linear-gradient(180deg, var(--blue-faint) 0%, var(--white) 40%, rgba(232,240,250,0.4) 70%, var(--white) 100%);
+    linear-gradient(180deg,
+      rgba(13,31,60,0.15) 0%,
+      rgba(42,93,168,0.20) 20%,
+      rgba(52,120,198,0.25) 35%,
+      rgba(201,146,26,0.30) 55%,
+      rgba(240,180,50,0.25) 65%,
+      rgba(224,58,58,0.15) 80%,
+      rgba(13,31,60,0.40) 100%),
+    linear-gradient(135deg,
+      rgba(26,60,110,0.8) 0%,
+      rgba(42,93,168,0.6) 30%,
+      rgba(201,146,26,0.4) 60%,
+      rgba(240,180,50,0.3) 80%,
+      rgba(13,31,60,0.7) 100%);
+  opacity: 0.8;
 }
 
 .hero-gradient {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(ellipse 70% 50% at 50% 30%, rgba(52,120,198,0.08) 0%, transparent 70%),
-    radial-gradient(ellipse 50% 60% at 80% 80%, rgba(26,60,110,0.04) 0%, transparent 60%);
+    radial-gradient(ellipse 80% 60% at 50% 40%, rgba(52,120,198,0.15) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 50% at 80% 80%, rgba(201,146,26,0.12) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 40% at 20% 20%, rgba(26,60,110,0.10) 0%, transparent 50%);
+  z-index: 1;
 }
 
 .hero-content {
@@ -667,11 +689,20 @@ canvas {
   max-width: 720px;
 }
 
-.hero-logo-mark {
-  color: var(--blue-mid);
-  font-size: 3.5rem;
-  margin-bottom: 1rem;
-  opacity: 0.7;
+.hero-logo-img {
+  width: 200px;
+  height: 200px;
+  margin: 0 auto 2rem;
+  border-radius: 28px;
+  overflow: hidden;
+  border: 2px solid rgba(255,255,255,0.15);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+}
+
+.hero-logo-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .hero-wordmark {
@@ -685,25 +716,27 @@ canvas {
 }
 
 .hw-stryke, .hw-fox {
-  color: var(--navy);
+  color: var(--white);
   font-family: 'Rajdhani', sans-serif;
   font-size: clamp(2.2rem, 4.5vw, 3.5rem);
   font-weight: 700;
   letter-spacing: 0.1em;
+  text-shadow: 0 2px 10px rgba(0,0,0,0.3);
 }
 
 .hw-k {
-  color: var(--blue-bright);
+  color: var(--accent-gold-2);
   font-family: 'Rajdhani', sans-serif;
   font-size: clamp(2.2rem, 4.5vw, 3.5rem);
   font-weight: 700;
   letter-spacing: 0.1em;
+  text-shadow: 0 2px 10px rgba(0,0,0,0.3);
 }
 
 .hw-medical {
   display: block;
   width: 100%;
-  color: var(--sfm-gray-400);
+  color: rgba(255,255,255,0.5);
   font-family: 'Rajdhani', sans-serif;
   font-size: clamp(0.65rem, 1.2vw, 0.85rem);
   font-weight: 600;
@@ -713,16 +746,17 @@ canvas {
 }
 
 .hero-headline {
-  color: var(--navy);
+  color: var(--white);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: clamp(1.6rem, 3.5vw, 2.6rem);
   font-weight: 500;
   line-height: 1.35;
   margin-bottom: 1rem;
+  text-shadow: 0 2px 20px rgba(0,0,0,0.3);
 }
 
 .hero-sub {
-  color: var(--text-muted);
+  color: rgba(255,255,255,0.7);
   font-size: 0.95rem;
   margin-bottom: 2.5rem;
   letter-spacing: 0.02em;
@@ -733,20 +767,22 @@ canvas {
   align-items: center;
   gap: 0.5rem;
   padding: 0.85rem 2rem;
-  background: var(--navy);
-  color: var(--white);
+  background: var(--white);
+  color: var(--navy);
   font-family: 'Rajdhani', sans-serif;
   font-size: 0.8rem;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-decoration: none;
   text-transform: uppercase;
-  transition: background 0.3s, transform 0.3s;
+  transition: background 0.3s, transform 0.3s, box-shadow 0.3s;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
 }
 
 .hero-cta:hover {
-  background: var(--blue-mid);
+  background: var(--blue-faint);
   transform: translateY(-1px);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.3);
 }
 
 /* CHAPTER SECTIONS */
@@ -999,6 +1035,119 @@ canvas {
 
 .founder-link:hover { color: var(--navy); }
 
+/* FOUNDER CREDENTIALS */
+.founder-credentials {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  border-left: 2px solid var(--border-solid);
+  background: var(--blue-faint);
+}
+
+.founder-credentials span {
+  color: var(--sfm-gray-600);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+}
+
+/* NAV BRAND LOGO */
+.nav-brand-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 5px;
+  overflow: hidden;
+  border: 1px solid var(--border-solid);
+  flex-shrink: 0;
+}
+
+.nav-brand-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* NSI INLINE LOGO */
+.nsi-inline-logo {
+  margin-bottom: 1.5rem;
+  opacity: 0.7;
+}
+
+.nsi-inline-logo img {
+  height: 40px;
+  width: auto;
+}
+
+/* MATERNITY SECTION */
+.maternity-section {
+  padding: 5rem 3rem;
+  border-top: 1px solid var(--border);
+  background:
+    linear-gradient(135deg,
+      rgba(232,240,250,0.6) 0%,
+      rgba(255,255,255,0.95) 40%,
+      rgba(248,250,251,1) 100%);
+  text-align: center;
+}
+
+.maternity-inner {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.maternity-headline {
+  color: var(--navy);
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(1.6rem, 3vw, 2.4rem);
+  font-weight: 600;
+  line-height: 1.3;
+  margin-bottom: 2rem;
+}
+
+.maternity-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.85rem 2rem;
+  background: var(--navy);
+  color: var(--white);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-decoration: none;
+  text-transform: uppercase;
+  transition: background 0.3s, transform 0.3s;
+  margin-bottom: 2.5rem;
+}
+
+.maternity-cta:hover {
+  background: var(--blue-mid);
+  transform: translateY(-1px);
+}
+
+.maternity-logo {
+  display: flex;
+  justify-content: center;
+}
+
+.maternity-logo img {
+  max-width: 240px;
+  height: auto;
+  opacity: 0.8;
+}
+
+/* CHAPTER PHOTO (Next/Image) */
+.chapter-photo {
+  width: 100%;
+  height: auto;
+  max-height: 420px;
+  object-fit: contain;
+  opacity: 0.85;
+}
+
 /* FOOTER — LIGHT */
 .home-footer {
   padding: 3rem;
@@ -1080,6 +1229,39 @@ canvas {
   font-size: 0.6rem;
   font-weight: 600;
   letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+/* THREE-COLUMN FOOTER */
+.footer-three-col {
+  grid-template-columns: 1fr 1fr 1fr;
+  margin-bottom: 0;
+  align-items: center;
+}
+
+.footer-carepath-label {
+  color: var(--navy);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.footer-center-col {
+  text-align: center;
+}
+
+.footer-right-col {
+  text-align: right;
+}
+
+.footer-motto-right {
+  color: var(--blue-mid);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
@@ -1668,7 +1850,8 @@ canvas {
   .sub-section,
   .sub-section-alt .sub-section-inner,
   .founder-section,
-  .home-footer {
+  .home-footer,
+  .maternity-section {
     padding-left: 1.25rem;
     padding-right: 1.25rem;
   }
@@ -1679,11 +1862,26 @@ canvas {
 
   .hero-section { padding: 7rem 1.25rem 3rem; }
 
+  .hero-logo-img {
+    width: 140px;
+    height: 140px;
+  }
+
   .founder-grid,
   .onepager-grid,
   .intake-grid,
   .footer-inner {
     grid-template-columns: 1fr;
+  }
+
+  .footer-three-col {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+
+  .footer-center-col,
+  .footer-right-col {
+    text-align: center;
   }
 
   .intake-field-full { grid-column: auto; }
