@@ -128,14 +128,17 @@ export default function HomePage() {
               Explore CarePath <ChevronRight size={14} />
             </a>
           </div>
-          <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
-            <Image
-              src="/images/clinical-care.svg"
-              alt="Nurse with patient in clinical setting"
-              width={640}
-              height={480}
-              className="chapter-photo"
-            />
+          <div className="chapter-visual sfm-reveal sfm-reveal-delay-2">
+            <div className="visual-panel visual-carepath">
+              <div className="visual-glow" />
+              <div className="visual-grid" />
+              <div className="visual-icon-group">
+                <div className="vi-ring vi-ring-1" />
+                <div className="vi-ring vi-ring-2" />
+                <div className="vi-dot" />
+              </div>
+              <p className="visual-label">Patient Continuity</p>
+            </div>
           </div>
         </div>
       </section>
@@ -187,14 +190,16 @@ export default function HomePage() {
               Explore NSI <ChevronRight size={14} />
             </a>
           </div>
-          <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
-            <Image
-              src="/images/surgical-equipment.svg"
-              alt="Surgical instruments close-up"
-              width={640}
-              height={480}
-              className="chapter-photo"
-            />
+          <div className="chapter-visual sfm-reveal sfm-reveal-delay-2">
+            <div className="visual-panel visual-nsi">
+              <div className="visual-glow" />
+              <div className="visual-grid" />
+              <div className="visual-icon-group">
+                <div className="vi-cross" />
+                <div className="vi-ring vi-ring-1" />
+              </div>
+              <p className="visual-label">Surgical Innovation</p>
+            </div>
           </div>
         </div>
       </section>
@@ -224,14 +229,21 @@ export default function HomePage() {
               Explore SPEAR <ChevronRight size={14} />
             </a>
           </div>
-          <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
-            <Image
-              src="/images/spear-data-viz.svg"
-              alt="SPEAR deployment analytics"
-              width={640}
-              height={480}
-              className="chapter-photo"
-            />
+          <div className="chapter-visual sfm-reveal sfm-reveal-delay-2">
+            <div className="visual-panel visual-spear">
+              <div className="visual-glow" />
+              <div className="visual-grid" />
+              <div className="visual-icon-group">
+                <div className="vi-bars">
+                  <span style={{ height: '40%' }} />
+                  <span style={{ height: '70%' }} />
+                  <span style={{ height: '55%' }} />
+                  <span style={{ height: '90%' }} />
+                  <span style={{ height: '65%' }} />
+                </div>
+              </div>
+              <p className="visual-label">Deployment Intelligence</p>
+            </div>
           </div>
         </div>
       </section>
@@ -255,14 +267,15 @@ export default function HomePage() {
               Platform Expansion <ChevronRight size={14} />
             </a>
           </div>
-          <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
-            <Image
-              src="/images/soc13-logo.svg"
-              alt="SoC13 seal"
-              width={640}
-              height={480}
-              className="chapter-photo"
-            />
+          <div className="chapter-visual sfm-reveal sfm-reveal-delay-2">
+            <div className="visual-panel visual-soc13">
+              <div className="visual-glow" />
+              <div className="visual-grid" />
+              <div className="visual-icon-group">
+                <div className="vi-shield" />
+              </div>
+              <p className="visual-label">Platform Expansion</p>
+            </div>
           </div>
         </div>
       </section>
@@ -292,9 +305,7 @@ export default function HomePage() {
                 <span>MBA Candidate Pepperdine</span>
               </div>
               <a
-                href="https://www.adamwstryker.com"
-                target="_blank"
-                rel="noopener noreferrer"
+                href="/founder"
                 className="founder-link"
               >
                 adamwstryker.com <ChevronRight size={12} />
