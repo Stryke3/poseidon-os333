@@ -19,23 +19,11 @@ interface LiveUser {
   permissions?: string[]
 }
 
-function getNextAuthSecret(): string {
-  try {
-    return getRequiredEnv("NEXTAUTH_SECRET")
-  } catch {
-    return ""
-  }
-}
-
+const NEXTAUTH_SECRET = getRequiredEnv("NEXTAUTH_SECRET")
 const APP_ENV = (process.env.NODE_ENV || "development").toLowerCase()
 
 async function authenticateAgainstCore(email: string, password: string) {
-  let coreApiUrl: string
-  try {
-    coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL")
-  } catch {
-    return null
-  }
+  const coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL")
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 8000)
 
@@ -135,7 +123,7 @@ export const authOptions: NextAuthOptions = {
       return session
     },
   },
-  secret: getNextAuthSecret(),
+  secret: NEXTAUTH_SECRET,
 }
 
 export async function getSafeServerSession() {
