@@ -22,6 +22,10 @@ function isProductionRuntime() {
   )
 }
 
+function isBuildPhase(): boolean {
+  return process.env.NEXT_PHASE === "phase-production-build"
+}
+
 export function getRequiredEnv(name: string): string {
   const candidates = [name, ...(ENV_ALIASES[name] || [])]
   for (const candidate of candidates) {
@@ -30,8 +34,8 @@ export function getRequiredEnv(name: string): string {
       return value
     }
   }
-  if (!candidates.length) {
-    throw new Error(`Missing required environment variable: ${name}`)
+  if (isBuildPhase()) {
+    return `__BUILD_PLACEHOLDER_${name}__`
   }
   throw new Error(`Missing required environment variable: ${candidates.join(" or ")}`)
 }
