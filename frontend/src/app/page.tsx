@@ -42,9 +42,9 @@ export default function HomePage() {
               <Image src="/images/sfm-logo.jpeg" alt="StrykeFox" width={28} height={28} />
             </div>
             <div className="nav-wordmark">
-              <span className="nav-stryke">STRYKE</span>
+              <span className="nav-stryke">STRY</span>
               <span className="nav-k">K</span>
-              <span className="nav-fox">FOX</span>
+              <span className="nav-fox">EFOX</span>
               <span className="nav-medical">MEDICAL</span>
             </div>
           </a>
@@ -89,9 +89,9 @@ export default function HomePage() {
             />
           </div>
           <h1 className="hero-wordmark">
-            <span className="hw-stryke">STRYKE</span>
+            <span className="hw-stryke">STRY</span>
             <span className="hw-k">K</span>
-            <span className="hw-fox">FOX</span>
+            <span className="hw-fox">EFOX</span>
             <span className="hw-medical">MEDICAL</span>
           </h1>
           <p className="hero-headline">
