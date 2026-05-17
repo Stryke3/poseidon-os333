@@ -46,6 +46,9 @@ export async function GET() {
         {/* Name */}
         <div
           style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
             fontSize: "72px",
             fontWeight: 800,
             letterSpacing: "-0.03em",
@@ -55,7 +58,6 @@ export async function GET() {
           }}
         >
           <span>ADAM W.</span>
-          <br />
           <span style={{ color: "#8b1e1e" }}>STRYKER</span>
         </div>
 
