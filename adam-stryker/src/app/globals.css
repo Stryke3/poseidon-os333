@@ -1,0 +1,148 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  background: #0a0a0a;
+  color: #f5f4f1;
+  font-family: var(--font-dm-sans), "DM Sans", sans-serif;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow-x: hidden;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scanline {
+  0% {
+    top: -10%;
+  }
+  100% {
+    top: 110%;
+  }
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+}
+
+.scanline {
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(139, 30, 30, 0.4),
+    transparent
+  );
+  animation: scanline 6s linear infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.vault-input {
+  background: rgba(245, 244, 241, 0.04);
+  border: 1px solid rgba(245, 244, 241, 0.12);
+  color: #f5f4f1;
+  padding: 14px 16px;
+  font-family: var(--font-dm-sans), "DM Sans", sans-serif;
+  font-size: 15px;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.vault-input:focus {
+  border-color: rgba(139, 30, 30, 0.7);
+}
+
+.vault-input::placeholder {
+  color: rgba(245, 244, 241, 0.25);
+}
+
+.vault-btn {
+  background: #8b1e1e;
+  color: #f5f4f1;
+  border: none;
+  padding: 16px 40px;
+  font-family: var(--font-jetbrains), "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    transform 0.1s;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.vault-btn:hover {
+  background: #a02222;
+}
+
+.vault-btn:active {
+  transform: scale(0.98);
+}
+
+.vault-link {
+  color: rgba(245, 244, 241, 0.4);
+  text-decoration: none;
+  font-family: var(--font-jetbrains), "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.2s;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.vault-link:hover {
+  color: rgba(245, 244, 241, 0.75);
+}
