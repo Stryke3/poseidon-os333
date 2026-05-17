@@ -59,7 +59,7 @@ export default function CarePathPage() {
           <a href="/" className="nav-brand" aria-label="StrykeFox Medical home">
             <div className="nav-compass" aria-hidden="true">&#10022;</div>
             <div className="nav-wordmark">
-              <span className="nav-stryke">STRYKE</span><span className="nav-k">K</span><span className="nav-fox">FOX</span>
+              <span className="nav-stryke">STRY</span><span className="nav-k">K</span><span className="nav-fox">EFOX</span>
               <span className="nav-medical">MEDICAL</span>
             </div>
           </a>
@@ -177,7 +177,7 @@ export default function CarePathPage() {
         <div className="footer-inner">
           <div className="footer-brand-col">
             <div className="footer-logo">
-              <span className="nav-stryke">STRYKE</span><span className="nav-k">K</span><span className="nav-fox">FOX</span>
+              <span className="nav-stryke">STRY</span><span className="nav-k">K</span><span className="nav-fox">EFOX</span>
               <span className="nav-medical">MEDICAL</span>
             </div>
             <p className="footer-tagline">Healthcare infrastructure, engineered for what comes next.</p>

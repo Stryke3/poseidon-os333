@@ -6,8 +6,22 @@ const cx = (...classes: Array<string | false | undefined>) =>
   classes.filter(Boolean).join(" ")
 
 export const metadata: Metadata = {
-  title: "El Kit de Cuidado - Recuperación Postparto Completa | StrykeFox Medical",
-  description: "Kit completo de recuperación postparto con suministros médicos, prendas de recuperación y esenciales de cuidado. Diseñado para nuevas madres por profesionales de la salud.",
+  title: "El Kit de Cuidado — Recuperación Postparto Completa | StrykeFox Medical",
+  description:
+    "Kit completo de recuperación postparto con suministros médicos, prendas de recuperación y esenciales de cuidado. Diseñado para nuevas madres por profesionales de la salud. El Cuidado de Maternidad por StrykeFox Medical.",
+  alternates: {
+    canonical: "https://www.strykefox.com/el-kit-de-cuidado",
+    languages: {
+      "en-US": "https://www.strykefox.com/mommy-care",
+      "es-MX": "https://www.strykefox.com/el-kit-de-cuidado",
+    },
+  },
+  openGraph: {
+    title: "El Kit de Cuidado — Recuperación Postparto Completa",
+    description:
+      "Kit completo de recuperación postparto con suministros médicos, prendas de recuperación y esenciales de cuidado.",
+    url: "https://www.strykefox.com/el-kit-de-cuidado",
+  },
 }
 
 export default function ElKitCuidadoPage() {

@@ -3,7 +3,7 @@ import Script from "next/script"
 
 import PublicInquiryForm from "@/components/public/PublicInquiryForm"
 
-const SITE_URL = "https://strykefox.com"
+const SITE_URL = "https://www.strykefox.com"
 const PAGE_URL = `${SITE_URL}/founder`
 
 // TODO: Replace with real public URLs once assets are deployed
