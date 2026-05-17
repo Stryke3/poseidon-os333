@@ -2,10 +2,21 @@ User-agent: *
 Allow: /
 
 # Sitemap
-Sitemap: https://adamwstryker.com/sitemap.xml
+Sitemap: https://www.strykefox.com/sitemap.xml
 
-# Block unnecessary paths
+# Block internal paths
 Disallow: /api/
 Disallow: /_next/
 Disallow: /static/
+Disallow: /login
+Disallow: /admin/
+Disallow: /ceo
+Disallow: /executive
+Disallow: /intake
+Disallow: /revenue
+Disallow: /settings
+Disallow: /dashboard/
+Disallow: /patients/
+Disallow: /edi
+Disallow: /fax
 Disallow: /*.json$

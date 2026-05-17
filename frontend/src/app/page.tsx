@@ -1,78 +1,66 @@
-'use client';
-
-import { useEffect, useState } from 'react';
-import { ChevronRight, Menu, X } from 'lucide-react';
+import type { Metadata } from 'next';
 import Image from 'next/image';
+import Link from 'next/link';
+import { ChevronRight } from 'lucide-react';
+import { HomepageNav } from '@/components/homepage/HomepageNav';
+import { RevealObserver } from '@/components/homepage/RevealObserver';
 
-const navItems: [string, string][] = [
-  ['CarePath', '#carepath'],
-  ['NorthStar Surgical', '#nsi'],
-  ['SPEAR', '#spear'],
-  ['SoC13', '#soc13'],
-];
+const SITE_URL = 'https://www.strykefox.com';
+
+export const metadata: Metadata = {
+  title:
+    'StrykeFox Medical | Healthcare Infrastructure, CarePath & Medical Technology Platform',
+  description:
+    'StrykeFox Medical operates CarePath, NorthStar Surgical Innovations, SPEAR, SoC13, and StrykePac Ex-Im SA — integrated healthcare infrastructure for surgical commercialization, DMEPOS, recovery coordination, and device deployment across Las Vegas, Dallas, and Panama Pacífico.',
+  alternates: {
+    canonical: SITE_URL,
+  },
+  openGraph: {
+    title:
+      'StrykeFox Medical | Healthcare Infrastructure, CarePath & Medical Technology Platform',
+    description:
+      'StrykeFox Medical builds the operating layer for recovery coordination, medical device workflows, reimbursement-ready documentation, healthcare technology deployment, and acquisition-led platform expansion.',
+    url: SITE_URL,
+    images: [
+      {
+        url: `${SITE_URL}/images/sfm-logo.jpeg`,
+        width: 1200,
+        height: 630,
+        alt: 'StrykeFox Medical — Healthcare Infrastructure Platform',
+      },
+    ],
+  },
+};
 
 const carepathTags = [
-  'Pre-Op', 'Surgical', 'Orthopedic', 'Mobility', 'Recovery', 'Maternity',
+  'Pre-Op',
+  'Surgical',
+  'Orthopedic',
+  'Mobility',
+  'Recovery',
+  'Maternity',
+];
+
+const carepathKeywords = [
+  'eligibility verification',
+  'documentation readiness',
+  'provider workflow support',
+  'fulfillment coordination',
+  'proof-of-delivery capture',
+  'billing-ready packets',
+  'patient continuity',
+  'medical device workflows',
+  'recovery coordination',
+  'healthcare infrastructure',
 ];
 
 export default function HomePage() {
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  useEffect(() => {
-    const reveals = document.querySelectorAll('.sfm-reveal');
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) entry.target.classList.add('visible');
-        });
-      },
-      { threshold: 0.12 },
-    );
-    reveals.forEach((el) => observer.observe(el));
-    return () => observer.disconnect();
-  }, []);
-
   return (
     <main className="home-main">
+      <RevealObserver />
+
       {/* ———— NAV ———— */}
-      <nav className="home-nav">
-        <div className="nav-inner">
-          <a href="/" className="nav-brand" aria-label="StrykeFox Medical home">
-            <div className="nav-brand-logo">
-              <Image src="/images/sfm-logo.jpeg" alt="StrykeFox" width={28} height={28} />
-            </div>
-            <div className="nav-wordmark">
-              <span className="nav-stryke">STRYKE</span>
-              <span className="nav-k">K</span>
-              <span className="nav-fox">FOX</span>
-              <span className="nav-medical">MEDICAL</span>
-            </div>
-          </a>
-          <ul className="nav-links">
-            {navItems.map(([label, href]) => (
-              <li key={label}>
-                <a href={href}>{label}</a>
-              </li>
-            ))}
-          </ul>
-          <button
-            className="mobile-menu-btn"
-            onClick={() => setMenuOpen((o) => !o)}
-            aria-label="Toggle navigation"
-          >
-            {menuOpen ? <X size={22} /> : <Menu size={22} />}
-          </button>
-        </div>
-        {menuOpen && (
-          <div className="mobile-menu">
-            {navItems.map(([label, href]) => (
-              <a key={label} href={href} onClick={() => setMenuOpen(false)}>
-                {label}
-              </a>
-            ))}
-          </div>
-        )}
-      </nav>
+      <HomepageNav />
 
       {/* ———— HERO ———— */}
       <section className="hero-section">
@@ -82,7 +70,7 @@ export default function HomePage() {
           <div className="hero-logo-img">
             <Image
               src="/images/sfm-logo.jpeg"
-              alt="StrykeFox Medical"
+              alt="StrykeFox Medical logo — healthcare infrastructure platform"
               width={200}
               height={200}
               priority
@@ -97,10 +85,26 @@ export default function HomePage() {
           <p className="hero-headline">
             Healthcare infrastructure,<br />engineered for what comes next.
           </p>
-          <p className="hero-sub">CarePath. NSI. SPEAR. One operating platform.</p>
-          <a href="#carepath" className="hero-cta">
-            Enter Platform <ChevronRight size={16} />
-          </a>
+          <p className="hero-sub">
+            StrykeFox Medical builds the operating layer for recovery
+            coordination, medical device workflows, reimbursement-ready
+            documentation, healthcare technology deployment, and
+            acquisition-led platform expansion.
+          </p>
+          <div className="hero-cta-group">
+            <a href="#carepath" className="hero-cta hero-cta-primary">
+              Enter Platform <ChevronRight size={16} />
+            </a>
+            <Link href="/carepath" className="hero-cta hero-cta-secondary">
+              Explore CarePath <ChevronRight size={16} />
+            </Link>
+            <Link href="/spear" className="hero-cta hero-cta-secondary">
+              View Technology Layer <ChevronRight size={16} />
+            </Link>
+            <Link href="/contact" className="hero-cta hero-cta-secondary">
+              Partner With StrykeFox <ChevronRight size={16} />
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -121,12 +125,14 @@ export default function HomePage() {
             </p>
             <div className="chapter-chips">
               {carepathTags.map((tag) => (
-                <span className="chip" key={tag}>{tag}</span>
+                <span className="chip" key={tag}>
+                  {tag}
+                </span>
               ))}
             </div>
-            <a href="/carepath" className="chapter-cta">
+            <Link href="/carepath" className="chapter-cta">
               Explore CarePath <ChevronRight size={14} />
-            </a>
+            </Link>
           </div>
           <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
             <Image
@@ -155,7 +161,7 @@ export default function HomePage() {
           <div className="maternity-logo">
             <Image
               src="/images/mommy-care-en.png"
-              alt="Mommy Care"
+              alt="Mommy Care postpartum recovery kit by StrykeFox Medical"
               width={240}
               height={80}
             />
@@ -174,18 +180,24 @@ export default function HomePage() {
               <span className="chapter-line" />
             </p>
             <h2 className="chapter-title">
-              Innovation built around{'\n'}the operating room.
+              Innovation built around the operating room.
             </h2>
             <p className="chapter-body">
-              NSI advances surgical tools, device commercialization, Ex-Im pathways,
-              and emerging medical technologies designed for real-world clinical flow.
+              NSI advances surgical tools, device commercialization, Ex-Im
+              pathways, and emerging medical technologies designed for
+              real-world clinical flow.
             </p>
             <div className="nsi-inline-logo">
-              <Image src="/images/nsi-logo.png" alt="NSI" width={120} height={40} />
+              <Image
+                src="/images/nsi-logo.png"
+                alt="NorthStar Surgical Innovations logo — surgical device commercialization"
+                width={120}
+                height={40}
+              />
             </div>
-            <a href="/northstar-surgical-innovations" className="chapter-cta">
+            <Link href="/northstar-surgical-innovations" className="chapter-cta">
               Explore NSI <ChevronRight size={14} />
-            </a>
+            </Link>
           </div>
           <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
             <Image
@@ -210,7 +222,7 @@ export default function HomePage() {
               <span className="chapter-line" />
             </p>
             <h2 className="chapter-title">
-              Deployment intelligence{'\n'}behind the platform.
+              Deployment intelligence behind the platform.
             </h2>
             <p className="chapter-body">
               SPEAR powers execution through integrated data capture, analysis,
@@ -220,9 +232,9 @@ export default function HomePage() {
               <span className="powered-icon">&Psi;</span>
               Powered internally by Poseidon, Trident, and Aries.
             </p>
-            <a href="/spear" className="chapter-cta">
+            <Link href="/spear" className="chapter-cta">
               Explore SPEAR <ChevronRight size={14} />
-            </a>
+            </Link>
           </div>
           <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
             <Image
@@ -248,12 +260,12 @@ export default function HomePage() {
             </p>
             <h2 className="chapter-title">Expansion by design.</h2>
             <p className="chapter-body">
-              SoC13 aligns verticals, integrates capabilities, and reduces friction
-              across healthcare delivery.
+              SoC13 aligns verticals, integrates capabilities, and reduces
+              friction across healthcare delivery.
             </p>
-            <a href="/soc13" className="chapter-cta">
+            <Link href="/soc13" className="chapter-cta">
               Platform Expansion <ChevronRight size={14} />
-            </a>
+            </Link>
           </div>
           <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
             <Image
@@ -275,42 +287,48 @@ export default function HomePage() {
             <h2 className="section-heading">Leadership</h2>
           </div>
           <div className="founder-grid">
-            {/* Adam W. Stryker */}
             <article className="founder-card sfm-reveal sfm-reveal-delay-1">
-              <div className="founder-avatar"><span>AS</span></div>
+              <div className="founder-avatar">
+                <span>AS</span>
+              </div>
               <h3 className="founder-name">Adam W. Stryker</h3>
-              <p className="founder-role">Founder &amp; CEO — StrykeFox Medical</p>
+              <p className="founder-role">
+                Founder &amp; CEO — StrykeFox Medical
+              </p>
               <p className="founder-bio">
-                Healthcare operator and platform builder. Architect of vertically
-                integrated healthcare infrastructure built for national scale.
+                Healthcare operator and platform builder. Architect of
+                vertically integrated healthcare infrastructure built for
+                national scale.
               </p>
               <div className="founder-credentials">
                 <span>SENSARS Neuroprosthetics Board</span>
-                <span>FDA Breakthrough Device / Inc. 5000 Class of 2019</span>
-                <span>SVP-CTO Americans for Prosperity $889M 35 States</span>
+                <span>
+                  FDA Breakthrough Device / Inc. 5000 Class of 2019
+                </span>
+                <span>
+                  SVP-CTO Americans for Prosperity $889M 35 States
+                </span>
                 <span>Director Government Relations Las Vegas Sands</span>
                 <span>MBA Candidate Pepperdine</span>
               </div>
-              <a
-                href="https://www.adamwstryker.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="founder-link"
-              >
+              <Link href="/founder" className="founder-link">
                 adamwstryker.com <ChevronRight size={12} />
-              </a>
+              </Link>
             </article>
 
-            {/* Benjamin Fox */}
             <article className="founder-card sfm-reveal sfm-reveal-delay-2">
-              <div className="founder-avatar"><span>BF</span></div>
+              <div className="founder-avatar">
+                <span>BF</span>
+              </div>
               <h3 className="founder-name">Benjamin Fox</h3>
-              <p className="founder-role">Co-Founder &amp; SVP — StrykeFox Medical</p>
+              <p className="founder-role">
+                Co-Founder &amp; SVP — StrykeFox Medical
+              </p>
               <p className="founder-bio">
-                Before he was in the OR, he was on the mound. Drafted by the San Diego
-                Padres out of high school, Ben brought elite athletic discipline into
-                luxury sales — Cartier at Wynn, Tesla, TAG Heuer — then into
-                healthcare. Ben owns the field.
+                Before he was in the OR, he was on the mound. Drafted by the
+                San Diego Padres out of high school, Ben brought elite athletic
+                discipline into luxury sales — Cartier at Wynn, Tesla, TAG
+                Heuer — then into healthcare. Ben owns the field.
               </p>
               <div className="founder-credentials">
                 <span>Co-Founder &amp; SVP StrykeFox Medical</span>
@@ -332,22 +350,65 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ———— PLATFORM NAVIGATION (SEO) ———— */}
+      <section className="platform-nav-section">
+        <div className="section-container">
+          <h2 className="platform-nav-heading">StrykeFox Platform</h2>
+          <nav aria-label="StrykeFox platform navigation" className="platform-nav-grid">
+            <Link href="/carepath" className="platform-nav-link">
+              CarePath by StrykeFox
+            </Link>
+            <Link href="/northstar-surgical-innovations" className="platform-nav-link">
+              NorthStar Surgical Innovations
+            </Link>
+            <Link href="/spear" className="platform-nav-link">
+              SPEAR Healthcare Technology
+            </Link>
+            <Link href="/soc13" className="platform-nav-link">
+              SoC13 Acquisitions
+            </Link>
+            <Link href="/contact" className="platform-nav-link">
+              Contact
+            </Link>
+          </nav>
+          <p className="platform-description">
+            StrykeFox Medical is a healthcare infrastructure and medical
+            technology operating platform supporting care pathway coordination,
+            recovery product workflows, surgical support, biologics logistics,
+            reimbursement-ready documentation, healthcare technology deployment,
+            and acquisition-led platform expansion.
+          </p>
+        </div>
+      </section>
+
       {/* ———— FOOTER ———— */}
       <footer className="home-footer">
         <div className="footer-inner footer-three-col">
           <div className="footer-brand-col">
-            <p className="footer-carepath-label">CAREPATH by StrykeFox Medical</p>
+            <p className="footer-carepath-label">
+              CAREPATH by StrykeFox Medical
+            </p>
           </div>
           <div className="footer-center-col">
             <p className="footer-legal">
-              &copy; 2026 StrykeFox Medical LLC &middot; Las Vegas, NV &middot; NPI: 1821959420
+              &copy; 2026 StrykeFox Medical LLC &middot; Las Vegas, NV &middot;
+              NPI: 1821959420
             </p>
           </div>
           <div className="footer-right-col">
-            <p className="footer-motto-right">Verify &middot; Document &middot; Deliver</p>
+            <p className="footer-motto-right">
+              Verify &middot; Document &middot; Deliver
+            </p>
           </div>
         </div>
       </footer>
+
+      {/* Hidden keyword-rich content for crawlers */}
+      <div className="sr-only" aria-hidden="true">
+        {carepathKeywords.map((kw) => (
+          <span key={kw}>{kw}</span>
+        ))}
+      </div>
     </main>
   );
 }

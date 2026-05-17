@@ -6,8 +6,22 @@ const cx = (...classes: Array<string | false | undefined>) =>
   classes.filter(Boolean).join(" ")
 
 export const metadata: Metadata = {
-  title: "Mommy Care Kit - Complete Postpartum Recovery | StrykeFox Medical",
-  description: "Comprehensive postpartum recovery kit with medical supplies, recovery garments, and care essentials. Designed for new mothers by healthcare professionals.",
+  title: "Mommy Care Kit — Complete Postpartum Recovery | StrykeFox Medical",
+  description:
+    "Comprehensive postpartum recovery kit with medical supplies, recovery garments, and care essentials. Designed for new mothers by healthcare professionals. CarePath Maternal by StrykeFox Medical.",
+  alternates: {
+    canonical: "https://www.strykefox.com/mommy-care",
+    languages: {
+      "en-US": "https://www.strykefox.com/mommy-care",
+      "es-MX": "https://www.strykefox.com/el-kit-de-cuidado",
+    },
+  },
+  openGraph: {
+    title: "Mommy Care Kit — Complete Postpartum Recovery",
+    description:
+      "Comprehensive postpartum recovery kit with medical supplies, recovery garments, and care essentials.",
+    url: "https://www.strykefox.com/mommy-care",
+  },
 }
 
 export default function MommyCarePage() {
