@@ -1,414 +1,235 @@
-import type { Metadata } from 'next';
-import Image from 'next/image';
-import Link from 'next/link';
-import { ChevronRight } from 'lucide-react';
-import { HomepageNav } from '@/components/homepage/HomepageNav';
-import { RevealObserver } from '@/components/homepage/RevealObserver';
+export default function Home() {
+  const platforms = [
+    { name: 'CarePath', desc: 'Healthcare lineage and patient pathway coordination' },
+    { name: 'SPEAR', desc: 'Trident AI scoring, Poseidon storage, Aries deployment' },
+    { name: 'StrykePac\nEx-Im SA', desc: 'International gateway to world-class surgical technology' },
+    { name: 'NSI', desc: 'Surgical device commercialization and OR workflow' },
+    { name: 'SoC13', desc: 'Compliance engine for documentation and billing' },
+  ];
 
-const SITE_URL = 'https://www.strykefox.com';
+  const doctrine = [
+    { label: 'ACCELERATE', name: 'CAREPATH', desc: 'Move patients through pre-op, surgery, recovery, and post-acute care with less friction.' },
+    { label: 'PREDICT', name: 'SPEAR', desc: 'Score revenue risk, operational gaps, and deployment health from one connected loop.' },
+    { label: 'IDENTIFY', name: 'NSI', desc: 'Surface device, pathway, and logistics opportunities around real operating room workflow.' },
+    { label: 'VALIDATE', name: 'SOC13', desc: 'Keep documentation, claims, and audit trails aligned across regulated healthcare delivery.' },
+  ];
 
-export const metadata: Metadata = {
-  title:
-    'StrykeFox Medical | Healthcare Infrastructure, CarePath & Medical Technology Platform',
-  description:
-    'StrykeFox Medical operates CarePath, NorthStar Surgical Innovations, SPEAR, SoC13, and StrykePac Ex-Im SA — integrated healthcare infrastructure for surgical commercialization, DMEPOS, recovery coordination, and device deployment across Las Vegas, Dallas, and Panama Pacífico.',
-  alternates: {
-    canonical: SITE_URL,
-  },
-  openGraph: {
-    title:
-      'StrykeFox Medical | Healthcare Infrastructure, CarePath & Medical Technology Platform',
-    description:
-      'StrykeFox Medical builds the operating layer for recovery coordination, medical device workflows, reimbursement-ready documentation, healthcare technology deployment, and acquisition-led platform expansion.',
-    url: SITE_URL,
-    images: [
-      {
-        url: `${SITE_URL}/images/sfm-logo.jpeg`,
-        width: 1200,
-        height: 630,
-        alt: 'StrykeFox Medical — Healthcare Infrastructure Platform',
-      },
-    ],
-  },
-};
-
-const carepathTags = [
-  'Pre-Op',
-  'Surgical',
-  'Orthopedic',
-  'Mobility',
-  'Recovery',
-  'Maternity',
-];
-
-const carepathKeywords = [
-  'eligibility verification',
-  'documentation readiness',
-  'provider workflow support',
-  'fulfillment coordination',
-  'proof-of-delivery capture',
-  'billing-ready packets',
-  'patient continuity',
-  'medical device workflows',
-  'recovery coordination',
-  'healthcare infrastructure',
-];
-
-export default function HomePage() {
   return (
-    <main className="home-main">
-      <RevealObserver />
+    <>
+      <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+      <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
 
-      {/* ———— NAV ———— */}
-      <HomepageNav />
-
-      {/* ———— HERO ———— */}
-      <section className="hero-section">
-        <div className="hero-bg-image" />
-        <div className="hero-gradient" />
-        <div className="hero-content sfm-reveal visible">
-          <div className="hero-logo-img">
-            <Image
-              src="/images/sfm-logo.jpeg"
-              alt="StrykeFox Medical logo — healthcare infrastructure platform"
-              width={200}
-              height={200}
-              priority
-            />
-          </div>
-          <h1 className="hero-wordmark">
-            <span className="hw-stryke">STRYKE</span>
-            <span className="hw-k">K</span>
-            <span className="hw-fox">FOX</span>
-            <span className="hw-medical">MEDICAL</span>
-          </h1>
-          <p className="hero-headline">
-            Healthcare infrastructure,<br />engineered for what comes next.
-          </p>
-          <p className="hero-sub">
-            StrykeFox Medical builds the operating layer for recovery
-            coordination, medical device workflows, reimbursement-ready
-            documentation, healthcare technology deployment, and
-            acquisition-led platform expansion.
-          </p>
-          <div className="hero-cta-group">
-            <a href="#carepath" className="hero-cta hero-cta-primary">
-              Enter Platform <ChevronRight size={16} />
-            </a>
-            <Link href="/carepath" className="hero-cta hero-cta-secondary">
-              Explore CarePath <ChevronRight size={16} />
-            </Link>
-            <Link href="/spear" className="hero-cta hero-cta-secondary">
-              View Technology Layer <ChevronRight size={16} />
-            </Link>
-            <Link href="/contact" className="hero-cta hero-cta-secondary">
-              Partner With StrykeFox <ChevronRight size={16} />
-            </Link>
-          </div>
+      <nav className="sfm-nav">
+        <div className="sfm-nav-brand">
+          <img src="/images/sfm-fox.jpeg" alt="SFM" className="sfm-logo" />
+          <div className="sfm-brand-text">STRYKEFOX<span>MEDICAL</span></div>
         </div>
-      </section>
+        <div className="sfm-nav-links">
+          <a href="/providers">Providers</a>
+          <a href="/life-sciences">Life Sciences</a>
+          <a href="/platform">Platform</a>
+          <a href="/compliance">Compliance</a>
+          <a href="/strykepac">StrykePac Ex-Im SA</a>
+        </div>
+        <a href="/access" className="sfm-nav-cta">Request Access</a>
+      </nav>
 
-      {/* ———— 01 / CAREPATH ———— */}
-      <section className="chapter-section" id="carepath">
-        <div className="chapter-inner">
-          <div className="chapter-text sfm-reveal">
-            <p className="chapter-label">
-              <span className="chapter-num">01</span>
-              <span className="chapter-divider" />
-              <span className="chapter-tag">CAREPATH</span>
-              <span className="chapter-line" />
-            </p>
-            <h2 className="chapter-title">Care that follows the patient.</h2>
-            <p className="chapter-body">
-              From pre-op to recovery, CarePath organizes the healthcare lineage
-              around documentation, coordination, and continuity.
-            </p>
-            <div className="chapter-chips">
-              {carepathTags.map((tag) => (
-                <span className="chip" key={tag}>
-                  {tag}
-                </span>
+      <div className="sfm-hero">
+
+        {/* LEFT PANEL */}
+        <div className="sfm-left">
+          <div className="sfm-left-top">
+            <p className="sfm-eyebrow">StrykeFox Medical</p>
+            <h1 className="sfm-h1">
+              CarePath<br/>organizes<br/>the journey.<br/>Healthcare<br/>Lineage scales<br/>the platform.
+            </h1>
+          </div>
+
+          <div className="sfm-left-mid">
+            <div className="sfm-bg-img" style={{ backgroundImage: "url('/images/nurse-patient.jpg')" }} />
+            <div className="sfm-doctrine">
+              {doctrine.map(d => (
+                <div className="sfm-doctrine-col" key={d.name}>
+                  <div className="sfm-d-label">{d.label}</div>
+                  <div className="sfm-d-name">{d.name}</div>
+                  <div className="sfm-d-desc">{d.desc}</div>
+                </div>
               ))}
             </div>
-            <Link href="/carepath" className="chapter-cta">
-              Explore CarePath <ChevronRight size={14} />
-            </Link>
           </div>
-          <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
-            <Image
-              src="/images/clinical-care.svg"
-              alt="Nurse with patient in clinical setting"
-              width={640}
-              height={480}
-              className="chapter-photo"
-            />
+
+          <div className="sfm-stats">
+            <div className="sfm-stat"><strong>4</strong><span>active verticals</span></div>
+            <div className="sfm-stat"><strong>HIPAA</strong><span>compliant by design</span></div>
+            <div className="sfm-stat"><strong>2026</strong><span>fully deployed</span></div>
           </div>
         </div>
-      </section>
 
-      {/* ———— 01B / MATERNITY ———— */}
-      <section className="maternity-section">
-        <div className="maternity-inner sfm-reveal">
-          <h2 className="maternity-headline">
-            She gave everything.<br />Now it&rsquo;s her turn.
-          </h2>
-          <a
-            href="https://mommycare.strykefox.com"
-            className="maternity-cta"
-          >
-            Start Your Recovery <ChevronRight size={14} />
-          </a>
-          <div className="maternity-logo">
-            <Image
-              src="/images/mommy-care-en.png"
-              alt="Mommy Care postpartum recovery kit by StrykeFox Medical"
-              width={240}
-              height={80}
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* ———— 02 / NORTHSTAR SURGICAL INNOVATIONS ———— */}
-      <section className="chapter-section chapter-alt" id="nsi">
-        <div className="chapter-inner">
-          <div className="chapter-text sfm-reveal">
-            <p className="chapter-label">
-              <span className="chapter-num">02</span>
-              <span className="chapter-divider" />
-              <span className="chapter-tag">NORTHSTAR SURGICAL INNOVATIONS</span>
-              <span className="chapter-line" />
-            </p>
-            <h2 className="chapter-title">
-              Innovation built around the operating room.
-            </h2>
-            <p className="chapter-body">
-              NSI advances surgical tools, device commercialization, Ex-Im
-              pathways, and emerging medical technologies designed for
-              real-world clinical flow.
-            </p>
-            <div className="nsi-inline-logo">
-              <Image
-                src="/images/nsi-logo.png"
-                alt="NorthStar Surgical Innovations logo — surgical device commercialization"
-                width={120}
-                height={40}
-              />
-            </div>
-            <Link href="/northstar-surgical-innovations" className="chapter-cta">
-              Explore NSI <ChevronRight size={14} />
-            </Link>
-          </div>
-          <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
-            <Image
-              src="/images/surgical-equipment.svg"
-              alt="Surgical instruments close-up"
-              width={640}
-              height={480}
-              className="chapter-photo"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* ———— 03 / SPEAR ———— */}
-      <section className="chapter-section" id="spear">
-        <div className="chapter-inner">
-          <div className="chapter-text sfm-reveal">
-            <p className="chapter-label">
-              <span className="chapter-num">03</span>
-              <span className="chapter-divider" />
-              <span className="chapter-tag">SPEAR</span>
-              <span className="chapter-line" />
-            </p>
-            <h2 className="chapter-title">
-              Deployment intelligence behind the platform.
-            </h2>
-            <p className="chapter-body">
-              SPEAR powers execution through integrated data capture, analysis,
-              learning, and field deployment.
-            </p>
-            <p className="chapter-powered">
-              <span className="powered-icon">&Psi;</span>
-              Powered internally by Poseidon, Trident, and Aries.
-            </p>
-            <Link href="/spear" className="chapter-cta">
-              Explore SPEAR <ChevronRight size={14} />
-            </Link>
-          </div>
-          <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
-            <Image
-              src="/images/spear-data-viz.svg"
-              alt="SPEAR deployment analytics"
-              width={640}
-              height={480}
-              className="chapter-photo"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* ———— 04 / SOC13 ———— */}
-      <section className="chapter-section chapter-alt" id="soc13">
-        <div className="chapter-inner">
-          <div className="chapter-text sfm-reveal">
-            <p className="chapter-label">
-              <span className="chapter-num">04</span>
-              <span className="chapter-divider" />
-              <span className="chapter-tag">SOC13</span>
-              <span className="chapter-line" />
-            </p>
-            <h2 className="chapter-title">Expansion by design.</h2>
-            <p className="chapter-body">
-              SoC13 aligns verticals, integrates capabilities, and reduces
-              friction across healthcare delivery.
-            </p>
-            <Link href="/soc13" className="chapter-cta">
-              Platform Expansion <ChevronRight size={14} />
-            </Link>
-          </div>
-          <div className="chapter-image sfm-reveal sfm-reveal-delay-2">
-            <Image
-              src="/images/soc13-logo.svg"
-              alt="SoC13 seal"
-              width={640}
-              height={480}
-              className="chapter-photo"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* ———— LEADERSHIP ———— */}
-      <section className="founder-section">
-        <div className="section-container">
-          <div className="sfm-reveal">
-            <p className="section-label">Platform Leadership</p>
-            <h2 className="section-heading">Leadership</h2>
-          </div>
-          <div className="founder-grid">
-            <article className="founder-card sfm-reveal sfm-reveal-delay-1">
-              <div className="founder-avatar">
-                <span>AS</span>
+        {/* RIGHT PANEL */}
+        <div className="sfm-right">
+          <p className="sfm-discover">Discover Our Platform</p>
+          <div className="sfm-platform-list">
+            {platforms.map(p => (
+              <div className="sfm-platform-row" key={p.name}>
+                <span className="sfm-p-name" style={{ whiteSpace: 'pre-line' }}>{p.name}</span>
+                <span className="sfm-p-desc">{p.desc}</span>
               </div>
-              <h3 className="founder-name">Adam W. Stryker</h3>
-              <p className="founder-role">
-                Founder &amp; CEO — StrykeFox Medical
-              </p>
-              <p className="founder-bio">
-                Healthcare operator and platform builder. Architect of
-                vertically integrated healthcare infrastructure built for
-                national scale.
-              </p>
-              <div className="founder-credentials">
-                <span>SENSARS Neuroprosthetics Board</span>
-                <span>
-                  FDA Breakthrough Device / Inc. 5000 Class of 2019
-                </span>
-                <span>
-                  SVP-CTO Americans for Prosperity $889M 35 States
-                </span>
-                <span>Director Government Relations Las Vegas Sands</span>
-                <span>MBA Candidate Pepperdine</span>
-              </div>
-              <Link href="/founder" className="founder-link">
-                adamwstryker.com <ChevronRight size={12} />
-              </Link>
-            </article>
-
-            <article className="founder-card sfm-reveal sfm-reveal-delay-2">
-              <div className="founder-avatar">
-                <span>BF</span>
-              </div>
-              <h3 className="founder-name">Benjamin Fox</h3>
-              <p className="founder-role">
-                Co-Founder &amp; SVP — StrykeFox Medical
-              </p>
-              <p className="founder-bio">
-                Before he was in the OR, he was on the mound. Drafted by the
-                San Diego Padres out of high school, Ben brought elite athletic
-                discipline into luxury sales — Cartier at Wynn, Tesla, TAG
-                Heuer — then into healthcare. Ben owns the field.
-              </p>
-              <div className="founder-credentials">
-                <span>Co-Founder &amp; SVP StrykeFox Medical</span>
-                <span>Drafted by San Diego Padres</span>
-                <span>Cartier at Wynn Las Vegas 7 Years</span>
-                <span>Tesla Owner Advisor</span>
-                <span>TAG Heuer Boutique Director</span>
-              </div>
-              <a
-                href="https://www.linkedin.com/in/benjaminfox"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="founder-link"
-              >
-                LinkedIn <ChevronRight size={12} />
-              </a>
-            </article>
+            ))}
+          </div>
+          <div className="sfm-right-bottom">
+            <div className="sfm-right-img" style={{ backgroundImage: "url('/images/doctor-phone.jpg')" }} />
+            <a href="/platform" className="sfm-explore">Explore Our Technology →</a>
           </div>
         </div>
-      </section>
 
-      {/* ———— PLATFORM NAVIGATION (SEO) ———— */}
-      <section className="platform-nav-section">
-        <div className="section-container">
-          <h2 className="platform-nav-heading">StrykeFox Platform</h2>
-          <nav aria-label="StrykeFox platform navigation" className="platform-nav-grid">
-            <Link href="/carepath" className="platform-nav-link">
-              CarePath by StrykeFox
-            </Link>
-            <Link href="/northstar-surgical-innovations" className="platform-nav-link">
-              NorthStar Surgical Innovations
-            </Link>
-            <Link href="/spear" className="platform-nav-link">
-              SPEAR Healthcare Technology
-            </Link>
-            <Link href="/soc13" className="platform-nav-link">
-              SoC13 Acquisitions
-            </Link>
-            <Link href="/contact" className="platform-nav-link">
-              Contact
-            </Link>
-          </nav>
-          <p className="platform-description">
-            StrykeFox Medical is a healthcare infrastructure and medical
-            technology operating platform supporting care pathway coordination,
-            recovery product workflows, surgical support, biologics logistics,
-            reimbursement-ready documentation, healthcare technology deployment,
-            and acquisition-led platform expansion.
-          </p>
-        </div>
-      </section>
-
-      {/* ———— FOOTER ———— */}
-      <footer className="home-footer">
-        <div className="footer-inner footer-three-col">
-          <div className="footer-brand-col">
-            <p className="footer-carepath-label">
-              CAREPATH by StrykeFox Medical
-            </p>
-          </div>
-          <div className="footer-center-col">
-            <p className="footer-legal">
-              &copy; 2026 StrykeFox Medical LLC &middot; Las Vegas, NV &middot;
-              NPI: 1821959420
-            </p>
-          </div>
-          <div className="footer-right-col">
-            <p className="footer-motto-right">
-              Verify &middot; Document &middot; Deliver
-            </p>
-          </div>
-        </div>
-      </footer>
-
-      {/* Hidden keyword-rich content for crawlers */}
-      <div className="sr-only" aria-hidden="true">
-        {carepathKeywords.map((kw) => (
-          <span key={kw}>{kw}</span>
-        ))}
       </div>
-    </main>
+    </>
   );
 }
+
+const CSS = `
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  a { color: inherit; text-decoration: none; }
+
+  .sfm-nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 48px; height: 60px;
+    background: #fff; border-bottom: 1px solid rgba(0,0,0,0.07);
+  }
+  .sfm-nav-brand { display: flex; align-items: center; gap: 10px; }
+  .sfm-logo { width: 30px; height: 30px; object-fit: contain; border-radius: 3px; }
+  .sfm-brand-text {
+    font-family: 'Inter Tight', sans-serif; font-weight: 700;
+    font-size: 10.5px; letter-spacing: 0.1em; line-height: 1.3; color: #1d1d1f;
+  }
+  .sfm-brand-text span { display: block; font-weight: 400; }
+  .sfm-nav-links { display: flex; }
+  .sfm-nav-links a {
+    font-size: 10.5px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase;
+    color: #1d1d1f; padding: 0 14px; height: 60px;
+    display: inline-flex; align-items: center; transition: color .2s;
+  }
+  .sfm-nav-links a:hover { color: #1A6BF5; }
+  .sfm-nav-cta {
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 9px 18px; border: 1.5px solid #1d1d1f; color: #1d1d1f; transition: all .2s;
+  }
+  .sfm-nav-cta:hover { background: #1d1d1f; color: #fff; }
+
+  .sfm-hero {
+    display: grid; grid-template-columns: 1fr 1fr;
+    min-height: 100vh; padding-top: 60px;
+  }
+
+  /* LEFT */
+  .sfm-left { display: flex; flex-direction: column; background: #fff; }
+  .sfm-left-top { padding: 72px 64px 48px; flex-shrink: 0; }
+  .sfm-eyebrow {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: #1A6BF5; margin-bottom: 20px;
+  }
+  .sfm-h1 {
+    font-family: 'Inter Tight', sans-serif; font-weight: 800;
+    font-size: clamp(40px, 4.8vw, 70px); letter-spacing: -0.03em;
+    line-height: 0.96; color: #1d1d1f;
+  }
+
+  .sfm-left-mid { position: relative; flex: 1; min-height: 280px; }
+  .sfm-bg-img {
+    position: absolute; inset: 0;
+    background-size: cover; background-position: center;
+    filter: brightness(0.45);
+  }
+  .sfm-doctrine {
+    position: relative; z-index: 2;
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    height: 100%;
+  }
+  .sfm-doctrine-col {
+    padding: 28px 16px;
+    border-right: 1px solid rgba(255,255,255,0.1);
+  }
+  .sfm-doctrine-col:last-child { border-right: none; }
+  .sfm-d-label {
+    font-size: 8px; font-weight: 700; letter-spacing: 0.2em;
+    color: #1A6BF5; margin-bottom: 5px;
+  }
+  .sfm-d-name {
+    font-family: 'Inter Tight', sans-serif; font-weight: 700;
+    font-size: 11.5px; letter-spacing: 0.08em;
+    color: #fff; margin-bottom: 10px;
+  }
+  .sfm-d-desc { font-size: 10.5px; line-height: 1.65; color: rgba(255,255,255,0.55); }
+
+  .sfm-stats {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    border-top: 1px solid rgba(0,0,0,0.08); flex-shrink: 0;
+  }
+  .sfm-stat {
+    display: flex; flex-direction: column; padding: 18px 22px;
+    border-right: 1px solid rgba(0,0,0,0.08);
+  }
+  .sfm-stat:last-child { border-right: none; }
+  .sfm-stat strong {
+    font-family: 'Inter Tight', sans-serif; font-weight: 800;
+    font-size: 26px; letter-spacing: -0.02em; color: #1d1d1f;
+  }
+  .sfm-stat span { font-size: 10.5px; color: rgba(29,29,31,0.45); margin-top: 2px; }
+
+  /* RIGHT */
+  .sfm-right {
+    background: #090E1C; display: flex; flex-direction: column;
+    padding: 72px 52px 0;
+  }
+  .sfm-discover {
+    font-size: 9px; font-weight: 600; letter-spacing: 0.24em;
+    text-transform: uppercase; color: rgba(255,255,255,0.32);
+    margin-bottom: 28px;
+  }
+  .sfm-platform-list { flex: 1; }
+  .sfm-platform-row {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 20px; padding: 18px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+  }
+  .sfm-platform-row:first-child { border-top: 1px solid rgba(255,255,255,0.07); }
+  .sfm-p-name {
+    font-family: 'Inter Tight', sans-serif; font-weight: 700;
+    font-size: 16px; letter-spacing: -0.01em; color: #fff;
+    flex-shrink: 0; min-width: 120px;
+  }
+  .sfm-p-desc {
+    font-size: 11.5px; line-height: 1.5;
+    color: rgba(255,255,255,0.38); text-align: right;
+  }
+
+  .sfm-right-bottom {
+    position: relative; margin: 28px -52px 0; height: 200px; overflow: hidden;
+  }
+  .sfm-right-img {
+    position: absolute; inset: 0;
+    background-size: cover; background-position: top center;
+    filter: brightness(0.55);
+  }
+  .sfm-explore {
+    position: absolute; bottom: 22px; left: 52px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #fff;
+    border-bottom: 1px solid rgba(255,255,255,0.3); padding-bottom: 2px;
+  }
+
+  @media (max-width: 960px) {
+    .sfm-hero { grid-template-columns: 1fr; }
+    .sfm-nav { padding: 0 20px; }
+    .sfm-nav-links a { display: none; }
+    .sfm-nav-links a:last-child { display: inline-flex; }
+    .sfm-left-top { padding: 48px 32px 32px; }
+    .sfm-right { padding: 48px 32px 0; }
+    .sfm-right-bottom { margin: 24px -32px 0; }
+    .sfm-explore { left: 32px; }
+  }
+`;
