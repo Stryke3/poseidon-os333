@@ -1,542 +1,279 @@
 "use client"
 
-import { Suspense, useState, useEffect } from "react"
-import { signIn, signOut, useSession } from "next-auth/react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
-
-import { PageShell } from "@/components/dashboard/DashboardPrimitives"
-
-function cn(...values: Array<string | false | undefined>) {
-  return values.filter(Boolean).join(" ")
-}
-
-type View = "login" | "forgot" | "reset" | "reset-success"
-
-type CoreStatusBody = {
-  reachable?: boolean
-  databaseOk?: boolean
-}
-
-function sanitizeCallbackUrl(value: string | null | undefined) {
-  if (!value) return "/"
-  if (!value.startsWith("/") || value.startsWith("//")) return "/"
-  if (value === "/login" || value.startsWith("/login?")) return "/"
-  return value
-}
-
-function buildAuthErrorMessage(coreStatus?: CoreStatusBody) {
-  if (coreStatus?.reachable === false) {
-    return "This app cannot reach the Core API (login server). Check the Core service health and service URL in Render, then confirm the frontend is pointing at the correct Core base URL."
-  }
-  if (coreStatus?.databaseOk === false) {
-    return "Core is running but cannot reach the database. Check the Core service DATABASE_URL in Render and confirm the managed Postgres instance is healthy."
-  }
-  if (process.env.NODE_ENV !== "production") {
-    return "Invalid email or password. For a fresh local DB, use the seed operator emails from scripts/init.sql (initial password in that file) or Forgot Password."
-  }
-  return "Invalid email or password. Try Forgot Password, or contact your administrator if you need an account."
-}
+import Image from "next/image"
+import { signIn } from "next-auth/react"
+import { useState } from "react"
 
 export default function LoginPage() {
-  return (
-    <Suspense>
-      <LoginContent />
-    </Suspense>
-  )
-}
-
-function LoginContent() {
-  const router = useRouter()
-  const searchParams = useSearchParams()
-  const pathname = usePathname()
-  const { data: session, status } = useSession()
-  const callbackUrl = sanitizeCallbackUrl(searchParams.get("callbackUrl"))
-  const authError = searchParams.get("error")
-  const sessionExpired = searchParams.get("session_expired") === "true"
-
-  // Detect reset token in URL
-  const resetTokenParam = searchParams.get("reset_token")
-  // Some clients / links arrive in a nonstandard path form:
-  //   /login/reset_token=<token>
-  // Support both so the reset view reliably renders.
-  const resetTokenFromPath = (() => {
-    if (!pathname) return null
-    const m = pathname.match(/reset_token=([^/?#]+)/)
-    return m?.[1] || null
-  })()
-  const effectiveResetToken = resetTokenParam || resetTokenFromPath
-
-  const [view, setView] = useState<View>(effectiveResetToken ? "reset" : "login")
-  const [resetToken, setResetToken] = useState(effectiveResetToken || "")
-  const [email, setEmail] = useState("")
+  const [email, setEmail] = useState("admin@strykefox.com")
   const [password, setPassword] = useState("")
-  const [newPassword, setNewPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
-  const [error, setError] = useState("")
-  const [message, setMessage] = useState("")
+  const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [showPassword, setShowPassword] = useState(false)
+  const [error, setError] = useState("")
 
-  useEffect(() => {
-    if (effectiveResetToken) {
-      setResetToken(effectiveResetToken)
-      setView("reset")
-    }
-  }, [effectiveResetToken])
-
-  useEffect(() => {
-    if (sessionExpired && status === "authenticated") {
-      void signOut({ redirect: false })
-      setMessage("Your session expired. Sign in again.")
-      return
-    }
-
-    if (view !== "login" || status !== "authenticated") return
-
-    if (!session?.user?.accessToken) {
-      void signOut({ redirect: false })
-      setMessage("Your session expired. Sign in again.")
-      return
-    }
-
-    if (session.user.accessToken) {
-      router.replace(callbackUrl)
-    }
-  }, [callbackUrl, router, session?.user?.accessToken, sessionExpired, status, view])
-
-  useEffect(() => {
-    if (!authError || effectiveResetToken) return
-    if (authError === "CredentialsSignin") {
-      void (async () => {
-        try {
-          const st = await fetch("/api/core-status", { cache: "no-store" })
-          const body = (await st.json()) as CoreStatusBody
-          setError(buildAuthErrorMessage(body))
-        } catch {
-          setError(buildAuthErrorMessage())
-        }
-      })()
-      return
-    }
-    if (authError === "SessionRequired") {
-      setMessage("Sign in to continue.")
-      return
-    }
-    setError("Authentication failed. Try again or reset your password.")
-  }, [authError, effectiveResetToken])
-
-  async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault()
     setLoading(true)
     setError("")
-    setMessage("")
 
     try {
+      const callbackUrl = new URLSearchParams(window.location.search).get("callbackUrl") || "/spear"
+      const safeCallbackUrl = callbackUrl.startsWith("/") && !callbackUrl.startsWith("//") ? callbackUrl : "/spear"
+
       const result = await signIn("credentials", {
         email: email.trim().toLowerCase(),
         password,
-        callbackUrl,
         redirect: false,
+        callbackUrl: safeCallbackUrl,
       })
 
       if (result?.error) {
-        let message = "Invalid credentials. Contact your administrator."
-        try {
-          const st = await fetch("/api/core-status", { cache: "no-store" })
-          const body = (await st.json()) as CoreStatusBody
-          message = buildAuthErrorMessage(body)
-        } catch {
-          message = buildAuthErrorMessage()
-        }
-        setError(message)
+        setError("Invalid credentials. Contact admin@strykefox.com")
+        setLoading(false)
         return
       }
 
-      const destination = sanitizeCallbackUrl(result?.url) || callbackUrl
-      router.replace(destination)
+      window.location.href = result?.url || safeCallbackUrl
     } catch {
-      setError("Authentication failed. Try again in a moment.")
-    } finally {
+      setError("Cannot reach authentication service.")
       setLoading(false)
     }
-  }
-
-  async function handleForgotPassword(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setLoading(true)
-    setError("")
-    setMessage("")
-
-    try {
-      const res = await fetch("/api/auth/reset-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "request", email }),
-      })
-      const data = await res.json()
-
-      if (data.reset_token) {
-        // Dev mode: SMTP not configured, token returned directly
-        setResetToken(data.reset_token)
-        setView("reset")
-        setMessage("No email service configured. Reset token loaded directly.")
-      } else {
-        setMessage(data.message || "If that email is registered, a reset link has been sent.")
-      }
-    } catch {
-      setError("Unable to reach the server. Try again.")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function handleResetPassword(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setLoading(true)
-    setError("")
-    setMessage("")
-
-    if (newPassword !== confirmPassword) {
-      setError("Passwords do not match.")
-      setLoading(false)
-      return
-    }
-    if (newPassword.length < 8) {
-      setError("Password must be at least 8 characters.")
-      setLoading(false)
-      return
-    }
-
-    try {
-      const res = await fetch("/api/auth/reset-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "reset",
-          token: resetToken,
-          new_password: newPassword,
-        }),
-      })
-      const data = await res.json()
-
-      if (res.ok) {
-        setView("reset-success")
-      } else {
-        setError(data.detail || data.message || "Reset failed. The link may have expired.")
-      }
-    } catch {
-      setError("Unable to reach the server. Try again.")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // --- Form content by view ---
-  function renderForm() {
-    if (view === "reset-success") {
-      return (
-        <div className="space-y-5">
-          <div className="rounded-[22px] border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-300">
-            Password updated successfully.
-          </div>
-          <button
-            className="w-full rounded-full border border-[#d8b46a]/30 bg-[linear-gradient(180deg,rgba(216,180,106,0.18),rgba(216,180,106,0.08))] px-4 py-3.5 text-sm font-semibold uppercase tracking-[0.2em] text-[#f8e7bb] transition hover:bg-[linear-gradient(180deg,rgba(216,180,106,0.24),rgba(216,180,106,0.12))] hover:shadow-[0_0_30px_rgba(216,180,106,0.12)]"
-            onClick={() => { setView("login"); setPassword(""); setError(""); setMessage("") }}
-            type="button"
-          >
-            Back to Login
-          </button>
-        </div>
-      )
-    }
-
-    if (view === "forgot") {
-      return (
-        <form className="space-y-4" onSubmit={handleForgotPassword}>
-          <p className="text-sm leading-6 text-slate-400">
-            Enter your email address and we&apos;ll send you a link to reset your password.
-          </p>
-          <div>
-            <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
-              Email
-            </label>
-            <input
-              className="w-full rounded-[22px] border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[#d8b46a]/40 focus:bg-white/[0.03]"
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@strykefoxmedical.com"
-              required
-              type="email"
-              value={email}
-            />
-          </div>
-
-          {error && (
-            <div className="rounded-[22px] border border-accent-red/30 bg-accent-red/10 px-4 py-3 text-sm text-accent-red">
-              {error}
-            </div>
-          )}
-          {message && (
-            <div className="rounded-[22px] border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-300">
-              {message}
-            </div>
-          )}
-
-          <button
-            className={cn(
-              "w-full rounded-full border border-[#d8b46a]/30 bg-[linear-gradient(180deg,rgba(216,180,106,0.18),rgba(216,180,106,0.08))] px-4 py-3.5 text-sm font-semibold uppercase tracking-[0.2em] text-[#f8e7bb] transition",
-              "hover:bg-[linear-gradient(180deg,rgba(216,180,106,0.24),rgba(216,180,106,0.12))] hover:shadow-[0_0_30px_rgba(216,180,106,0.12)]",
-              loading && "cursor-not-allowed opacity-60",
-            )}
-            disabled={loading}
-            type="submit"
-          >
-            {loading ? "Sending..." : "Send Reset Link"}
-          </button>
-
-          <button
-            className="w-full text-center font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500 transition hover:text-slate-300"
-            onClick={() => { setView("login"); setError(""); setMessage("") }}
-            type="button"
-          >
-            Back to Login
-          </button>
-        </form>
-      )
-    }
-
-    if (view === "reset") {
-      return (
-        <form className="space-y-4" onSubmit={handleResetPassword}>
-          <p className="text-sm leading-6 text-slate-400">
-            Enter your new password below.
-          </p>
-
-          {message && (
-            <div className="rounded-[22px] border border-sky-400/30 bg-sky-400/10 px-4 py-3 text-sm text-sky-300">
-              {message}
-            </div>
-          )}
-
-          <div>
-            <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
-              New Password
-            </label>
-            <input
-              autoComplete="new-password"
-              className="w-full rounded-[22px] border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[#d8b46a]/40 focus:bg-white/[0.03]"
-              minLength={8}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="At least 8 characters"
-              required
-              type="password"
-              value={newPassword}
-            />
-          </div>
-
-          <div>
-            <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
-              Confirm Password
-            </label>
-            <input
-              autoComplete="new-password"
-              className="w-full rounded-[22px] border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[#d8b46a]/40 focus:bg-white/[0.03]"
-              minLength={8}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Re-enter password"
-              required
-              type="password"
-              value={confirmPassword}
-            />
-          </div>
-
-          {error && (
-            <div className="rounded-[22px] border border-accent-red/30 bg-accent-red/10 px-4 py-3 text-sm text-accent-red">
-              {error}
-            </div>
-          )}
-
-          <button
-            className={cn(
-              "w-full rounded-full border border-[#d8b46a]/30 bg-[linear-gradient(180deg,rgba(216,180,106,0.18),rgba(216,180,106,0.08))] px-4 py-3.5 text-sm font-semibold uppercase tracking-[0.2em] text-[#f8e7bb] transition",
-              "hover:bg-[linear-gradient(180deg,rgba(216,180,106,0.24),rgba(216,180,106,0.12))] hover:shadow-[0_0_30px_rgba(216,180,106,0.12)]",
-              loading && "cursor-not-allowed opacity-60",
-            )}
-            disabled={loading}
-            type="submit"
-          >
-            {loading ? "Resetting..." : "Set New Password"}
-          </button>
-
-          <button
-            className="w-full text-center font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500 transition hover:text-slate-300"
-            onClick={() => { setView("login"); setError(""); setMessage("") }}
-            type="button"
-          >
-            Back to Login
-          </button>
-        </form>
-      )
-    }
-
-    // Default: login form
-    return (
-      <form className="space-y-4" onSubmit={handleLogin}>
-        <div>
-          <label className="mb-2 block font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
-            Email
-          </label>
-          <input
-            className="w-full rounded-[22px] border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[#d8b46a]/40 focus:bg-white/[0.03]"
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="you@strykefoxmedical.com"
-            required
-            type="email"
-            value={email}
-          />
-        </div>
-
-        <div>
-          <div className="mb-2 flex items-center justify-between gap-4">
-            <label className="block font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
-              Password
-            </label>
-            <button
-              className="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500 transition hover:text-slate-300"
-              onClick={() => setShowPassword((current) => !current)}
-              type="button"
-            >
-              {showPassword ? "Hide" : "Show"}
-            </button>
-          </div>
-          <input
-            className="w-full rounded-[22px] border border-white/10 bg-black/20 px-4 py-3.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-[#d8b46a]/40 focus:bg-white/[0.03]"
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder="••••••••••••"
-            required
-            type={showPassword ? "text" : "password"}
-            value={password}
-          />
-        </div>
-
-        {error ? (
-          <div className="rounded-[22px] border border-accent-red/30 bg-accent-red/10 px-4 py-3 text-sm text-accent-red">
-            {error}
-          </div>
-        ) : null}
-
-        <button
-          className={cn(
-            "w-full rounded-full border border-[#d8b46a]/30 bg-[linear-gradient(180deg,rgba(216,180,106,0.18),rgba(216,180,106,0.08))] px-4 py-3.5 text-sm font-semibold uppercase tracking-[0.2em] text-[#f8e7bb] transition",
-            "hover:bg-[linear-gradient(180deg,rgba(216,180,106,0.24),rgba(216,180,106,0.12))] hover:shadow-[0_0_30px_rgba(216,180,106,0.12)]",
-            loading && "cursor-not-allowed opacity-60",
-          )}
-          disabled={loading}
-          type="submit"
-        >
-          {loading ? "Authenticating..." : "Enter Poseidon"}
-        </button>
-
-        <button
-          className="w-full text-center font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500 transition hover:text-slate-300"
-          onClick={() => { setView("forgot"); setError(""); setMessage("") }}
-          type="button"
-        >
-          Forgot Password?
-        </button>
-      </form>
-    )
-  }
-
-  const headingMap: Record<View, string> = {
-    login: "Secure Access",
-    forgot: "Reset Password",
-    reset: "New Password",
-    "reset-success": "Password Updated",
   }
 
   return (
-    <PageShell contentClassName="justify-center">
-      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_22%,rgba(187,247,208,0.1),transparent_20%),radial-gradient(circle_at_78%_16%,rgba(216,180,106,0.14),transparent_22%),radial-gradient(circle_at_50%_110%,rgba(186,230,253,0.18),transparent_30%),linear-gradient(180deg,#091523_0%,#0b1728_42%,#0f2136_100%)]" />
-        <div className="absolute inset-0 opacity-[0.12] [background-image:linear-gradient(rgba(159,196,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(159,196,255,0.04)_1px,transparent_1px)] [background-size:140px_140px]" />
-        <div className="absolute left-[-12%] top-[8%] h-[26rem] w-[26rem] rounded-full bg-cyan-200/15 blur-3xl" />
-        <div className="absolute bottom-[-10%] right-[-6%] h-[24rem] w-[24rem] rounded-full bg-[#d8b46a]/12 blur-3xl" />
-      </div>
+    <main style={styles.page}>
+      <section style={styles.panel}>
+        <div style={styles.brandRow}>
+          <Image
+            src="/images/sfm-logo.jpeg"
+            alt="StrykeFox Medical"
+            width={52}
+            height={52}
+            priority
+            style={styles.logo}
+          />
+          <div>
+            <p style={styles.brandName}>StrykeFox Medical</p>
+            <p style={styles.brandSub}>Poseidon Dashboard</p>
+          </div>
+        </div>
 
-      <div className="mx-auto grid w-full max-w-[1280px] gap-10 lg:grid-cols-[minmax(0,1.15fr)_460px] lg:items-center">
-        <section className="px-2">
-          <div className="inline-flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-200 shadow-[0_0_14px_rgba(187,247,208,0.8)]" />
-            <span className="font-mono text-[10px] uppercase tracking-[0.28em] text-slate-300">
-              Stryke Fox Medical Secure Access
-            </span>
+        <div style={styles.copyBlock}>
+          <p style={styles.eyebrow}>Secure operator access</p>
+          <h1 style={styles.heading}>Sign in to dashboard</h1>
+          <p style={styles.body}>Use your StrykeFox credentials to access live workflow, revenue, and patient operations.</p>
+        </div>
+
+        <form onSubmit={handleLogin} style={styles.form}>
+          <label style={styles.label} htmlFor="email">Email</label>
+          <input
+            id="email"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            autoComplete="username"
+            required
+            style={styles.input}
+          />
+
+          <label style={styles.label} htmlFor="password">Password</label>
+          <div style={styles.passwordWrap}>
+            <input
+              id="password"
+              type={showPw ? "text" : "password"}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              required
+              placeholder="Enter password"
+              style={{ ...styles.input, paddingRight: 74 }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPw((value) => !value)}
+              style={styles.showButton}
+            >
+              {showPw ? "Hide" : "Show"}
+            </button>
           </div>
 
-          <p className="mt-8 font-mono text-[11px] uppercase tracking-[0.42em] text-[#f4e7c5]">
-            Poseidon Enterprise OS
-          </p>
-          <h1 className="mt-4 max-w-4xl font-display text-[3.3rem] uppercase leading-[0.9] tracking-[0.07em] text-white sm:text-[5.75rem]">
-            Enter the
-            <br />
-            operating system.
-          </h1>
-          <p className="mt-6 max-w-2xl text-base leading-8 text-slate-300">
-            Access live patients, queue status, reimbursement activity, and operator workflow from one surface.
-          </p>
+          {error ? <p style={styles.error}>{error}</p> : null}
 
-        </section>
+          <button type="submit" disabled={loading} style={loading ? styles.submitDisabled : styles.submit}>
+            {loading ? "Signing in..." : "Sign in"}
+          </button>
+        </form>
 
-        <section className="rounded-[36px] border border-white/10 bg-[linear-gradient(180deg,rgba(10,14,26,0.94),rgba(6,10,18,0.92))] p-8 shadow-[0_36px_110px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-2xl sm:p-9">
-          <div className="mb-8">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.34em] text-[#d8b46a]">
-                  Poseidon Gateway
-                </p>
-                <h2 className="mt-3 font-display text-4xl uppercase tracking-[0.14em] text-white">
-                  {headingMap[view]}
-                </h2>
-              </div>
-              <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">
-                HIPAA Aware
-              </div>
-            </div>
-
-            {view === "login" && (
-              <div className="mt-5 grid grid-cols-3 gap-3">
-                {[
-                  ["Auth", "Live"],
-                  ["Session", "Encrypted"],
-                  ["Org", "Stryke Fox"],
-                ].map(([label, value]) => (
-                  <div
-                    key={label}
-                    className="rounded-[22px] border border-white/10 bg-white/[0.03] px-3 py-3 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-                  >
-                    <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-500">{label}</p>
-                    <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-white">{value}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {renderForm()}
-
-          <div className="mt-6 rounded-[24px] border border-white/10 bg-black/20 p-4">
-            <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">Access Notice</p>
-            <p className="mt-2 text-sm leading-6 text-slate-400">
-              Authorized Stryke Fox personnel only. Access attempts may be logged for compliance and security review.
-            </p>
-          </div>
-
-          <div className="mt-6 flex items-center justify-between gap-4 border-t border-white/10 pt-5 text-[10px] uppercase tracking-[0.18em] text-slate-600">
-            <span>Encrypted Session</span>
-            <span>Clinical. Revenue. Control.</span>
-            <span>Stryke Fox Medical</span>
-          </div>
-        </section>
-      </div>
-    </PageShell>
+        <div style={styles.footerRow}>
+          <a href="https://strykefox.com" style={styles.footerLink}>StrykeFox Medical</a>
+          <span style={styles.dot} />
+          <a href="mailto:admin@strykefox.com" style={styles.footerLink}>Need access?</a>
+        </div>
+      </section>
+    </main>
   )
+}
+
+const navy = "#0B1F3A"
+const blue = "#2563EB"
+const text = "#182337"
+const muted = "#64748B"
+
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    minHeight: "100vh",
+    display: "grid",
+    placeItems: "center",
+    padding: "32px 18px",
+    background: "linear-gradient(180deg, #F8FBFF 0%, #EEF5FF 100%)",
+    fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    color: text,
+  },
+  panel: {
+    width: "min(100%, 440px)",
+    background: "#FFFFFF",
+    border: "1px solid #E2E8F0",
+    borderRadius: 14,
+    padding: "34px 32px 28px",
+    boxShadow: "0 24px 80px rgba(11,31,58,0.12)",
+  },
+  brandRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 14,
+    marginBottom: 34,
+  },
+  logo: {
+    borderRadius: 10,
+    objectFit: "cover",
+    border: "1px solid #E2E8F0",
+  },
+  brandName: {
+    margin: 0,
+    fontSize: 15,
+    fontWeight: 750,
+    letterSpacing: "0.01em",
+    color: navy,
+  },
+  brandSub: {
+    margin: "3px 0 0",
+    fontSize: 12,
+    color: muted,
+  },
+  copyBlock: {
+    marginBottom: 28,
+  },
+  eyebrow: {
+    margin: "0 0 10px",
+    fontSize: 12,
+    fontWeight: 700,
+    color: blue,
+    textTransform: "uppercase",
+    letterSpacing: "0.12em",
+  },
+  heading: {
+    margin: 0,
+    fontSize: 30,
+    lineHeight: 1.12,
+    fontWeight: 780,
+    letterSpacing: "-0.02em",
+    color: navy,
+  },
+  body: {
+    margin: "12px 0 0",
+    fontSize: 14,
+    lineHeight: 1.65,
+    color: muted,
+  },
+  form: {
+    display: "grid",
+    gap: 10,
+  },
+  label: {
+    marginTop: 8,
+    fontSize: 13,
+    fontWeight: 650,
+    color: "#334155",
+  },
+  input: {
+    width: "100%",
+    height: 46,
+    border: "1px solid #CBD5E1",
+    borderRadius: 9,
+    background: "#FFFFFF",
+    color: text,
+    padding: "0 13px",
+    fontSize: 15,
+    outline: "none",
+    boxSizing: "border-box",
+    fontFamily: "inherit",
+  },
+  passwordWrap: {
+    position: "relative",
+  },
+  showButton: {
+    position: "absolute",
+    right: 10,
+    top: "50%",
+    transform: "translateY(-50%)",
+    border: 0,
+    background: "transparent",
+    color: blue,
+    cursor: "pointer",
+    fontSize: 13,
+    fontWeight: 700,
+    fontFamily: "inherit",
+  },
+  error: {
+    margin: "6px 0 0",
+    padding: "10px 12px",
+    borderRadius: 8,
+    background: "#FEF2F2",
+    border: "1px solid #FECACA",
+    color: "#B91C1C",
+    fontSize: 13,
+  },
+  submit: {
+    marginTop: 12,
+    height: 48,
+    border: 0,
+    borderRadius: 9,
+    background: navy,
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: 760,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    boxShadow: "0 12px 24px rgba(11,31,58,0.18)",
+  },
+  submitDisabled: {
+    marginTop: 12,
+    height: 48,
+    border: 0,
+    borderRadius: 9,
+    background: "#94A3B8",
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: 760,
+    cursor: "not-allowed",
+    fontFamily: "inherit",
+  },
+  footerRow: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 24,
+  },
+  footerLink: {
+    color: muted,
+    fontSize: 12,
+    textDecoration: "none",
+  },
+  dot: {
+    width: 4,
+    height: 4,
+    borderRadius: 999,
+    background: "#CBD5E1",
+  },
 }
