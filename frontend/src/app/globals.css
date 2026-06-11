@@ -112,6 +112,16 @@ body::after {
   animation: watermarkFloat 20s ease-in-out infinite;
 }
 
+body:has(.login-page-root)::before,
+body:has(.login-page-root)::after {
+  display: none;
+}
+
+body:has(.login-page-root) {
+  background: #f8fbff;
+  color: #182337;
+}
+
 @keyframes watermarkFloat {
   0%, 100% { transform: translate(0, 0) rotate(0deg); }
   33% { transform: translate(10px, -10px) rotate(1deg); }

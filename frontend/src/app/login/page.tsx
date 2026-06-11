@@ -41,7 +41,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main style={styles.page}>
+    <main className="login-page-root" style={styles.page}>
       <section style={styles.panel}>
         <div style={styles.brandRow}>
           <Image
