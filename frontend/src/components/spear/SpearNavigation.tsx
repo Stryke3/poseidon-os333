@@ -1,145 +1,52 @@
-"use client"
+"use client";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { signOut } from "next-auth/react";
 
-import React from "react"
-import Link from "next/link"
-import { usePathname } from "next/navigation"
-import {
-  Command,
-  FileText,
-  Database,
-  Brain,
-  Zap,
-  DollarSign,
-  Puzzle,
-  Settings,
-  Activity,
-  LogOut
-} from "lucide-react"
+const NAV = [
+  { label: "Command",  href: "/spear" },
+  { label: "Cases",    href: "/spear/cases" },
+  { label: "Intake",   href: "/spear/intake" },
+  { label: "Trident",  href: "/spear/trident" },
+  { label: "Poseidon", href: "/spear/poseidon" },
+  { label: "Conveyor", href: "/spear/conveyor" },
+  { label: "Revenue",  href: "/spear/revenue" },
+];
 
-const T = {
-  bg: "#05070B",
-  bgSoft: "#080D14", 
-  panel: "#0B1220",
-  panelSoft: "#111827",
-  panelLift: "#151E2E",
-  border: "#243044",
-  borderSoft: "#1A2433",
-  ivory: "#F7F2E8",
-  white: "#FFFFFF",
-  muted: "#A7B0C0",
-  mutedSoft: "#6B7280",
-  gold: "#B89B5E",
-  goldSoft: "#D7C28A",
-  blue: "#132238",
-  blueBright: "#1E3A5F",
-  danger: "#B91C1C",
-  warning: "#C08403",
-  success: "#15803D",
-}
-
-const NAV_ITEMS = [
-  { key: "command", label: "Command", href: "/spear", icon: Command },
-  { key: "intake", label: "Intake", href: "/spear/intake", icon: FileText },
-  { key: "cases", label: "Cases", href: "/spear/cases", icon: Activity },
-  { key: "poseidon", label: "Poseidon", href: "/spear/poseidon", icon: Database },
-  { key: "trident", label: "Trident", href: "/spear/trident", icon: Brain },
-  { key: "fulfillment", label: "Fulfillment", href: "/spear/fulfillment", icon: Zap },
-  { key: "revenue-support", label: "Revenue Support", href: "/spear/revenue-support", icon: DollarSign },
-  { key: "integrations", label: "Integrations", href: "/spear/integrations", icon: Puzzle },
-  { key: "settings", label: "Settings", href: "/spear/settings", icon: Settings },
-]
-
-export function SpearNavigation() {
-  const pathname = usePathname()
-
+export default function SpearNavigation() {
+  const path = usePathname();
   return (
-    <nav style={{
-      background: T.panel,
-      border: `1px solid ${T.border}`,
-      borderRadius: "8px",
-      padding: "8px",
-      display: "flex",
-      flexDirection: "column",
-      gap: "4px",
-      minWidth: "200px",
-    }}>
-      <div style={{
-        padding: "12px 16px",
-        borderBottom: `1px solid ${T.borderSoft}`,
-        marginBottom: "8px",
-      }}>
-        <h1 style={{
-          fontFamily: "'Syne', sans-serif",
-          fontSize: "20px",
-          fontWeight: 700,
-          color: T.ivory,
-          margin: 0,
-          letterSpacing: "-0.01em",
-        }}>
-          SPEAR
-        </h1>
-        <p style={{
-          fontSize: "10px",
-          color: T.muted,
-          margin: 0,
-          textTransform: "uppercase",
-          letterSpacing: "0.5px",
-        }}>
-          Compliance-Driven Execution
-        </p>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: "24px 0" }}>
+      <div style={{ padding: "0 20px 28px", borderBottom: "1px solid #F1F5F9" }}>
+        <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.12em", color: "#0F172A" }}>
+          SPEAR OS
+        </div>
       </div>
-
-      {NAV_ITEMS.map((item) => {
-        const Icon = item.icon
-        const isActive = pathname === item.href || (item.key !== "command" && pathname.startsWith(item.href))
-        
-        return (
-          <Link
-            key={item.key}
-            href={item.href}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "12px",
-              padding: "10px 16px",
-              borderRadius: "6px",
-              color: isActive ? T.ivory : T.muted,
-              background: isActive ? `${T.gold}20` : "transparent",
-              border: isActive ? `1px solid ${T.gold}40` : "1px solid transparent",
+      <div style={{ flex: 1, padding: "16px 12px", display: "flex", flexDirection: "column", gap: 2 }}>
+        {NAV.map(({ label, href }) => {
+          const active = path === href || (href !== "/spear" && path.startsWith(href));
+          return (
+            <Link key={href} href={href} style={{
+              display: "block", padding: "9px 12px", borderRadius: 7,
+              fontSize: 13, fontWeight: active ? 600 : 400,
+              color: active ? "#0F172A" : "#64748B",
+              background: active ? "#F1F5F9" : "transparent",
               textDecoration: "none",
-              fontSize: "13px",
-              fontWeight: isActive ? 500 : 400,
-              transition: "all 160ms ease",
-            }}
-          >
-            <Icon size={16} />
-            {item.label}
-          </Link>
-        )
-      })}
-
-      <div style={{ marginTop: "auto", paddingTop: "16px", borderTop: `1px solid ${T.borderSoft}` }}>
-        <button
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-            padding: "10px 16px",
-            borderRadius: "6px",
-            color: T.muted,
-            background: "transparent",
-            border: "1px solid transparent",
-            fontSize: "13px",
-            fontWeight: 400,
-            cursor: "pointer",
-            width: "100%",
-            textAlign: "left",
-          }}
-        >
-          <LogOut size={16} />
+            }}>
+              {label}
+            </Link>
+          );
+        })}
+      </div>
+      <div style={{ padding: "16px 12px", borderTop: "1px solid #F1F5F9" }}>
+        <button onClick={() => signOut({ callbackUrl: "/login" })} style={{
+          width: "100%", padding: "9px 12px", background: "none",
+          border: "none", cursor: "pointer", textAlign: "left",
+          fontSize: 13, color: "#94A3B8", borderRadius: 7,
+        }}>
           Sign Out
         </button>
       </div>
-    </nav>
-  )
+    </div>
+  );
 }

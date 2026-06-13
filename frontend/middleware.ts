@@ -1,15 +1,23 @@
-import { withAuth } from "next-auth/middleware"
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
-export default withAuth({
-  callbacks: {
-    authorized: ({ token }) => Boolean(token?.accessToken),
-  },
-})
+const PUBLIC = ["/login", "/api/auth", "/api/spear/metrics"];
+
+export function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl;
+  if (PUBLIC.some(p => pathname.startsWith(p))) return NextResponse.next();
+
+  const session =
+    req.cookies.get("next-auth.session-token") ??
+    req.cookies.get("__Secure-next-auth.session-token") ??
+    req.cookies.get("spear_session");
+
+  if (!session) {
+    return NextResponse.redirect(new URL("/login", req.url));
+  }
+  return NextResponse.next();
+}
 
 export const config = {
-  matcher: [
-    // Leave Next internals, public marketing routes, and public API routes alone.
-    // Root "/" (CarePath landing) and /api/carepath-intake must be publicly accessible.
-    "/((?!$|login|founder|api/auth|api/health|api/public-inquiry|api/carepath-intake|api/core|images|_next|favicon.ico).*)",
-  ],
-}
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+};
