@@ -12,7 +12,6 @@
   --bg-primary: #060B14;
   --bg-secondary: #0E1726;
   --bg-tertiary: #1A2332;
-  --bg-grid: #0E1726;
   
   /* Typography System */
   --font-header: 'Syne', sans-serif;
@@ -38,8 +37,6 @@
   --btn-gloss-hover: rgba(255, 255, 255, 0.2);
   
   /* Grid Overlay System */
-  --grid-color: rgba(14, 23, 38, 0.8);
-  --grid-size: 40px;
 
   /* StrykeFox Public Page Design Tokens */
   --blue: #1a3c6e;
@@ -77,26 +74,14 @@ html {
 
 body {
   min-height: 100vh;
-  background: var(--bg-primary);
-  color: var(--surgical-white);
+  background: #ffffff;
+  color: #0f172a;
   font-family: var(--font-header);
   font-size: 14px;
   line-height: 1.6;
   overflow-x: hidden;
   text-rendering: optimizeLegibility;
   position: relative;
-}
-
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background-image: 
-    linear-gradient(var(--grid-color) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
-  background-size: var(--grid-size) var(--grid-size);
-  pointer-events: none;
-  z-index: 1;
 }
 
 body::after {
