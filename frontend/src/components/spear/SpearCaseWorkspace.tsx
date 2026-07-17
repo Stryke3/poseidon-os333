@@ -249,7 +249,9 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
                 ["DOB", c.dob],
                 ["MRN", c.mrn],
                 ["Payer", c.payer],
+                ["Raw Payer", c.raw_payer],
                 ["Member ID", c.member_id],
+                ["Facility", c.facility],
                 ["Provider", c.provider],
                 ["Provider NPI", c.npi],
                 ["Order", productLine(c)],
@@ -367,9 +369,29 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
           <FieldCard title="Patient" rows={[["Name", c.patient_name, "Missing"], ["DOB", c.dob, "Missing"], ["MRN", c.mrn], ["Phone", c.phone], ["Email", c.email], ["Address", c.address]]} />
-          <FieldCard title="Payer" rows={[["Payer", c.payer, "Missing"], ["Member ID", c.member_id, "Missing"], ["Group Number", c.group_number]]} />
-          <FieldCard title="Provider" rows={[["Provider", c.provider, "Missing"], ["NPI", c.npi, "Missing"]]} />
-          <FieldCard title="Order" rows={[["Product", c.product, "Not required"], ["HCPCS", c.hcpcs, "Missing"], ["ICD-10", c.icd, "Missing"], ["Laterality", c.laterality, "Missing"], ["Order Date", c.order_date, "Missing"]]} />
+          <FieldCard title="Payer" rows={[
+            ["Canonical Payer", c.canonical_payer || c.payer, "Missing"],
+            ["Raw Payer", c.raw_payer],
+            ["Member ID", c.member_id, "Missing"],
+            ["Group Number", c.group_number],
+            ["Match Status", c.payer_match_status],
+          ]} />
+          <FieldCard title="Provider" rows={[
+            ["Facility", c.facility, "Missing"],
+            ["Provider", c.provider, "Missing"],
+            ["Stored NPI", c.npi, c.provider_id ? "Provider matched — NPI missing from Settings" : "Missing"],
+            ["NPI Source", c.npi_source],
+            ["Registry Status", c.provider_registry_status],
+          ]} />
+          <FieldCard title="Order" rows={[
+            ["Product", c.product, "Not required"],
+            ["Source HCPCS", c.source_hcpcs, "No source HCPCS. To be assigned by Trident."],
+            ["Trident HCPCS", c.trident_recommended_hcpcs, "Pending Trident"],
+            ["Final HCPCS", c.final_hcpcs, "Awaiting operator approval"],
+            ["ICD-10", c.icd, "Missing"],
+            ["Laterality", c.laterality, "Missing"],
+            ["Order Date", c.order_date, "Missing"],
+          ]} />
         </div>
 
         <details style={{ border: "1px solid #E2E8F0", borderRadius: 10, padding: 16, background: "#F8FAFC" }}>

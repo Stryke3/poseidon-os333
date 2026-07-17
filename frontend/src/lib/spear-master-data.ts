@@ -80,6 +80,7 @@ export const DEFAULT_MASTER_DATA: SpearMasterData = {
       credentials: "MD",
       npi: "",
       specialty: "Orthopedics",
+      facility_ids: ["facility_lvco"],
       facilities: ["facility_lvco"],
       aliases: ["Brian Carr", "Dr Brian Carr", "Dr. Carr", "Carr"],
       notes: "Local repository/config search found LVCO references but no saved Brian Carr NPI. Setup required; do not infer NPI.",
@@ -132,9 +133,9 @@ export const DEFAULT_MASTER_DATA: SpearMasterData = {
       description: "Configured knee recovery DME kit.",
       product_components: ["Knee brace", "TENS support", "Compression garment"],
       hcpcs_codes: [
-        { hcpcs: "L1833", description: "Knee orthosis", quantity: 1, modifier: "", laterality_rule: "required", required: true, source: "configured_kit", notes: "" },
-        { hcpcs: "E0730", description: "TENS unit", quantity: 1, modifier: "", laterality_rule: "none", required: false, source: "configured_kit", notes: "Include only when supported by order/coverage." },
-        { hcpcs: "A6531", description: "Compression garment", quantity: 1, modifier: "", laterality_rule: "when_applicable", required: false, source: "configured_kit", notes: "" },
+        { code: "L1833", hcpcs: "L1833", description: "Knee orthosis", quantity: 1, modifier: "", laterality_rule: "required", required: true, source: "configured_kit", notes: "" },
+        { code: "E0730", hcpcs: "E0730", description: "TENS unit", quantity: 1, modifier: "", laterality_rule: "none", required: false, source: "configured_kit", notes: "Include only when supported by order/coverage." },
+        { code: "A6531", hcpcs: "A6531", description: "Compression garment", quantity: 1, modifier: "", laterality_rule: "when_applicable", required: false, source: "configured_kit", notes: "" },
       ],
       required_documents: ["source intake", "provider SWO", "medical necessity addendum", "POD"],
       payer_overrides: {},
@@ -146,8 +147,8 @@ export const DEFAULT_MASTER_DATA: SpearMasterData = {
       description: "Configured hip recovery DME kit.",
       product_components: ["Hip orthosis", "TENS support", "Compression garment"],
       hcpcs_codes: [
-        { hcpcs: "L1686", description: "Hip orthosis", quantity: 1, modifier: "", laterality_rule: "required", required: true, source: "configured_kit", notes: "" },
-        { hcpcs: "E0730", description: "TENS unit", quantity: 1, modifier: "", laterality_rule: "none", required: false, source: "configured_kit", notes: "Include only when supported by order/coverage." },
+        { code: "L1686", hcpcs: "L1686", description: "Hip orthosis", quantity: 1, modifier: "", laterality_rule: "required", required: true, source: "configured_kit", notes: "" },
+        { code: "E0730", hcpcs: "E0730", description: "TENS unit", quantity: 1, modifier: "", laterality_rule: "none", required: false, source: "configured_kit", notes: "Include only when supported by order/coverage." },
       ],
       required_documents: ["source intake", "provider SWO", "medical necessity addendum", "POD"],
       payer_overrides: {},
@@ -188,14 +189,38 @@ function arr(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
 }
 
+function normalizeProviderRows(providers: Array<Record<string, unknown>>) {
+  return providers.map((provider) => {
+    const facilityIds = arr(provider.facility_ids);
+    const legacyFacilityIds = arr(provider.facilities);
+    return {
+      ...provider,
+      facility_ids: facilityIds.length ? facilityIds : legacyFacilityIds,
+      facilities: legacyFacilityIds.length ? legacyFacilityIds : facilityIds,
+    };
+  });
+}
+
+function normalizeKitRows(kits: Array<Record<string, unknown>>) {
+  return kits.map((kit) => ({
+    ...kit,
+    hcpcs_codes: Array.isArray(kit.hcpcs_codes)
+      ? (kit.hcpcs_codes as Array<Record<string, unknown>>).map((component) => {
+          const code = String(component.code || component.hcpcs || "");
+          return { ...component, code, hcpcs: String(component.hcpcs || code) };
+        })
+      : [],
+  }));
+}
+
 export async function getMasterData() {
   const stored = await readMasterData();
   return {
     payers: stored.payers.length ? stored.payers : DEFAULT_MASTER_DATA.payers,
-    providers: stored.providers.length ? stored.providers : DEFAULT_MASTER_DATA.providers,
+    providers: normalizeProviderRows(stored.providers.length ? stored.providers : DEFAULT_MASTER_DATA.providers),
     facilities: stored.facilities.length ? stored.facilities : DEFAULT_MASTER_DATA.facilities,
     carepaths: stored.carepaths.length ? stored.carepaths : DEFAULT_MASTER_DATA.carepaths,
-    kits: stored.kits.length ? stored.kits : DEFAULT_MASTER_DATA.kits,
+    kits: normalizeKitRows(stored.kits.length ? stored.kits : DEFAULT_MASTER_DATA.kits),
     code_sets: stored.code_sets.length ? stored.code_sets : DEFAULT_MASTER_DATA.code_sets,
     unmatched_payers: stored.unmatched_payers || [],
   };
@@ -256,7 +281,8 @@ export function normalizeProviderFacility(input: {
 
   const npiMatch = npiRaw ? providers.find((provider) => String(provider.npi || "") === npiRaw) : undefined;
   if (npiMatch) {
-    const facility = facilities.find((row) => arr(npiMatch.facilities).includes(String(row.id)));
+    const relatedFacilityIds = [...arr(npiMatch.facility_ids), ...arr(npiMatch.facilities)];
+    const facility = facilities.find((row) => relatedFacilityIds.includes(String(row.id)));
     return {
       facility: facility ? { raw_value: facilityRaw, facility_id: String(facility.id), canonical_name: String(facility.canonical_name), confidence: 0.9, match_status: facilityRaw ? "exact" : "operator_selected" } : emptyFacility,
       provider: { raw_value: providerRaw, provider_id: String(npiMatch.id), display_name: String(npiMatch.display_name), npi: String(npiMatch.npi || ""), confidence: 1, match_status: "exact", match_reason: "Exact NPI match" },

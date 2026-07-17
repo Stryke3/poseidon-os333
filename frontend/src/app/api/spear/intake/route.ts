@@ -112,6 +112,16 @@ export async function POST(req: Request) {
     payload.raw_payer = payload.payer || payload.payer_id;
     payload.payer = payerMatch.canonical_name;
     payload.payer_id = payerMatch.canonical_payer_id;
+    payload.canonical_payer = payerMatch.canonical_name;
+    payload.canonical_payer_id = payerMatch.canonical_payer_id;
+    payload.payer_match_status = payerMatch.match_status;
+    payload.payer_match_confidence = payerMatch.confidence;
+    payload.payer_normalization = payerMatch;
+  } else {
+    payload.raw_payer = payload.raw_payer || payload.payer || payload.payer_id;
+    payload.canonical_payer = payload.canonical_payer || "";
+    payload.payer_match_status = payerMatch.match_status;
+    payload.payer_match_confidence = payerMatch.confidence;
     payload.payer_normalization = payerMatch;
   }
   if (providerFacilityMatch.facility.facility_id) {
@@ -125,6 +135,7 @@ export async function POST(req: Request) {
     payload.provider_name = providerFacilityMatch.provider.display_name;
     payload.npi = providerFacilityMatch.provider.npi || payload.npi || payload.referring_npi || "";
     payload.provider_match = providerFacilityMatch.provider;
+    payload.npi_source = providerFacilityMatch.provider.npi ? "provider_registry" : "missing_from_provider_registry";
     if (providerFacilityMatch.provider.setup_status === "npi_required") {
       payload.provider_registry_status = "npi_required";
       payload.provider_registry_incomplete = true;
@@ -138,9 +149,10 @@ export async function POST(req: Request) {
     ["member_id", payload.member_id || payload.insurance_id],
     ["provider_name", payload.provider || payload.provider_name],
   ].filter(([, value]) => !String(value || "").trim()).map(([name]) => name);
-  const orderContext = Array.isArray(payload.hcpcs)
+  const hasSourceHcpcs = Array.isArray(payload.hcpcs)
     ? payload.hcpcs.length > 0
-    : String(payload.hcpcs || payload.hcpcs_codes || payload.product || payload.order_type || "").trim();
+    : Boolean(String(payload.hcpcs || payload.hcpcs_codes || "").trim());
+  const orderContext = hasSourceHcpcs || Boolean(String(payload.product || payload.order_type || "").trim());
   if (!orderContext) requiredMissing.push("order_context");
   if (requiredMissing.length && !payload.override_reason) {
     return NextResponse.json({
@@ -277,7 +289,7 @@ export async function POST(req: Request) {
 
   await appendWorkflowEvent(record.id, "trident_auto_started", { source: "intake" });
   const recommendation = recommendConfiguredKit(record, masterData);
-  const recommendedHcpcs = recommendation.hcpcsComponents.map((item) => String(item.hcpcs || "")).filter(Boolean);
+  const recommendedHcpcs = recommendation.hcpcsComponents.map((item) => String(item.code || item.hcpcs || "")).filter(Boolean);
   const sourceHcpcs = Array.isArray(record.source_hcpcs) ? record.source_hcpcs : [];
   const conflicts = sourceHcpcs.length
     ? sourceHcpcs.filter((code) => !recommendedHcpcs.includes(String(code)))
@@ -287,7 +299,7 @@ export async function POST(req: Request) {
     recommended_carepath: recommendation.carepath ? { id: recommendation.carepath.id, name: recommendation.carepath.name } : null,
     recommended_kit: recommendation.kit ? { id: recommendation.kit.id, name: recommendation.kit.name } : null,
     recommended_hcpcs: recommendation.hcpcsComponents.map((item) => ({
-      code: item.hcpcs,
+      code: item.code || item.hcpcs,
       description: item.description,
       quantity: item.quantity,
       modifier: item.modifier,

@@ -38,11 +38,11 @@ export type SpearCase = {
   source_hcpcs?: string[];
   trident_recommended_hcpcs?: string[];
   operator_approved_hcpcs?: string[];
-  final_hcpcs?: string[];
+  final_hcpcs?: string[] | null;
   source_icd?: string[];
   trident_recommended_icd?: string[];
   operator_approved_icd?: string[];
-  final_icd?: string[];
+  final_icd?: string[] | null;
   hcpcs_status?: string;
   coding_status?: string;
   product: string;
@@ -347,6 +347,16 @@ function textField(payload: Record<string, unknown>, ...keys: string[]): string 
   return "";
 }
 
+function optionalText(payload: Record<string, unknown>, ...keys: string[]): string | undefined {
+  const value = textField(payload, ...keys);
+  return value || undefined;
+}
+
+function objectField<T = unknown>(payload: Record<string, unknown>, key: string): T | undefined {
+  const value = payload[key];
+  return value && typeof value === "object" ? value as T : undefined;
+}
+
 function missingFieldsFor(payload: Partial<SpearCase>) {
   const required: Array<keyof SpearCase> = [
     "patient_name",
@@ -559,22 +569,48 @@ function normalizeCase(payload: Record<string, unknown>): SpearCase {
   const sourceHcpcs = listField(payload.source_hcpcs || payload.hcpcs || payload.hcpcs_codes);
   const tridentHcpcs = listField(payload.trident_recommended_hcpcs);
   const approvedHcpcs = listField(payload.operator_approved_hcpcs);
-  const finalHcpcs = listField(payload.final_hcpcs || payload.operator_approved_hcpcs || payload.trident_recommended_hcpcs);
+  const explicitFinalHcpcs = listField(payload.final_hcpcs ?? payload.operator_approved_hcpcs);
+  const finalHcpcs = explicitFinalHcpcs.length ? explicitFinalHcpcs : null;
   const sourceIcd = listField(payload.source_icd || payload.icd || payload.icd10 || payload.icd10_codes || payload.diagnosis_codes);
   const tridentIcd = listField(payload.trident_recommended_icd);
   const approvedIcd = listField(payload.operator_approved_icd);
-  const finalIcd = listField(payload.final_icd || payload.operator_approved_icd || payload.trident_recommended_icd || payload.icd || payload.icd10 || payload.icd10_codes || payload.diagnosis_codes);
-  const hcpcs = finalHcpcs.length ? finalHcpcs : sourceHcpcs;
-  const icd = finalIcd.length ? finalIcd : sourceIcd;
-  const codingPending = !finalHcpcs.length;
+  const explicitFinalIcd = listField(payload.final_icd ?? payload.operator_approved_icd);
+  const finalIcd = explicitFinalIcd.length ? explicitFinalIcd : null;
+  const hcpcs = finalHcpcs?.length ? finalHcpcs : sourceHcpcs;
+  const icd = finalIcd?.length ? finalIcd : sourceIcd;
+  const codingPending = !finalHcpcs?.length;
   const base: Partial<SpearCase> = {
     id: textField(payload, "id", "case_id") || `case_${randomUUID()}`,
     order_id: textField(payload, "order_id") || `ord_${randomUUID()}`,
     patient_name: textField(payload, "patient_name", "patient"),
+    first_name: optionalText(payload, "first_name"),
+    last_name: optionalText(payload, "last_name"),
     dob: textField(payload, "dob", "date_of_birth"),
+    phone: optionalText(payload, "phone"),
+    email: optionalText(payload, "email"),
+    address: optionalText(payload, "address"),
+    mrn: optionalText(payload, "mrn"),
     payer: textField(payload, "payer", "payer_name", "payer_id"),
+    raw_payer: optionalText(payload, "raw_payer", "payer_raw"),
+    canonical_payer: optionalText(payload, "canonical_payer", "payer", "payer_name"),
+    canonical_payer_id: optionalText(payload, "canonical_payer_id", "payer_id"),
+    payer_match_status: optionalText(payload, "payer_match_status"),
+    payer_match_confidence: payload.payer_match_confidence,
+    payer_normalization: objectField(payload, "payer_normalization"),
     member_id: textField(payload, "member_id", "insurance_id", "insuranceId"),
+    group_number: optionalText(payload, "group_number", "group_id"),
+    facility: optionalText(payload, "facility", "facility_name", "facility_name_raw"),
+    facility_id: optionalText(payload, "facility_id"),
+    facility_name_raw: optionalText(payload, "facility_name_raw", "facility_name"),
+    facility_match: objectField(payload, "facility_match"),
     provider: textField(payload, "provider", "provider_name", "physician", "referring_provider"),
+    provider_id: optionalText(payload, "provider_id"),
+    provider_name_raw: optionalText(payload, "provider_name_raw", "provider_name", "provider"),
+    provider_npi_raw: optionalText(payload, "provider_npi_raw", "provider_npi", "referring_npi", "npi"),
+    provider_match: objectField(payload, "provider_match"),
+    provider_registry_status: optionalText(payload, "provider_registry_status"),
+    provider_registry_incomplete: payload.provider_registry_incomplete === true,
+    npi_source: optionalText(payload, "npi_source"),
     npi: textField(payload, "npi", "referring_npi", "physician_npi"),
     hcpcs,
     icd,
@@ -591,6 +627,16 @@ function normalizeCase(payload: Record<string, unknown>): SpearCase {
     product: textField(payload, "product", "order_type") || (sourceHcpcs[0] ? `Source HCPCS ${sourceHcpcs[0]}` : ""),
     laterality: textField(payload, "laterality"),
     order_date: textField(payload, "order_date", "date_of_service"),
+    parser_source: optionalText(payload, "parser_source"),
+    raw_text: optionalText(payload, "raw_text"),
+    notes: optionalText(payload, "notes"),
+    source_document: optionalText(payload, "source_document"),
+    source_document_id: optionalText(payload, "source_document_id", "document_id"),
+    extraction_result: objectField(payload, "extraction_result"),
+    operator_corrections: Array.isArray(payload.operator_corrections) ? payload.operator_corrections : [],
+    patient_match_decision: optionalText(payload, "patient_match_decision"),
+    matched_case_id: optionalText(payload, "matched_case_id"),
+    priority: optionalText(payload, "priority") || "standard",
     billing_status: textField(payload, "billing_status") || "not_ready",
     trident_status: textField(payload, "trident_status") || "pending",
     pod_status: textField(payload, "pod_status") || "not_started",

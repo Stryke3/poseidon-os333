@@ -508,6 +508,9 @@ export default function IntakeQueueSurface() {
   const [manualMode, setManualMode] = useState(false)
   const [operatorCorrections, setOperatorCorrections] = useState<Record<string, boolean>>({})
   const [manualReason, setManualReason] = useState("")
+  const [rawPayerCandidate, setRawPayerCandidate] = useState("")
+  const [rawFacilityCandidate, setRawFacilityCandidate] = useState("")
+  const [rawProviderCandidate, setRawProviderCandidate] = useState("")
   const [patientMatches, setPatientMatches] = useState<PatientMatch[]>([])
   const [matchDecision, setMatchDecision] = useState<MatchDecision>("")
   const [selectedMatchId, setSelectedMatchId] = useState("")
@@ -530,8 +533,17 @@ export default function IntakeQueueSurface() {
   const activeProviders = useMemo(() => {
     const providers = (masterData.providers || []).filter((row) => row.active !== false)
     if (!stage.facility_id) return providers
-    return providers.filter((row) => Array.isArray(row.facilities) && row.facilities.map(String).includes(stage.facility_id))
+    return providers.filter((row) => {
+      const facilityIds = [
+        ...(Array.isArray(row.facility_ids) ? row.facility_ids.map(String) : []),
+        ...(Array.isArray(row.facilities) ? row.facilities.map(String) : []),
+      ]
+      return facilityIds.includes(stage.facility_id)
+    })
   }, [masterData, stage.facility_id])
+  const selectedPayer = useMemo(() => activePayers.find((item) => String(item.display_name || item.canonical_name || item.id) === stage.payer_id), [activePayers, stage.payer_id])
+  const selectedFacility = useMemo(() => activeFacilities.find((item) => String(item.id) === stage.facility_id), [activeFacilities, stage.facility_id])
+  const selectedProvider = useMemo(() => (masterData.providers || []).find((item) => String(item.id) === stage.provider_id), [masterData.providers, stage.provider_id])
 
   const requiredMissing = useMemo(() => {
     const missing: string[] = []
@@ -653,6 +665,9 @@ export default function IntakeQueueSurface() {
       notes: combinedText ? `Parsed from uploaded intake document.\n\n${combinedText.slice(0, 1200)}` : "",
     }
     let mergedStage: StagedIntake | null = null
+    setRawPayerCandidate(String(byField.payer || ""))
+    setRawFacilityCandidate(String(byField.facility_name || ""))
+    setRawProviderCandidate(String(byField.provider_name || ""))
     setStage((prev) => {
       const merged = { ...prev }
       for (const [key, value] of Object.entries(next) as Array<[StagedTextField, string]>) {
@@ -738,12 +753,15 @@ export default function IntakeQueueSurface() {
           member_id: stage.insurance_id.trim(),
           payer_id: stage.payer_id.trim(),
           payer: stage.payer_id.trim(),
-          raw_payer: stage.payer_id.trim(),
-          facility_name_raw: stage.facility_name.trim(),
+          raw_payer: (rawPayerCandidate || stage.payer_id).trim(),
+          canonical_payer: String(selectedPayer?.canonical_name || selectedPayer?.display_name || stage.payer_id).trim(),
+          canonical_payer_id: String(selectedPayer?.id || ""),
+          facility_name_raw: (rawFacilityCandidate || stage.facility_name).trim(),
           facility_id: stage.facility_id.trim(),
           provider_id: stage.provider_id.trim(),
           provider: stage.provider_name.trim(),
-          provider_name_raw: stage.provider_name.trim(),
+          provider_name_raw: (rawProviderCandidate || stage.provider_name).trim(),
+          npi_source: stage.referring_npi.trim() ? "provider_registry" : stage.provider_id.trim() ? "missing_from_provider_registry" : "",
           npi: stage.referring_npi.trim(),
           source_hcpcs: hcpcsCodes,
           source_icd: icd10Codes,
@@ -804,7 +822,7 @@ export default function IntakeQueueSurface() {
     } finally {
       setSubmitting(false)
     }
-  }, [documentId, file, hcpcsCodes, icd10Codes, manualMode, manualReason, matchDecision, operatorCorrections, pages, parserSource, progress, rawText, requiredMissing, router, selectedMatchId, signals, stage, warnings])
+  }, [documentId, file, hcpcsCodes, icd10Codes, manualMode, manualReason, matchDecision, operatorCorrections, pages, parserSource, progress, rawFacilityCandidate, rawPayerCandidate, rawProviderCandidate, rawText, requiredMissing, router, selectedMatchId, selectedPayer, signals, stage, warnings])
 
   return (
     <div style={{ minHeight: "100%", background: "#F9FAFB" }}>
@@ -969,7 +987,16 @@ export default function IntakeQueueSurface() {
                   ))}
                 </select>
               </label>
-              <Field label="Provider NPI — from registry" value={stage.referring_npi} onChange={(value) => setField("referring_npi", value)} placeholder="Auto-populates when provider has saved NPI" />
+              <label style={{ display: "block" }}>
+                <span style={{ display: "block", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "#6B7280", marginBottom: "4px" }}>Provider NPI — from registry</span>
+                <input
+                  value={stage.referring_npi || (stage.provider_id ? "NPI setup required in Settings" : "")}
+                  readOnly
+                  placeholder="Auto-populates when provider has saved NPI"
+                  style={{ width: "100%", padding: "8px 10px", border: "1px solid #E5E7EB", borderRadius: "6px", fontSize: "13px", color: stage.referring_npi ? "#0F172A" : "#92400E", background: "#F8FAFC", outline: "none", boxSizing: "border-box" }}
+                />
+                {!stage.referring_npi && stage.provider_id ? <Link href="/spear/settings/providers" style={{ display: "inline-block", marginTop: 4, fontSize: 11, color: "#2563EB", fontWeight: 700 }}>Open provider settings</Link> : null}
+              </label>
               <label style={{ display: "block" }}>
                 <span style={{ display: "block", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "#6B7280", marginBottom: "4px" }}>Priority</span>
                 <select
@@ -982,6 +1009,21 @@ export default function IntakeQueueSurface() {
                   <option value="stat">Stat</option>
                 </select>
               </label>
+            </div>
+
+            <div style={{ marginTop: "12px", border: "1px solid #DBEAFE", borderRadius: "8px", padding: "12px", background: "#EFF6FF" }}>
+              <p style={{ margin: "0 0 8px", fontSize: "13px", fontWeight: 800, color: "#0F172A" }}>Registry Match Review</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "8px", fontSize: "11px", color: "#334155" }}>
+                <div><strong>Raw payer:</strong><br />{display(rawPayerCandidate || stage.payer_id)}</div>
+                <div><strong>Standardized payer:</strong><br />{display(selectedPayer?.canonical_name || selectedPayer?.display_name || stage.payer_id)}</div>
+                <div><strong>Payer match:</strong><br />{selectedPayer ? "Registry match" : stage.payer_id ? "Needs registry review" : "Missing"}</div>
+                <div><strong>Extracted facility:</strong><br />{display(rawFacilityCandidate || stage.facility_name)}</div>
+                <div><strong>Matched facility:</strong><br />{display(selectedFacility?.canonical_name || stage.facility_name)}</div>
+                <div><strong>Facility confidence:</strong><br />{selectedFacility ? "High" : stage.facility_name ? "Review" : "Missing"}</div>
+                <div><strong>Extracted provider:</strong><br />{display(rawProviderCandidate || stage.provider_name)}</div>
+                <div><strong>Matched provider:</strong><br />{display(selectedProvider?.display_name || stage.provider_name)}</div>
+                <div><strong>NPI source:</strong><br />{stage.referring_npi ? "Provider registry" : stage.provider_id ? "Setup gap: saved NPI missing" : "No provider selected"}</div>
+              </div>
             </div>
 
             <div style={{ marginTop: "12px", border: "1px solid #E5E7EB", borderRadius: "8px", padding: "12px", background: "#F8FAFC" }}>
