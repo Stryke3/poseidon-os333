@@ -142,7 +142,6 @@ export async function POST(req: Request) {
     ? payload.hcpcs.length > 0
     : String(payload.hcpcs || payload.hcpcs_codes || payload.product || payload.order_type || "").trim();
   if (!orderContext) requiredMissing.push("order_context");
-  if (providerFacilityMatch.provider.setup_status === "npi_required") requiredMissing.push("provider_npi_setup");
   if (requiredMissing.length && !payload.override_reason) {
     return NextResponse.json({
       ok: false,
