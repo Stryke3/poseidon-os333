@@ -190,7 +190,7 @@ function arr(value: unknown): string[] {
 
 export async function getMasterData() {
   const stored = await readMasterData();
-  const merged: SpearMasterData = {
+  return {
     payers: stored.payers.length ? stored.payers : DEFAULT_MASTER_DATA.payers,
     providers: stored.providers.length ? stored.providers : DEFAULT_MASTER_DATA.providers,
     facilities: stored.facilities.length ? stored.facilities : DEFAULT_MASTER_DATA.facilities,
@@ -199,16 +199,6 @@ export async function getMasterData() {
     code_sets: stored.code_sets.length ? stored.code_sets : DEFAULT_MASTER_DATA.code_sets,
     unmatched_payers: stored.unmatched_payers || [],
   };
-  if (
-    !stored.payers.length ||
-    !stored.providers.length ||
-    !stored.facilities.length ||
-    !stored.carepaths.length ||
-    !stored.kits.length
-  ) {
-    await writeMasterData(merged);
-  }
-  return merged;
 }
 
 export async function saveMasterData(masterData: SpearMasterData) {
