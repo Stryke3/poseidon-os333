@@ -180,6 +180,14 @@ async function readRemoteStore(): Promise<SpearStore> {
   const token = process.env.SPEAR_GITHUB_TOKEN;
   if (!gistId || !token) return emptyStore();
 
+  async function readRawFallback(): Promise<SpearStore | null> {
+    const rawResponse = await fetch(`https://gist.githubusercontent.com/${GIST_RAW_OWNER}/${gistId}/raw/${GIST_FILENAME}`, {
+      cache: "no-store",
+    }).catch(() => null);
+    if (!rawResponse?.ok) return null;
+    return { ...emptyStore(), ...JSON.parse(await rawResponse.text()) };
+  }
+
   const response = await fetch(`https://api.github.com/gists/${gistId}`, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -190,19 +198,21 @@ async function readRemoteStore(): Promise<SpearStore> {
   });
 
   if (!response.ok) {
-    const rawResponse = await fetch(`https://gist.githubusercontent.com/${GIST_RAW_OWNER}/${gistId}/raw/${GIST_FILENAME}`, {
-      cache: "no-store",
-    }).catch(() => null);
-    if (rawResponse?.ok) {
-      return { ...emptyStore(), ...JSON.parse(await rawResponse.text()) };
-    }
+    const raw = await readRawFallback();
+    if (raw) return raw;
     throw new Error(`SPEAR store read failed: GitHub returned ${response.status}`);
   }
 
   const gist = await response.json();
   const content = gist?.files?.[GIST_FILENAME]?.content;
   if (!content || typeof content !== "string") return emptyStore();
-  return { ...emptyStore(), ...JSON.parse(content) };
+  try {
+    return { ...emptyStore(), ...JSON.parse(content) };
+  } catch (error) {
+    const raw = await readRawFallback();
+    if (raw) return raw;
+    throw error;
+  }
 }
 
 async function writeRemoteStore(store: SpearStore) {
