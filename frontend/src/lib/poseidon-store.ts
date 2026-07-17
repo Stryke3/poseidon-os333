@@ -180,8 +180,9 @@ async function readRemoteStore(): Promise<SpearStore> {
   const token = process.env.SPEAR_GITHUB_TOKEN;
   if (!gistId || !token) return emptyStore();
 
-  async function readRawFallback(): Promise<SpearStore | null> {
-    const rawResponse = await fetch(`https://gist.githubusercontent.com/${GIST_RAW_OWNER}/${gistId}/raw/${GIST_FILENAME}`, {
+  async function readRawFallback(rawUrl?: string): Promise<SpearStore | null> {
+    const url = rawUrl || `https://gist.githubusercontent.com/${GIST_RAW_OWNER}/${gistId}/raw/${GIST_FILENAME}`;
+    const rawResponse = await fetch(url, {
       cache: "no-store",
     }).catch(() => null);
     if (!rawResponse?.ok) return null;
@@ -204,12 +205,13 @@ async function readRemoteStore(): Promise<SpearStore> {
   }
 
   const gist = await response.json();
-  const content = gist?.files?.[GIST_FILENAME]?.content;
+  const file = gist?.files?.[GIST_FILENAME];
+  const content = file?.content;
   if (!content || typeof content !== "string") return emptyStore();
   try {
     return { ...emptyStore(), ...JSON.parse(content) };
   } catch (error) {
-    const raw = await readRawFallback();
+    const raw = await readRawFallback(typeof file?.raw_url === "string" ? file.raw_url : undefined);
     if (raw) return raw;
     throw error;
   }
