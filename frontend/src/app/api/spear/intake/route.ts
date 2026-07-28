@@ -85,13 +85,19 @@ export async function POST(req: Request) {
 
     if (file) {
       const buffer = Buffer.from(await file.arrayBuffer());
-      let result = await withTimeout(parseUnpdf(file), 8000, "Digital PDF extraction");
-      if (result.confidence < 0.6) {
-        result = await withTimeout(parseTesseract(file), 15000, "OCR extraction");
-      }
-      const needsHandwritingFallback = result.confidence < 0.4 || result.missingFields.some((field) => field !== "HCPCS");
-      if (needsHandwritingFallback) {
-        result = await withTimeout(parseTextract(file), 10000, "Textract extraction");
+      let result = { text: "", confidence: 0, missingFields: ["OCR"] };
+      let parserWarning = "";
+      try {
+        result = await withTimeout(parseUnpdf(file), 8000, "Digital PDF extraction");
+        if (result.confidence < 0.6) {
+          result = await withTimeout(parseTesseract(file), 15000, "OCR extraction");
+        }
+        const needsHandwritingFallback = result.confidence < 0.4 || result.missingFields.some((field) => field !== "HCPCS");
+        if (needsHandwritingFallback) {
+          result = await withTimeout(parseTextract(file), 10000, "Textract extraction");
+        }
+      } catch (error) {
+        parserWarning = error instanceof Error ? error.message : "Document extraction failed.";
       }
       payload = {
         ...payload,
@@ -102,7 +108,8 @@ export async function POST(req: Request) {
         source: "spear_intake_ocr",
         raw_text: result.text,
         parser_confidence: result.confidence,
-        missing_parser_fields: result.missingFields,
+        missing_parser_fields: parserWarning ? [...result.missingFields, parserWarning] : result.missingFields,
+        parser_warning: parserWarning,
       };
       parsedFieldsPresent = Boolean(result.text);
       payload.__uploaded_file = {
