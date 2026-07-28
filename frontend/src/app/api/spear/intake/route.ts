@@ -18,6 +18,20 @@ function codes(text: string, pattern: RegExp) {
   return Array.from(new Set(Array.from(text.matchAll(pattern), (match) => match[0].toUpperCase().replace(/\.$/, "")))).slice(0, 10);
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function parseExtractedText(text: string): Record<string, unknown> {
   const patientName = firstMatch(text, [
     /patient\s*name\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i,
@@ -71,12 +85,13 @@ export async function POST(req: Request) {
 
     if (file) {
       const buffer = Buffer.from(await file.arrayBuffer());
-      let result = await parseUnpdf(file);
+      let result = await withTimeout(parseUnpdf(file), 8000, "Digital PDF extraction");
       if (result.confidence < 0.6) {
-        result = await parseTesseract(file);
+        result = await withTimeout(parseTesseract(file), 15000, "OCR extraction");
       }
-      if (result.confidence < 0.4 || result.missingFields.includes('HCPCS')) {
-        result = await parseTextract(file);
+      const needsHandwritingFallback = result.confidence < 0.4 || result.missingFields.some((field) => field !== "HCPCS");
+      if (needsHandwritingFallback) {
+        result = await withTimeout(parseTextract(file), 10000, "Textract extraction");
       }
       payload = {
         ...payload,
