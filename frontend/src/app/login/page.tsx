@@ -45,16 +45,16 @@ export default function LoginPage() {
       <section style={styles.panel}>
         <div style={styles.brandRow}>
           <Image
-            src="/images/sfm-logo.jpeg"
-            alt="StrykeFox Medical"
-            width={52}
-            height={52}
+            src="/images/spear-logo.png"
+            alt="SPEAR"
+            width={64}
+            height={64}
             priority
             style={styles.logo}
           />
           <div>
-            <p style={styles.brandName}>StrykeFox Medical</p>
-            <p style={styles.brandSub}>Poseidon Dashboard</p>
+            <p style={styles.brandName}>SPEAR</p>
+            <p style={styles.brandSub}>Dashboard Access</p>
           </div>
         </div>
 
@@ -125,17 +125,20 @@ const styles: Record<string, React.CSSProperties> = {
     display: "grid",
     placeItems: "center",
     padding: "32px 18px",
-    background: "linear-gradient(180deg, #F8FBFF 0%, #EEF5FF 100%)",
+    backgroundImage: "linear-gradient(90deg, rgba(7, 18, 36, 0.8), rgba(12, 30, 58, 0.48)), url('/images/spear-flowing-hero.png')",
+    backgroundSize: "cover",
+    backgroundPosition: "center",
     fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     color: text,
   },
   panel: {
     width: "min(100%, 440px)",
-    background: "#FFFFFF",
-    border: "1px solid #E2E8F0",
+    background: "rgba(255, 255, 255, 0.94)",
+    border: "1px solid rgba(226, 232, 240, 0.9)",
     borderRadius: 14,
     padding: "34px 32px 28px",
-    boxShadow: "0 24px 80px rgba(11,31,58,0.12)",
+    boxShadow: "0 24px 80px rgba(0, 0, 0, 0.24)",
+    backdropFilter: "blur(10px)",
   },
   brandRow: {
     display: "flex",
@@ -144,9 +147,10 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 34,
   },
   logo: {
-    borderRadius: 10,
-    objectFit: "cover",
+    borderRadius: 12,
+    objectFit: "contain",
     border: "1px solid #E2E8F0",
+    background: "#FFFFFF",
   },
   brandName: {
     margin: 0,
