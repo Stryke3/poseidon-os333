@@ -21,6 +21,7 @@ type StagedIntake = {
   first_name: string
   last_name: string
   dob: string
+  patient_id: string
   mrn: string
   phone: string
   email: string
@@ -117,6 +118,7 @@ const EMPTY_STAGE: StagedIntake = {
   first_name: "",
   last_name: "",
   dob: "",
+  patient_id: "",
   mrn: "",
   phone: "",
   email: "",
@@ -151,6 +153,8 @@ const NAME_LABEL_WORDS = new Set([
   "mailing",
   "member",
   "mrn",
+  "patient",
+  "patientid",
   "phone",
   "prefix",
   "previous",
@@ -246,6 +250,17 @@ function extractPayerName(rawText: string) {
   return ""
 }
 
+function extractPatientId(rawText: string) {
+  const value = firstMatch(rawText, [
+    /\bpatient\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9-]{3,40})/i,
+    /\bpat(?:ient)?\s*acct(?:ount)?\s*(?:id|#|number|no\.?)?\s*[:#-]\s*([A-Z0-9-]{3,40})/i,
+    /\baccount\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9-]{3,40})/i,
+    /\bchart\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9-]{3,40})/i,
+    /\b(?:eClinicalWorks|eCW)\s*(?:patient\s*)?(?:id|#)\s*[:#-]\s*([A-Z0-9-]{3,40})/i,
+  ])
+  return /\d/.test(value) ? value : ""
+}
+
 function display(value: unknown, fallback = "Not captured") {
   if (value === null || value === undefined || value === "") return fallback
   if (Array.isArray(value)) return value.length ? value.join(", ") : fallback
@@ -318,6 +333,7 @@ function extractFromText(raw: string, result?: LegacyOcrResult): { stage: Staged
       /medical\s*record\s*(?:number|#)?\s*[:#-]\s*([A-Z0-9-]{4,24})/i,
     ])
   const mrn = /\d/.test(mrnCandidate) ? mrnCandidate : ""
+  const patientId = extractPatientId(rawText)
   const payer =
     result?.payerName ||
     result?.payer_name ||
@@ -345,6 +361,7 @@ function extractFromText(raw: string, result?: LegacyOcrResult): { stage: Staged
     first_name: result?.firstName || result?.first_name || name.first_name,
     last_name: result?.lastName || result?.last_name || name.last_name,
     dob,
+    patient_id: patientId,
     mrn,
     payer_id: payer.toUpperCase().replace(/\s+/g, "_"),
     insurance_id: member,
@@ -359,6 +376,7 @@ function extractFromText(raw: string, result?: LegacyOcrResult): { stage: Staged
   const signals: ParsedSignal[] = [
     { field: "patient_name", label: "Patient Name", value: [stage.first_name, stage.last_name].filter(Boolean).join(" "), confidence: patientName ? 0.9 : 0, source_page: null, source_text: "", method: "pdf_text" },
     { field: "dob", label: "DOB", value: stage.dob, confidence: stage.dob ? 0.9 : 0, source_page: null, source_text: "", method: "pdf_text" },
+    { field: "patient_id", label: "Patient ID", value: stage.patient_id, confidence: stage.patient_id ? 0.84 : 0, source_page: null, source_text: "", method: "pdf_text" },
     { field: "mrn", label: "MRN", value: stage.mrn, confidence: stage.mrn ? 0.78 : 0, source_page: null, source_text: "", method: "pdf_text" },
     { field: "order_type", label: "Order Type", value: stage.order_type, confidence: stage.order_type ? 0.78 : 0, source_page: null, source_text: "", method: "pdf_text" },
     { field: "icd10", label: "ICD-10", value: stage.icd10_codes, confidence: icd10.length ? 0.78 : 0, source_page: null, source_text: "", method: "pdf_text" },
@@ -697,10 +715,11 @@ export default function IntakeQueueSurface() {
   const refreshPatientMatches = useCallback(async (nextStage: Partial<StagedIntake>) => {
     const patient = [nextStage.first_name, nextStage.last_name].filter(Boolean).join(" ").toLowerCase()
     const dob = String(nextStage.dob || "")
+    const patientId = String(nextStage.patient_id || "").toLowerCase()
     const mrn = String(nextStage.mrn || "").toLowerCase()
     const member = String(nextStage.insurance_id || "").toLowerCase()
     const payer = String(nextStage.payer_id || "").toLowerCase()
-    if (!patient && !dob && !mrn && !member) {
+    if (!patient && !dob && !patientId && !mrn && !member) {
       setPatientMatches([])
       setMatchDecision("")
       setSelectedMatchId("")
@@ -715,12 +734,14 @@ export default function IntakeQueueSurface() {
           let score = 0
           const recordName = String(record.patient_name || record.patient || "").toLowerCase()
           const recordDob = String(record.dob || "")
+          const recordPatientId = String(record.patient_id || record.patientId || "").toLowerCase()
           const recordMrn = String(record.mrn || "").toLowerCase()
           const recordMember = String(record.member_id || "").toLowerCase()
           const recordPayer = String(record.payer || "").toLowerCase()
           if (patient && recordName === patient) score += 4
           else if (patient && recordName.includes(patient.split(" ").filter(Boolean).slice(-1)[0] || "__never__")) score += 1
           if (dob && recordDob === dob) score += 4
+          if (patientId && recordPatientId && recordPatientId === patientId) score += 6
           if (mrn && recordMrn && recordMrn === mrn) score += 5
           if (member && recordMember && recordMember === member) score += 5
           if (payer && recordPayer && (recordPayer === payer || recordPayer.includes(payer.replace(/_/g, " ")))) score += 1
@@ -748,6 +769,7 @@ export default function IntakeQueueSurface() {
       first_name: String(byField.first_name || split.first_name || ""),
       last_name: String(byField.last_name || split.last_name || ""),
       dob: normalizeDob(String(byField.dob || "")),
+      patient_id: String(byField.patient_id || ""),
       mrn: String(byField.mrn || ""),
       phone: String(byField.phone || ""),
       email: String(byField.email || ""),
@@ -848,6 +870,7 @@ export default function IntakeQueueSurface() {
       const payload = {
           patient_name: [stage.first_name.trim(), stage.last_name.trim()].filter(Boolean).join(" "),
           dob: stage.dob.trim(),
+          patient_id: stage.patient_id.trim(),
           member_id: stage.insurance_id.trim(),
           payer_id: stage.payer_id.trim(),
           payer: stage.payer_id.trim(),
@@ -1020,6 +1043,7 @@ export default function IntakeQueueSurface() {
               <Field label="First Name" required value={stage.first_name} onChange={(value) => setField("first_name", value)} />
               <Field label="Last Name" required value={stage.last_name} onChange={(value) => setField("last_name", value)} />
               <Field label="DOB" required type="date" value={stage.dob} onChange={(value) => setField("dob", value)} />
+              <Field label="Patient ID" value={stage.patient_id} onChange={(value) => setField("patient_id", value)} />
               <Field label="MRN" value={stage.mrn} onChange={(value) => setField("mrn", value)} />
               <label style={{ display: "block" }}>
                 <span style={{ display: "block", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "#6B7280", marginBottom: "4px" }}>Payer <span style={{ marginLeft: "4px", color: "#DC2626" }}>*</span></span>
@@ -1154,6 +1178,7 @@ export default function IntakeQueueSurface() {
                         <div style={{ fontSize: "13px", fontWeight: 800, color: "#0F172A" }}>{display((match as { patient_name?: unknown }).patient_name, "Missing patient")}</div>
                         <div style={{ marginTop: 4, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 10px", fontSize: "11px", color: "#475569" }}>
                           <span>DOB: {display(match.dob, "Missing")}</span>
+                          <span>Patient ID: {display(match.patient_id, "Not captured")}</span>
                           <span>MRN: {display(match.mrn, "Not captured")}</span>
                           <span>Payer: {display(match.payer, "Missing")}</span>
                           <span>Member ID: {display(match.member_id, "Missing")}</span>
