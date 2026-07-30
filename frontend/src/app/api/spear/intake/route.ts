@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { parseUnpdf } from '@/lib/ocr/unpdf';
 import { parseTesseract } from '@/lib/ocr/tesseract';
 import { parseTextract } from '@/lib/ocr/textract';
+import { extractStructuredFieldsFromText } from '@/lib/intake-extraction';
 import { appendWorkflowEvent, attachDocumentToCase, createCaseFromIntake, saveDocument, saveTridentReview, updateCase } from '@/lib/poseidon-store';
 import { isSpearApiAuthFailure, requireSpearApiAuth } from '@/lib/spear-auth';
 import { getMasterData, normalizePayer, normalizeProviderFacility, recommendConfiguredKit } from '@/lib/spear-master-data';
@@ -33,20 +34,18 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
 }
 
 function parseExtractedText(text: string): Record<string, unknown> {
-  const patientName = firstMatch(text, [
-    /patient\s*name\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i,
-    /\bname\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i,
-  ]);
+  const structured = extractStructuredFieldsFromText(text);
+  const patientName = structured.patientName;
   return {
     patient_name: patientName,
+    first_name: structured.firstName,
+    last_name: structured.lastName,
     dob: firstMatch(text, [
       /\bDOB\s*[:#-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})/i,
       /date\s*of\s*birth\s*[:#-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})/i,
     ]),
-    payer: firstMatch(text, [
-      /\bpayer\s*[:#-]\s*([A-Z0-9 &.'-]{2,60})/i,
-      /\binsurance\s*[:#-]\s*([A-Z0-9 &.'-]{2,60})/i,
-    ]),
+    mrn: structured.mrn,
+    payer: structured.payer,
     member_id: firstMatch(text, [
       /member\s*(?:id|#)\s*[:#-]\s*([A-Z0-9-]{4,30})/i,
       /subscriber\s*(?:id|#)\s*[:#-]\s*([A-Z0-9-]{4,30})/i,
