@@ -135,8 +135,61 @@ const EMPTY_STAGE: StagedIntake = {
   priority: "standard",
 }
 
+const NAME_LABEL_WORDS = new Set([
+  "address",
+  "addresses",
+  "cell",
+  "city",
+  "company",
+  "default",
+  "email",
+  "ethnicity",
+  "fax",
+  "home",
+  "insurance",
+  "language",
+  "mailing",
+  "member",
+  "mrn",
+  "phone",
+  "prefix",
+  "previous",
+  "provider",
+  "referring",
+  "rendering",
+  "sex",
+  "ssn",
+  "state",
+  "status",
+  "suffix",
+  "work",
+  "zip",
+])
+
+function cleanPersonName(value: string) {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/\b(?:DOB|D\.O\.B\.|MRN|I AC|Sex|Home Phone|Cell Phone|Work Phone|Previous Name|Prefix|Suffix|Email|Primary Insurance|Insurance|Payer|Provider|NPI)\b.*$/i, "")
+    .replace(/\b\d{1,3}\s*Y(?:ears?)?\b.*$/i, "")
+    .replace(/[^A-Za-z ,.'-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function isLikelyPersonName(value: string) {
+  const clean = cleanPersonName(value)
+  if (!clean || clean.length < 5 || clean.length > 80) return false
+  if (/\d|@|:/.test(clean)) return false
+  const parts = clean.replace(",", " ").split(/\s+/).filter(Boolean)
+  if (parts.length < 2 || parts.length > 5) return false
+  return parts.every((part) => {
+    const lower = part.toLowerCase().replace(/[^a-z]/g, "")
+    return lower.length > 1 && !NAME_LABEL_WORDS.has(lower)
+  })
+}
+
 function splitName(value: string) {
-  const clean = value.replace(/\s+/g, " ").trim()
+  const clean = cleanPersonName(value)
   if (!clean) return { first_name: "", last_name: "" }
   if (clean.includes(",")) {
     const [last, first] = clean.split(",", 2).map((part) => part.trim())
@@ -144,6 +197,53 @@ function splitName(value: string) {
   }
   const parts = clean.split(" ")
   return { first_name: parts[0] || "", last_name: parts.slice(1).join(" ") || "" }
+}
+
+function extractPatientName(rawText: string) {
+  const patterns = [
+    /Patient\s+Medical\s+Record\s+([A-Z][A-Z' -]{1,40},\s*[A-Z][A-Z .'-]{1,40})\b/i,
+    /\b([A-Z][A-Z' -]{1,40},\s*[A-Z][A-Z .'-]{1,40})\s+\d{1,3}\s*Y\b/i,
+    /patient\s*name\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i,
+    /\bname\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i,
+  ]
+  for (const pattern of patterns) {
+    const value = cleanPersonName(firstMatch(rawText, [pattern]))
+    if (isLikelyPersonName(value)) return value
+  }
+  for (const line of rawText.split(/\r?\n/).map((item) => item.replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 80)) {
+    const candidates = [
+      line.match(/^([A-Z][A-Z' -]{1,40},\s*[A-Z][A-Z .'-]{1,40})\b/)?.[1],
+      line.match(/\b([A-Z][A-Z' -]{1,40},\s*[A-Z][A-Z .'-]{1,40})\s+\d{1,3}\s*Y\b/i)?.[1],
+    ].filter(Boolean) as string[]
+    for (const candidate of candidates) {
+      const value = cleanPersonName(candidate)
+      if (isLikelyPersonName(value)) return value
+    }
+  }
+  return ""
+}
+
+function cleanPayerName(value: string) {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/\b(?:Ethnicity|Race|Language|Preferred Language|SSN|Confidence|Subscriber|Member|Group|Policy|DOB|Date Of Birth|Home Phone|Cell Phone|Work Phone|Email)\b.*$/i, "")
+    .replace(/[^A-Za-z0-9 &.'()-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function extractPayerName(rawText: string) {
+  const patterns = [
+    /\bPrimary\s+Insurance\s*[:#-]?\s*([A-Z0-9 &.'()-]{2,90}?)(?=\s+(?:Ethnicity|Race|Language|Preferred Language|SSN|Confidence|Secondary|Subscriber|Member|Group|Policy)\b|$)/i,
+    /\bInsurance\s+Carrier\s*[:#-]?\s*([A-Z0-9 &.'()-]{2,90}?)(?=\s+(?:Ethnicity|Race|Language|Preferred Language|SSN|Confidence|Secondary|Subscriber|Member|Group|Policy)\b|$)/i,
+    /\bPayer\s*[:#-]\s*([A-Z0-9 &.'()-]{2,90}?)(?=\s+(?:Ethnicity|Race|Language|Preferred Language|SSN|Confidence|Subscriber|Member|Group|Policy)\b|$)/i,
+    /\bInsurance\s*[:#-]\s*([A-Z0-9 &.'()-]{2,90}?)(?=\s+(?:Ethnicity|Race|Language|Preferred Language|SSN|Confidence|Subscriber|Member|Group|Policy)\b|$)/i,
+  ]
+  for (const pattern of patterns) {
+    const payer = cleanPayerName(firstMatch(rawText, [pattern]))
+    if (payer && !/^(primary|secondary|member|group|insurance|payer)$/i.test(payer)) return payer
+  }
+  return ""
 }
 
 function display(value: unknown, fallback = "Not captured") {
@@ -195,13 +295,12 @@ function inferOrderType(text: string, hcpcsList: string[]) {
 function extractFromText(raw: string, result?: LegacyOcrResult): { stage: StagedIntake; signals: ParsedSignal[]; rawText: string } {
   const rawText = raw || result?.rawText || result?.raw_text_preview || ""
   const patientName =
-    result?.patientName ||
-    result?.patient_name ||
-    [result?.firstName || result?.first_name, result?.lastName || result?.last_name].filter(Boolean).join(" ") ||
-    firstMatch(rawText, [
-      /patient\s*name\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i,
-      /\bname\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i,
-    ])
+    (isLikelyPersonName(result?.patientName || "") ? result?.patientName : "") ||
+    (isLikelyPersonName(result?.patient_name || "") ? result?.patient_name : "") ||
+    (isLikelyPersonName([result?.firstName || result?.first_name, result?.lastName || result?.last_name].filter(Boolean).join(" "))
+      ? [result?.firstName || result?.first_name, result?.lastName || result?.last_name].filter(Boolean).join(" ")
+      : "") ||
+    extractPatientName(rawText)
   const name = splitName(patientName)
   const dob = normalizeDob(
     result?.dob ||
@@ -211,19 +310,18 @@ function extractFromText(raw: string, result?: LegacyOcrResult): { stage: Staged
         /date\s*of\s*birth\s*[:#-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})/i,
       ]),
   )
-  const mrn =
+  const mrnCandidate =
     result?.mrn ||
     firstMatch(rawText, [
+      /\(MRN\)\s*[:#-]?\s*([A-Z0-9-]{4,24})/i,
       /\bMRN\s*[:#-]\s*([A-Z0-9-]{4,24})/i,
       /medical\s*record\s*(?:number|#)?\s*[:#-]\s*([A-Z0-9-]{4,24})/i,
     ])
+  const mrn = /\d/.test(mrnCandidate) ? mrnCandidate : ""
   const payer =
     result?.payerName ||
     result?.payer_name ||
-    firstMatch(rawText, [
-      /\bpayer\s*[:#-]\s*([A-Z0-9 &.'-]{2,60})/i,
-      /\binsurance\s*[:#-]\s*([A-Z0-9 &.'-]{2,60})/i,
-    ])
+    extractPayerName(rawText)
   const member =
     result?.insuranceId ||
     result?.insurance_id ||

@@ -133,6 +133,144 @@ function firstMatch(text: string, patterns: RegExp[]) {
   return "";
 }
 
+const NAME_LABEL_WORDS = new Set([
+  "address",
+  "addresses",
+  "cell",
+  "city",
+  "company",
+  "default",
+  "email",
+  "ethnicity",
+  "fax",
+  "home",
+  "insurance",
+  "language",
+  "mailing",
+  "member",
+  "mrn",
+  "phone",
+  "prefix",
+  "previous",
+  "provider",
+  "referring",
+  "rendering",
+  "sex",
+  "ssn",
+  "state",
+  "status",
+  "suffix",
+  "work",
+  "zip",
+]);
+
+function meaningfulLines(text: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => clean(line.replace(/^--- PAGE \d+ ---$/i, "")))
+    .filter(Boolean);
+}
+
+function cleanPersonName(value: string) {
+  return clean(value)
+    .replace(/\b(?:DOB|D\.O\.B\.|MRN|I AC|Sex|Home Phone|Cell Phone|Work Phone|Previous Name|Prefix|Suffix|Email|Primary Insurance|Insurance|Payer|Provider|NPI)\b.*$/i, "")
+    .replace(/\b\d{1,3}\s*Y(?:ears?)?\b.*$/i, "")
+    .replace(/[^A-Za-z ,.'-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isLikelyPersonName(value: string) {
+  const cleaned = cleanPersonName(value);
+  if (!cleaned || cleaned.length < 5 || cleaned.length > 80) return false;
+  if (/\d|@|:/.test(cleaned)) return false;
+  const parts = cleaned.replace(",", " ").split(/\s+/).filter(Boolean);
+  if (parts.length < 2 || parts.length > 5) return false;
+  return parts.every((part) => {
+    const lower = part.toLowerCase().replace(/[^a-z]/g, "");
+    return lower.length > 1 && !NAME_LABEL_WORDS.has(lower);
+  });
+}
+
+function extractPatientName(text: string) {
+  const fullTextPatterns = [
+    /Patient\s+Medical\s+Record\s+([A-Z][A-Z' -]{1,40},\s*[A-Z][A-Z .'-]{1,40})\b/i,
+    /\b([A-Z][A-Z' -]{1,40},\s*[A-Z][A-Z .'-]{1,40})\s+\d{1,3}\s*Y\b/i,
+    /patient\s*name\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i,
+    /\bname\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i,
+  ];
+  for (const pattern of fullTextPatterns) {
+    const value = cleanPersonName(firstMatch(text, [pattern]));
+    if (isLikelyPersonName(value)) return value;
+  }
+
+  for (const line of meaningfulLines(text).slice(0, 80)) {
+    const candidates = [
+      line.match(/^([A-Z][A-Z' -]{1,40},\s*[A-Z][A-Z .'-]{1,40})\b/)?.[1],
+      line.match(/\b([A-Z][A-Z' -]{1,40},\s*[A-Z][A-Z .'-]{1,40})\s+\d{1,3}\s*Y\b/i)?.[1],
+    ].filter(Boolean) as string[];
+    for (const candidate of candidates) {
+      const value = cleanPersonName(candidate);
+      if (isLikelyPersonName(value)) return value;
+    }
+  }
+  return "";
+}
+
+function splitPatientName(patientName: string) {
+  const cleaned = cleanPersonName(patientName);
+  if (!cleaned) return { firstName: "", lastName: "" };
+  if (cleaned.includes(",")) {
+    const [last, first] = cleaned.split(",", 2).map((part) => clean(part));
+    return { firstName: first || "", lastName: last || "" };
+  }
+  const parts = cleaned.split(/\s+/);
+  return { firstName: parts[0] || "", lastName: parts.slice(1).join(" ") };
+}
+
+function cleanPayerName(value: string) {
+  return clean(value)
+    .replace(/\b(?:Ethnicity|Race|Language|Preferred Language|SSN|Confidence|Subscriber|Member|Group|Policy|DOB|Date Of Birth|Home Phone|Cell Phone|Work Phone|Email)\b.*$/i, "")
+    .replace(/[^A-Za-z0-9 &.'()-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractPayerName(text: string) {
+  const patterns = [
+    /\bPrimary\s+Insurance\s*[:#-]?\s*([A-Z0-9 &.'()-]{2,90}?)(?=\s+(?:Ethnicity|Race|Language|Preferred Language|SSN|Confidence|Secondary|Subscriber|Member|Group|Policy)\b|$)/i,
+    /\bInsurance\s+Carrier\s*[:#-]?\s*([A-Z0-9 &.'()-]{2,90}?)(?=\s+(?:Ethnicity|Race|Language|Preferred Language|SSN|Confidence|Secondary|Subscriber|Member|Group|Policy)\b|$)/i,
+    /\bPayer\s*[:#-]\s*([A-Z0-9 &.'()-]{2,90}?)(?=\s+(?:Ethnicity|Race|Language|Preferred Language|SSN|Confidence|Subscriber|Member|Group|Policy)\b|$)/i,
+    /\bInsurance\s*[:#-]\s*([A-Z0-9 &.'()-]{2,90}?)(?=\s+(?:Ethnicity|Race|Language|Preferred Language|SSN|Confidence|Subscriber|Member|Group|Policy)\b|$)/i,
+  ];
+  for (const pattern of patterns) {
+    const payer = cleanPayerName(firstMatch(text, [pattern]));
+    if (payer && !/^(primary|secondary|member|group|insurance|payer)$/i.test(payer)) return payer;
+  }
+  return "";
+}
+
+function extractMrn(text: string) {
+  const value = firstMatch(text, [
+    /\(MRN\)\s*[:#-]?\s*([A-Z0-9-]{3,30})/i,
+    /\bMRN\s*[:#-]\s*([A-Z0-9-]{3,30})/i,
+    /medical\s*record\s*(?:number|#)?\s*[:#-]\s*([A-Z0-9-]{3,30})/i,
+  ]);
+  return /\d/.test(value) ? value : "";
+}
+
+export function extractStructuredFieldsFromText(text: string) {
+  const patientName = extractPatientName(text);
+  const nameParts = splitPatientName(patientName);
+  return {
+    patientName,
+    firstName: nameParts.firstName,
+    lastName: nameParts.lastName,
+    mrn: extractMrn(text),
+    payer: extractPayerName(text),
+  };
+}
+
 function allCodes(text: string, pattern: RegExp) {
   return unique(Array.from(text.matchAll(pattern), (match) => match[0].toUpperCase().replace(/\.$/, ""))).slice(0, 12);
 }
@@ -182,15 +320,10 @@ export function extractNormalizedFields(pages: PageExtraction[]): ExtractedField
     .concat(pages.filter((page) => page.classifications.every((c) => !["demographics", "insurance", "provider order", "diagnosis/coding"].includes(c))));
   const text = priorityPages.map((page) => `\n--- PAGE ${page.page} ---\n${page.text}`).join("\n");
 
-  const patientName = firstMatch(text, [
-    /patient\s*name\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i,
-    /\bname\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i,
-  ]);
-  const nameParts = patientName.includes(",")
-    ? patientName.split(",", 2).reverse().map((part) => clean(part))
-    : patientName.split(" ");
-  const firstName = clean(nameParts[0] || "");
-  const lastName = clean(patientName.includes(",") ? nameParts[1] || "" : nameParts.slice(1).join(" "));
+  const structured = extractStructuredFieldsFromText(text);
+  const patientName = structured.patientName;
+  const firstName = structured.firstName;
+  const lastName = structured.lastName;
   const dob = firstMatch(text, [
     /\bDOB\s*[:#-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})/i,
     /date\s*of\s*birth\s*[:#-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})/i,
@@ -200,8 +333,8 @@ export function extractNormalizedFields(pages: PageExtraction[]): ExtractedField
   const address = firstMatch(text, [
     /\baddress\s*[:#-]\s*([0-9][A-Z0-9 .,#'-]{8,120})/i,
   ]);
-  const mrn = firstMatch(text, [/\bMRN\s*[:#-]\s*([A-Z0-9-]{3,30})/i, /medical\s*record\s*(?:number|#)?\s*[:#-]\s*([A-Z0-9-]{3,30})/i]);
-  const payer = firstMatch(text, [/\bpayer\s*[:#-]\s*([A-Z0-9 &.'-]{2,60})/i, /\binsurance\s*[:#-]\s*([A-Z0-9 &.'-]{2,60})/i]);
+  const mrn = structured.mrn;
+  const payer = structured.payer;
   const memberId = firstMatch(text, [/member\s*(?:id|#)\s*[:#-]\s*([A-Z0-9-]{4,30})/i, /subscriber\s*(?:id|#)\s*[:#-]\s*([A-Z0-9-]{4,30})/i]);
   const groupNumber = firstMatch(text, [/group\s*(?:number|#|id)?\s*[:#-]\s*([A-Z0-9-]{2,30})/i]);
   const providerName = firstMatch(text, [/(?:ordering|referring|provider|physician)\s*(?:name)?\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i]);
