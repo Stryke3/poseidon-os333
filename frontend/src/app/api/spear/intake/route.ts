@@ -19,6 +19,11 @@ function codes(text: string, pattern: RegExp) {
   return Array.from(new Set(Array.from(text.matchAll(pattern), (match) => match[0].toUpperCase().replace(/\.$/, "")))).slice(0, 10);
 }
 
+function hasValue(value: unknown) {
+  if (Array.isArray(value)) return value.length > 0;
+  return Boolean(String(value || "").trim());
+}
+
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -174,7 +179,9 @@ export async function POST(req: Request) {
   const hasSourceHcpcs = Array.isArray(payload.hcpcs)
     ? payload.hcpcs.length > 0
     : Boolean(String(payload.hcpcs || payload.hcpcs_codes || "").trim());
-  const orderContext = hasSourceHcpcs || Boolean(String(payload.product || payload.order_type || "").trim());
+  const hasDiagnosisContext = hasValue(payload.icd) || hasValue(payload.icd10) || hasValue(payload.icd10_codes) || hasValue(payload.source_icd);
+  const hasClinicalContext = Boolean(String(payload.product || payload.order_type || payload.laterality || payload.raw_text || payload.notes || "").trim());
+  const orderContext = hasSourceHcpcs || hasDiagnosisContext || hasClinicalContext;
   if (!orderContext) requiredMissing.push("order_context");
   if (requiredMissing.length && !payload.override_reason) {
     return NextResponse.json({
