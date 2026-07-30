@@ -586,6 +586,7 @@ function normalizeCase(payload: Record<string, unknown>): SpearCase {
     first_name: optionalText(payload, "first_name"),
     last_name: optionalText(payload, "last_name"),
     dob: textField(payload, "dob", "date_of_birth"),
+    patient_id: optionalText(payload, "patient_id", "patientId", "external_patient_id"),
     phone: optionalText(payload, "phone"),
     email: optionalText(payload, "email"),
     address: optionalText(payload, "address"),

@@ -44,6 +44,7 @@ function parseExtractedText(text: string): Record<string, unknown> {
       /\bDOB\s*[:#-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})/i,
       /date\s*of\s*birth\s*[:#-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})/i,
     ]),
+    patient_id: structured.patientId,
     mrn: structured.mrn,
     payer: structured.payer,
     member_id: firstMatch(text, [

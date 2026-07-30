@@ -259,14 +259,28 @@ function extractMrn(text: string) {
   return /\d/.test(value) ? value : "";
 }
 
+function extractPatientId(text: string) {
+  const value = firstMatch(text, [
+    /\bpatient\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9-]{3,40})/i,
+    /\bpat(?:ient)?\s*acct(?:ount)?\s*(?:id|#|number|no\.?)?\s*[:#-]\s*([A-Z0-9-]{3,40})/i,
+    /\baccount\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9-]{3,40})/i,
+    /\bchart\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9-]{3,40})/i,
+    /\b(?:eClinicalWorks|eCW)\s*(?:patient\s*)?(?:id|#)\s*[:#-]\s*([A-Z0-9-]{3,40})/i,
+  ]);
+  return /\d/.test(value) ? value : "";
+}
+
 export function extractStructuredFieldsFromText(text: string) {
   const patientName = extractPatientName(text);
   const nameParts = splitPatientName(patientName);
+  const patientId = extractPatientId(text);
+  const mrn = extractMrn(text);
   return {
     patientName,
     firstName: nameParts.firstName,
     lastName: nameParts.lastName,
-    mrn: extractMrn(text),
+    patientId,
+    mrn,
     payer: extractPayerName(text),
   };
 }
@@ -359,6 +373,7 @@ export function extractNormalizedFields(pages: PageExtraction[]): ExtractedField
     ["phone", phone, 0.84],
     ["email", email, 0.84],
     ["address", address, 0.78],
+    ["patient_id", structured.patientId, 0.9],
     ["mrn", mrn, 0.86],
     ["payer", payer, 0.88],
     ["member_id", memberId, 0.9],
