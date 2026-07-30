@@ -52,10 +52,7 @@ function parseExtractedText(text: string): Record<string, unknown> {
     patient_id: structured.patientId,
     mrn: structured.mrn,
     payer: structured.payer,
-    member_id: firstMatch(text, [
-      /member\s*(?:id|#)\s*[:#-]\s*([A-Z0-9-]{4,30})/i,
-      /subscriber\s*(?:id|#)\s*[:#-]\s*([A-Z0-9-]{4,30})/i,
-    ]),
+    member_id: structured.memberId,
     provider: firstMatch(text, [
       /(?:ordering|referring|provider|physician)\s*(?:name)?\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i,
     ]),

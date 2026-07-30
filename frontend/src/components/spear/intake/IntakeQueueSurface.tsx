@@ -261,6 +261,43 @@ function extractPatientId(rawText: string) {
   return /\d/.test(value) ? value : ""
 }
 
+function cleanInsuranceId(value: string) {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/\b(?:Primary|Secondary|Group|Plan|Payer|Insurance|Subscriber|Member|Policy|DOB|Date Of Birth|Home Phone|Cell Phone|Work Phone|Phone|Email|Ethnicity|Race|Language|SSN|Sex|Provider|NPI)\b.*$/i, "")
+    .replace(/[^A-Za-z0-9-]/g, "")
+    .trim()
+    .toUpperCase()
+}
+
+function isLikelyInsuranceId(value: string) {
+  const clean = cleanInsuranceId(value)
+  if (!clean || clean.length < 4 || clean.length > 40) return false
+  if (!/\d/.test(clean)) return false
+  if (/^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(value)) return false
+  if (/^\d{3}[-.]?\d{3}[-.]?\d{4}$/.test(clean)) return false
+  if (/^(UNKNOWN|NONE|NA|N\/A|CONFIDENTIAL|MEDICARE|MEDICAID|INSURANCE|MEMBER|SUBSCRIBER|POLICY)$/i.test(clean)) return false
+  return true
+}
+
+function extractMemberId(rawText: string) {
+  const patterns = [
+    /\bmember\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\bsubscriber\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\bpolicy\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\binsurance\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\bplan\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\b(?:medicare|medicaid)\s*(?:id|#|number|no\.?|beneficiary\s*(?:id|identifier|number)|mbi)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\bMBI\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\b(?:beneficiary|recipient)\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+  ]
+  for (const pattern of patterns) {
+    const value = cleanInsuranceId(firstMatch(rawText, [pattern]))
+    if (isLikelyInsuranceId(value)) return value
+  }
+  return ""
+}
+
 function display(value: unknown, fallback = "Not captured") {
   if (value === null || value === undefined || value === "") return fallback
   if (Array.isArray(value)) return value.length ? value.join(", ") : fallback
@@ -341,10 +378,7 @@ function extractFromText(raw: string, result?: LegacyOcrResult): { stage: Staged
   const member =
     result?.insuranceId ||
     result?.insurance_id ||
-    firstMatch(rawText, [
-      /member\s*(?:id|#)\s*[:#-]\s*([A-Z0-9-]{4,30})/i,
-      /subscriber\s*(?:id|#)\s*[:#-]\s*([A-Z0-9-]{4,30})/i,
-    ])
+    extractMemberId(rawText)
   const icd10 = codes(result?.diagnosisCodes || result?.diagnosis_codes, rawText, /\b[A-TV-Z][0-9][0-9AB]\.?[0-9A-Z]{0,4}\b/g)
   const hcpcs = codes(result?.hcpcsCodes || result?.hcpcs_codes, rawText, /\b[A-Z][0-9]{4}\b/g)
   const npi =
