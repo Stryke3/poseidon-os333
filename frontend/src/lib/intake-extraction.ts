@@ -270,6 +270,42 @@ function extractPatientId(text: string) {
   return /\d/.test(value) ? value : "";
 }
 
+function cleanInsuranceId(value: string) {
+  return clean(value)
+    .replace(/\b(?:Primary|Secondary|Group|Plan|Payer|Insurance|Subscriber|Member|Policy|DOB|Date Of Birth|Home Phone|Cell Phone|Work Phone|Phone|Email|Ethnicity|Race|Language|SSN|Sex|Provider|NPI)\b.*$/i, "")
+    .replace(/[^A-Za-z0-9-]/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+function isLikelyInsuranceId(value: string) {
+  const cleaned = cleanInsuranceId(value);
+  if (!cleaned || cleaned.length < 4 || cleaned.length > 40) return false;
+  if (!/\d/.test(cleaned)) return false;
+  if (/^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(value)) return false;
+  if (/^\d{3}[-.]?\d{3}[-.]?\d{4}$/.test(cleaned)) return false;
+  if (/^(UNKNOWN|NONE|NA|N\/A|CONFIDENTIAL|MEDICARE|MEDICAID|INSURANCE|MEMBER|SUBSCRIBER|POLICY)$/i.test(cleaned)) return false;
+  return true;
+}
+
+function extractMemberId(text: string) {
+  const patterns = [
+    /\bmember\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\bsubscriber\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\bpolicy\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\binsurance\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\bplan\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\b(?:medicare|medicaid)\s*(?:id|#|number|no\.?|beneficiary\s*(?:id|identifier|number)|mbi)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\bMBI\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+    /\b(?:beneficiary|recipient)\s*(?:id|#|number|no\.?)\s*[:#-]\s*([A-Z0-9 -]{4,40})/i,
+  ];
+  for (const pattern of patterns) {
+    const value = cleanInsuranceId(firstMatch(text, [pattern]));
+    if (isLikelyInsuranceId(value)) return value;
+  }
+  return "";
+}
+
 export function extractStructuredFieldsFromText(text: string) {
   const patientName = extractPatientName(text);
   const nameParts = splitPatientName(patientName);
@@ -282,6 +318,7 @@ export function extractStructuredFieldsFromText(text: string) {
     patientId,
     mrn,
     payer: extractPayerName(text),
+    memberId: extractMemberId(text),
   };
 }
 
@@ -349,7 +386,7 @@ export function extractNormalizedFields(pages: PageExtraction[]): ExtractedField
   ]);
   const mrn = structured.mrn;
   const payer = structured.payer;
-  const memberId = firstMatch(text, [/member\s*(?:id|#)\s*[:#-]\s*([A-Z0-9-]{4,30})/i, /subscriber\s*(?:id|#)\s*[:#-]\s*([A-Z0-9-]{4,30})/i]);
+  const memberId = structured.memberId;
   const groupNumber = firstMatch(text, [/group\s*(?:number|#|id)?\s*[:#-]\s*([A-Z0-9-]{2,30})/i]);
   const providerName = firstMatch(text, [/(?:ordering|referring|provider|physician)\s*(?:name)?\s*[:#-]\s*([A-Z][A-Z ,.'-]{2,80})/i]);
   const providerNpi = firstMatch(text, [/\bNPI\s*[:#-]?\s*(\d{10})\b/i, /provider[^0-9]{0,24}(\d{10})\b/i]);
