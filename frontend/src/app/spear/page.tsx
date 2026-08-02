@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import SpearShellLayout from "@/components/spear/SpearShellLayout";
 
 const PIPELINE = [
@@ -8,24 +9,29 @@ const PIPELINE = [
 ];
 
 const METRICS = [
-  { label: "Open Cases",       key: "openCases" },
-  { label: "Missing Docs",     key: "missingDocs" },
-  { label: "Trident Review",   key: "tridentReview" },
-  { label: "Ready to Fulfill", key: "readyToFulfill" },
-  { label: "POD Needed",       key: "podNeeded" },
-  { label: "Revenue Support",  key: "revenueSupport" },
-  { label: "Tebra Ready",      key: "tebraReady" },
-  { label: "High-Risk Flags",  key: "highRiskFlags" },
+  { label: "Needs Action",       key: "needsAction", href: "/spear/cases?filter=needs-action" },
+  { label: "Awaiting Provider",  key: "awaitingProvider", href: "/spear/cases?filter=awaiting-provider" },
+  { label: "Ready to Fulfill",   key: "readyToFulfill", href: "/spear/cases?filter=ready-to-fulfill" },
+  { label: "POD Needed",         key: "podNeeded", href: "/spear/cases?filter=pod-needed" },
+  { label: "Tebra Staged",       key: "tebraStaged", href: "/spear/cases?filter=tebra-staged" },
+  { label: "Ready to Bill",      key: "readyToBill", href: "/spear/cases?filter=ready-to-bill" },
+  { label: "Blocked Cases",      key: "blockedCases", href: "/spear/cases?filter=needs-action" },
+  { label: "High-Risk Flags",    key: "highRiskFlags", href: "/spear/cases?filter=all" },
 ];
 
 export default function CommandPage() {
   const [metrics, setMetrics] = useState<Record<string, number>>({});
+  const [error, setError] = useState("");
 
   useEffect(() => {
     fetch("/api/spear/metrics")
-      .then(r => r.ok ? r.json() : {})
-      .then(setMetrics)
-      .catch(() => {});
+      .then(async (r) => {
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || `${r.status} ${r.statusText}`);
+        setMetrics(data.metrics || {});
+        setError("");
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Metrics unavailable"));
   }, []);
 
   return (
@@ -73,17 +79,22 @@ export default function CommandPage() {
         color: "#94A3B8", textTransform: "uppercase", margin: "0 0 14px" }}>
         Live Metrics
       </p>
+      {error ? (
+        <div style={{ marginBottom: 14, border: "1px solid #FDE68A", background: "#FFFBEB", color: "#92400E", borderRadius: 8, padding: "10px 12px", fontSize: 13 }}>
+          Metrics connection warning: {error}
+        </div>
+      ) : null}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
-        {METRICS.map(({ label, key }) => (
-          <div key={key} style={{
+        {METRICS.map(({ label, key, href }) => (
+          <Link key={key} href={href} style={{
             background: "#FFFFFF", border: "1px solid #E2E8F0",
-            borderRadius: 10, padding: "20px 22px",
+            borderRadius: 10, padding: "20px 22px", textDecoration: "none",
           }}>
             <div style={{ fontSize: 30, fontWeight: 700, color: "#0F172A" }}>
-              {metrics[key] ?? 0}
+              {metrics[key] ?? metrics[key.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`)] ?? 0}
             </div>
             <div style={{ fontSize: 12, color: "#64748B", marginTop: 4 }}>{label}</div>
-          </div>
+          </Link>
         ))}
       </div>
     </SpearShellLayout>
