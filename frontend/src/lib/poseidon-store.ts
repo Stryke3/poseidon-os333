@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import type { Pool as PgPool } from "pg";
 
 export type SpearCaseStatus =
   | "intake_received"
@@ -126,6 +127,7 @@ const ARTIFACTS_PATH = path.join(STORE_DIR, "artifacts.json");
 const MASTER_DATA_PATH = path.join(STORE_DIR, "master-data.json");
 const GIST_FILENAME = process.env.SPEAR_STORE_GIST_FILENAME || "spear-store.json";
 const GIST_RAW_OWNER = process.env.SPEAR_STORE_GIST_OWNER || "Stryke3";
+const SQL_STORE_KEY = process.env.SPEAR_SQL_STORE_KEY || "spear-production";
 
 type SpearStore = {
   cases: SpearCase[];
@@ -147,6 +149,18 @@ type TrainingAggregate = {
 };
 
 function hasRemoteStore() {
+  return hasSqlStore() || hasGistStore();
+}
+
+function databaseUrl() {
+  return process.env.SPEAR_DATABASE_URL || process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL || "";
+}
+
+function hasSqlStore() {
+  return Boolean(databaseUrl() && process.env.SPEAR_DISABLE_SQL_STORE !== "true");
+}
+
+function hasGistStore() {
   return Boolean(process.env.SPEAR_STORE_GIST_ID && process.env.SPEAR_GITHUB_TOKEN);
 }
 
@@ -176,6 +190,80 @@ function emptyMasterData(): SpearMasterData {
 }
 
 async function readRemoteStore(): Promise<SpearStore> {
+  if (hasSqlStore()) return readSqlStore();
+  return readGistStore();
+}
+
+async function writeRemoteStore(store: SpearStore) {
+  if (hasSqlStore()) {
+    await writeSqlStore(store);
+    return;
+  }
+  await writeGistStore(store);
+}
+
+let sqlPool: PgPool | null = null;
+let sqlStoreReady = false;
+
+async function getSqlPool() {
+  if (sqlPool) return sqlPool;
+  const { Pool } = await import("pg");
+  const connectionString = databaseUrl();
+  sqlPool = new Pool({
+    connectionString,
+    max: Number(process.env.SPEAR_SQL_POOL_MAX || 3),
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 8_000,
+    ssl: /sslmode=require|neon|supabase|render|railway/i.test(connectionString)
+      ? { rejectUnauthorized: false }
+      : undefined,
+  });
+  return sqlPool;
+}
+
+async function ensureSqlStore() {
+  if (sqlStoreReady) return;
+  const pool = await getSqlPool();
+  await pool.query(`
+    create table if not exists spear_store_snapshots (
+      store_key text primary key,
+      store jsonb not null,
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await pool.query(
+    `
+      insert into spear_store_snapshots (store_key, store)
+      values ($1, $2::jsonb)
+      on conflict (store_key) do nothing
+    `,
+    [SQL_STORE_KEY, JSON.stringify(emptyStore())],
+  );
+  sqlStoreReady = true;
+}
+
+async function readSqlStore(): Promise<SpearStore> {
+  await ensureSqlStore();
+  const pool = await getSqlPool();
+  const result = await pool.query("select store from spear_store_snapshots where store_key = $1", [SQL_STORE_KEY]);
+  return { ...emptyStore(), ...(result.rows[0]?.store || {}) };
+}
+
+async function writeSqlStore(store: SpearStore) {
+  await ensureSqlStore();
+  const pool = await getSqlPool();
+  await pool.query(
+    `
+      insert into spear_store_snapshots (store_key, store, updated_at)
+      values ($1, $2::jsonb, now())
+      on conflict (store_key)
+      do update set store = excluded.store, updated_at = now()
+    `,
+    [SQL_STORE_KEY, JSON.stringify({ ...emptyStore(), ...store })],
+  );
+}
+
+async function readGistStore(): Promise<SpearStore> {
   const gistId = process.env.SPEAR_STORE_GIST_ID;
   const token = process.env.SPEAR_GITHUB_TOKEN;
   if (!gistId || !token) return emptyStore();
@@ -217,7 +305,7 @@ async function readRemoteStore(): Promise<SpearStore> {
   }
 }
 
-async function writeRemoteStore(store: SpearStore) {
+async function writeGistStore(store: SpearStore) {
   const gistId = process.env.SPEAR_STORE_GIST_ID;
   const token = process.env.SPEAR_GITHUB_TOKEN;
   if (!gistId || !token) return;
@@ -637,6 +725,20 @@ export async function getArtifact(artifactId: string): Promise<StoredArtifact | 
 
 export async function createCaseFromIntake(payload: Record<string, unknown>): Promise<SpearCase> {
   const record = normalizeCase(payload);
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    store.cases.unshift(record);
+    store.events.push({
+      id: `evt_${randomUUID()}`,
+      case_id: record.id,
+      event_type: "case_created",
+      payload: { order_id: record.order_id, status: record.status },
+      created_at: new Date().toISOString(),
+    });
+    await writeRemoteStore(store);
+    return record;
+  }
+
   const records = await readArray<SpearCase>(CASES_PATH);
   records.unshift(record);
   await writeArray(CASES_PATH, records);
@@ -763,6 +865,49 @@ export async function updateCase(caseId: string, patch: Partial<SpearCase>): Pro
   return updated;
 }
 
+export async function updateCaseAndAppendEvent(
+  caseId: string,
+  patch: Partial<SpearCase>,
+  eventType: string,
+  payload: unknown,
+): Promise<{ case: SpearCase | null; event: WorkflowEvent | null }> {
+  const event = {
+    id: `evt_${randomUUID()}`,
+    case_id: caseId,
+    event_type: eventType,
+    payload,
+    created_at: new Date().toISOString(),
+  };
+
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    const index = store.cases.findIndex((record) => record.id === caseId || record.order_id === caseId);
+    if (index === -1) return { case: null, event: null };
+    const updated = {
+      ...store.cases[index],
+      ...patch,
+      updated_at: new Date().toISOString(),
+    };
+    store.cases[index] = updated;
+    store.events.push(event);
+    await writeRemoteStore(store);
+    return { case: updated, event };
+  }
+
+  const records = await readArray<SpearCase>(CASES_PATH);
+  const index = records.findIndex((record) => record.id === caseId || record.order_id === caseId);
+  if (index === -1) return { case: null, event: null };
+  const updated = {
+    ...records[index],
+    ...patch,
+    updated_at: new Date().toISOString(),
+  };
+  records[index] = updated;
+  await writeArray(CASES_PATH, records);
+  await appendWorkflowEvent(caseId, eventType, payload);
+  return { case: updated, event };
+}
+
 export async function appendWorkflowEvent(caseId: string, eventType: string, payload: unknown): Promise<WorkflowEvent> {
   const event = {
     id: `evt_${randomUUID()}`,
@@ -782,6 +927,28 @@ export async function appendWorkflowEvent(caseId: string, eventType: string, pay
   events.push(event);
   await writeArray(EVENTS_PATH, events);
   return event;
+}
+
+export async function appendWorkflowEvents(caseId: string, entries: Array<{ event_type: string; payload: unknown }>): Promise<WorkflowEvent[]> {
+  if (!entries.length) return [];
+  const created = entries.map((entry) => ({
+    id: `evt_${randomUUID()}`,
+    case_id: caseId,
+    event_type: entry.event_type,
+    payload: entry.payload,
+    created_at: new Date().toISOString(),
+  }));
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    store.events.push(...created);
+    await writeRemoteStore(store);
+    return created;
+  }
+
+  const events = await readArray<WorkflowEvent>(EVENTS_PATH);
+  events.push(...created);
+  await writeArray(EVENTS_PATH, events);
+  return created;
 }
 
 export async function listWorkflowEvents(caseId?: string): Promise<WorkflowEvent[]> {
@@ -817,18 +984,66 @@ export async function saveTridentReview(caseId: string, review: unknown): Promis
   return stored;
 }
 
+export async function saveTridentReviewAndUpdateCase(
+  caseId: string,
+  review: unknown,
+  patch: Partial<SpearCase>,
+): Promise<{ review: TridentReview; case: SpearCase | null }> {
+  const stored = {
+    id: `tri_${randomUUID()}`,
+    case_id: caseId,
+    created_at: new Date().toISOString(),
+    review,
+  };
+
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    const index = store.cases.findIndex((record) => record.id === caseId || record.order_id === caseId);
+    const updated = index === -1 ? null : {
+      ...store.cases[index],
+      ...patch,
+      updated_at: new Date().toISOString(),
+    };
+    if (index !== -1 && updated) store.cases[index] = updated;
+    store.trident_reviews.push(stored);
+    store.events.push({
+      id: `evt_${randomUUID()}`,
+      case_id: caseId,
+      event_type: "trident_review_stored",
+      payload: review,
+      created_at: new Date().toISOString(),
+    });
+    await writeRemoteStore(store);
+    return { review: stored, case: updated };
+  }
+
+  const reviews = await readArray<TridentReview>(REVIEWS_PATH);
+  reviews.push(stored);
+  await writeArray(REVIEWS_PATH, reviews);
+  const updated = await updateCase(caseId, patch);
+  await appendWorkflowEvent(caseId, "trident_review_stored", review);
+  return { review: stored, case: updated };
+}
+
 export async function listTridentReviews(caseId?: string): Promise<TridentReview[]> {
   const reviews = await readArray<TridentReview>(REVIEWS_PATH);
   return caseId ? reviews.filter((review) => review.case_id === caseId) : reviews;
 }
 
 export async function saveTrainingEvent(payload: Record<string, unknown>): Promise<TrainingEvent> {
-  const records = await readArray<TrainingEvent>(TRAINING_PATH);
   const event = {
     id: `train_${randomUUID()}`,
     created_at: new Date().toISOString(),
     payload,
   };
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    store.training_events.push(event);
+    await writeRemoteStore(store);
+    return event;
+  }
+
+  const records = await readArray<TrainingEvent>(TRAINING_PATH);
   records.push(event);
   await writeArray(TRAINING_PATH, records);
   return event;
@@ -892,5 +1107,14 @@ export async function getStoreSnapshot() {
     cases: await listCases(),
     events: await listWorkflowEvents(),
     trident_reviews: await listTridentReviews(),
+  };
+}
+
+export function getStoreBackendStatus() {
+  return {
+    backend: hasSqlStore() ? "postgres" : hasGistStore() ? "gist" : "local",
+    sql_configured: hasSqlStore(),
+    gist_configured: hasGistStore(),
+    store_key: hasSqlStore() ? SQL_STORE_KEY : undefined,
   };
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { appendWorkflowEvent, getCase, updateCase } from "@/lib/poseidon-store";
+import { getCase, updateCaseAndAppendEvent } from "@/lib/poseidon-store";
 import { isSpearApiAuthFailure, requireSpearApiAuth } from "@/lib/spear-auth";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     const hcpcs = list(caseRecord.trident_recommended_hcpcs);
     const icd = list(caseRecord.trident_recommended_icd).length ? list(caseRecord.trident_recommended_icd) : list(caseRecord.source_icd || caseRecord.icd);
     if (!hcpcs.length) return NextResponse.json({ ok: false, error: "No Trident HCPCS recommendation is available." }, { status: 422 });
-    const updated = await updateCase(caseRecord.id, {
+    const result = await updateCaseAndAppendEvent(caseRecord.id, {
       operator_approved_hcpcs: hcpcs,
       final_hcpcs: hcpcs,
       hcpcs,
@@ -37,15 +37,14 @@ export async function POST(req: Request) {
       coding_status: "operator_approved",
       hcpcs_status: "approved",
       billing_status: "coding_approved",
-    });
-    await appendWorkflowEvent(caseRecord.id, "coding_approved", {
+    }, "coding_approved", {
       operator,
       approved_hcpcs: hcpcs,
       approved_icd: icd,
       approved_at: new Date().toISOString(),
       reason: "Operator approved Trident configured-kit recommendation.",
     });
-    return NextResponse.json({ ok: true, case: updated, approved_hcpcs: hcpcs, approved_icd: icd });
+    return NextResponse.json({ ok: true, case: result.case, approved_hcpcs: hcpcs, approved_icd: icd });
   }
 
   if (action === "override") {
@@ -54,7 +53,7 @@ export async function POST(req: Request) {
     const icd = list(body.icd).length ? list(body.icd) : list(caseRecord.source_icd || caseRecord.icd);
     if (!reason) return NextResponse.json({ ok: false, error: "Override reason is required." }, { status: 422 });
     if (!hcpcs.length) return NextResponse.json({ ok: false, error: "Override HCPCS code set is required." }, { status: 422 });
-    const updated = await updateCase(caseRecord.id, {
+    const result = await updateCaseAndAppendEvent(caseRecord.id, {
       operator_approved_hcpcs: hcpcs,
       final_hcpcs: hcpcs,
       hcpcs,
@@ -64,15 +63,14 @@ export async function POST(req: Request) {
       coding_status: "operator_overridden",
       hcpcs_status: "approved",
       billing_status: "coding_approved",
-    });
-    await appendWorkflowEvent(caseRecord.id, "coding_overridden", {
+    }, "coding_overridden", {
       operator,
       reason,
       approved_hcpcs: hcpcs,
       approved_icd: icd,
       overridden_at: new Date().toISOString(),
     });
-    return NextResponse.json({ ok: true, case: updated, approved_hcpcs: hcpcs, approved_icd: icd });
+    return NextResponse.json({ ok: true, case: result.case, approved_hcpcs: hcpcs, approved_icd: icd });
   }
 
   return NextResponse.json({ ok: false, error: `Unknown coding action: ${action}` }, { status: 400 });
