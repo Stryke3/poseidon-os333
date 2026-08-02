@@ -408,7 +408,6 @@ export async function saveDocument(input: {
   content_type: string;
   content: Buffer;
 }): Promise<StoredDocument> {
-  const records = await readArray<StoredDocument>(DOCUMENTS_PATH);
   const document = {
     id: `doc_${randomUUID()}`,
     case_id: input.case_id,
@@ -419,6 +418,26 @@ export async function saveDocument(input: {
     content_base64: input.content.toString("base64"),
     created_at: new Date().toISOString(),
   };
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    store.documents.push(document);
+    store.events.push({
+      id: `evt_${randomUUID()}`,
+      case_id: input.case_id,
+      event_type: "document_stored",
+      payload: {
+        document_id: document.id,
+        kind: document.kind,
+        filename: document.filename,
+        size: document.size,
+      },
+      created_at: new Date().toISOString(),
+    });
+    await writeRemoteStore(store);
+    return document;
+  }
+
+  const records = await readArray<StoredDocument>(DOCUMENTS_PATH);
   records.push(document);
   await writeArray(DOCUMENTS_PATH, records);
   await appendWorkflowEvent(input.case_id, "document_stored", {
@@ -455,6 +474,31 @@ export async function savePendingIntakeDocument(input: {
 }
 
 export async function attachDocumentToCase(documentId: string, caseId: string): Promise<StoredDocument | null> {
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    const index = store.documents.findIndex((record) => record.id === documentId);
+    if (index === -1) return null;
+    const document = {
+      ...store.documents[index],
+      case_id: caseId,
+      attached_at: new Date().toISOString(),
+    };
+    store.documents[index] = document;
+    store.events.push({
+      id: `evt_${randomUUID()}`,
+      case_id: caseId,
+      event_type: "source_document_attached",
+      payload: {
+        document_id: document.id,
+        filename: document.filename,
+        size: document.size,
+      },
+      created_at: new Date().toISOString(),
+    });
+    await writeRemoteStore(store);
+    return document;
+  }
+
   const records = await readArray<StoredDocument>(DOCUMENTS_PATH);
   const index = records.findIndex((record) => record.id === documentId);
   if (index === -1) return null;
@@ -491,7 +535,6 @@ export async function saveArtifact(input: {
   content: Buffer;
   metadata?: Record<string, unknown>;
 }): Promise<StoredArtifact> {
-  const records = await readArray<StoredArtifact>(ARTIFACTS_PATH);
   const artifact = {
     id: `art_${randomUUID()}`,
     case_id: input.case_id,
@@ -503,6 +546,26 @@ export async function saveArtifact(input: {
     metadata: input.metadata || {},
     created_at: new Date().toISOString(),
   };
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    store.artifacts.push(artifact);
+    store.events.push({
+      id: `evt_${randomUUID()}`,
+      case_id: input.case_id,
+      event_type: "artifact_generated",
+      payload: {
+        artifact_id: artifact.id,
+        kind: artifact.kind,
+        filename: artifact.filename,
+        size: artifact.size,
+      },
+      created_at: new Date().toISOString(),
+    });
+    await writeRemoteStore(store);
+    return artifact;
+  }
+
+  const records = await readArray<StoredArtifact>(ARTIFACTS_PATH);
   records.push(artifact);
   await writeArray(ARTIFACTS_PATH, records);
   await appendWorkflowEvent(input.case_id, "artifact_generated", {
@@ -523,7 +586,6 @@ export async function saveArtifacts(inputs: Array<{
   metadata?: Record<string, unknown>;
 }>): Promise<StoredArtifact[]> {
   if (inputs.length === 0) return [];
-  const records = await readArray<StoredArtifact>(ARTIFACTS_PATH);
   const createdAt = new Date().toISOString();
   const artifacts = inputs.map((input) => ({
     id: `art_${randomUUID()}`,
@@ -536,6 +598,24 @@ export async function saveArtifacts(inputs: Array<{
     metadata: input.metadata || {},
     created_at: createdAt,
   }));
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    store.artifacts.push(...artifacts);
+    store.events.push({
+      id: `evt_${randomUUID()}`,
+      case_id: inputs[0].case_id,
+      event_type: "artifacts_generated",
+      payload: {
+        artifact_ids: artifacts.map((artifact) => artifact.id),
+        kinds: artifacts.map((artifact) => artifact.kind),
+      },
+      created_at: new Date().toISOString(),
+    });
+    await writeRemoteStore(store);
+    return artifacts;
+  }
+
+  const records = await readArray<StoredArtifact>(ARTIFACTS_PATH);
   records.push(...artifacts);
   await writeArray(ARTIFACTS_PATH, records);
   await appendWorkflowEvent(inputs[0].case_id, "artifacts_generated", {
@@ -656,6 +736,20 @@ function normalizeCase(payload: Record<string, unknown>): SpearCase {
 }
 
 export async function updateCase(caseId: string, patch: Partial<SpearCase>): Promise<SpearCase | null> {
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    const index = store.cases.findIndex((record) => record.id === caseId || record.order_id === caseId);
+    if (index === -1) return null;
+    const updated = {
+      ...store.cases[index],
+      ...patch,
+      updated_at: new Date().toISOString(),
+    };
+    store.cases[index] = updated;
+    await writeRemoteStore(store);
+    return updated;
+  }
+
   const records = await readArray<SpearCase>(CASES_PATH);
   const index = records.findIndex((record) => record.id === caseId || record.order_id === caseId);
   if (index === -1) return null;
@@ -670,7 +764,6 @@ export async function updateCase(caseId: string, patch: Partial<SpearCase>): Pro
 }
 
 export async function appendWorkflowEvent(caseId: string, eventType: string, payload: unknown): Promise<WorkflowEvent> {
-  const events = await readArray<WorkflowEvent>(EVENTS_PATH);
   const event = {
     id: `evt_${randomUUID()}`,
     case_id: caseId,
@@ -678,6 +771,14 @@ export async function appendWorkflowEvent(caseId: string, eventType: string, pay
     payload,
     created_at: new Date().toISOString(),
   };
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    store.events.push(event);
+    await writeRemoteStore(store);
+    return event;
+  }
+
+  const events = await readArray<WorkflowEvent>(EVENTS_PATH);
   events.push(event);
   await writeArray(EVENTS_PATH, events);
   return event;
@@ -689,13 +790,27 @@ export async function listWorkflowEvents(caseId?: string): Promise<WorkflowEvent
 }
 
 export async function saveTridentReview(caseId: string, review: unknown): Promise<TridentReview> {
-  const reviews = await readArray<TridentReview>(REVIEWS_PATH);
   const stored = {
     id: `tri_${randomUUID()}`,
     case_id: caseId,
     created_at: new Date().toISOString(),
     review,
   };
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    store.trident_reviews.push(stored);
+    store.events.push({
+      id: `evt_${randomUUID()}`,
+      case_id: caseId,
+      event_type: "trident_review_stored",
+      payload: review,
+      created_at: new Date().toISOString(),
+    });
+    await writeRemoteStore(store);
+    return stored;
+  }
+
+  const reviews = await readArray<TridentReview>(REVIEWS_PATH);
   reviews.push(stored);
   await writeArray(REVIEWS_PATH, reviews);
   await appendWorkflowEvent(caseId, "trident_review_stored", review);
