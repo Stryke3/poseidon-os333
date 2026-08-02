@@ -55,8 +55,40 @@ const securityHeaders = [
   { key: "Origin-Agent-Cluster", value: "?1" },
 ]
 
+const noCacheHeaders = [
+  { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+  { key: "Pragma", value: "no-cache" },
+  { key: "Expires", value: "0" },
+]
+
+const spearContentSecurityPolicy = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' blob: data:",
+  "media-src 'self' blob:",
+  "frame-src 'self' blob:",
+  "connect-src 'self' https://intake-production-060e.up.railway.app https://trident-production-e1ed.up.railway.app",
+].join("; ")
+
+function withContentSecurityPolicy(headers, value) {
+  return headers.map((header) =>
+    header.key === "Content-Security-Policy"
+      ? { key: "Content-Security-Policy", value }
+      : header,
+  )
+}
+
 const nextConfig = {
   output: "standalone",
+  serverExternalPackages: ["@napi-rs/canvas", "pdfjs-dist", "tesseract.js", "unpdf"],
+  outputFileTracingIncludes: {
+    "/api/spear/intake/extract": [
+      "./node_modules/@napi-rs/canvas/**/*",
+      "./node_modules/@napi-rs/canvas-linux-x64-gnu/**/*",
+      "./node_modules/@napi-rs/canvas-linux-x64-musl/**/*",
+    ],
+  },
   images: {
     unoptimized: true,
   },
@@ -67,9 +99,14 @@ const nextConfig = {
         source: "/:path*",
         headers: [
           ...securityHeaders,
-          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
-          { key: "Pragma", value: "no-cache" },
-          { key: "Expires", value: "0" },
+          ...noCacheHeaders,
+        ],
+      },
+      {
+        source: "/spear/:path*",
+        headers: [
+          ...withContentSecurityPolicy(securityHeaders, spearContentSecurityPolicy),
+          ...noCacheHeaders,
         ],
       },
     ]
