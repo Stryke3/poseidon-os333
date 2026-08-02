@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCase, saveTridentReview, updateCase } from '@/lib/poseidon-store';
+import { getCase, saveTridentReviewAndUpdateCase } from '@/lib/poseidon-store';
 import { isSpearApiAuthFailure, requireSpearApiAuth } from '@/lib/spear-auth';
 import { getMasterData, recommendConfiguredKit } from '@/lib/spear-master-data';
 
@@ -80,8 +80,7 @@ export async function POST(req: Request) {
   };
 
   if (resolvedCaseId) {
-    await saveTridentReview(resolvedCaseId, review);
-    await updateCase(resolvedCaseId, {
+    await saveTridentReviewAndUpdateCase(resolvedCaseId, review, {
       status: missing.length ? "blocked_missing_fields" : "trident_review_complete",
       trident_status: reviewStatus,
       missing_fields: missing,

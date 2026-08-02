@@ -3,7 +3,7 @@ import { parseUnpdf } from '@/lib/ocr/unpdf';
 import { parseTesseract } from '@/lib/ocr/tesseract';
 import { parseTextract } from '@/lib/ocr/textract';
 import { extractStructuredFieldsFromText } from '@/lib/intake-extraction';
-import { appendWorkflowEvent, attachDocumentToCase, createCaseFromIntake, saveDocument, saveTridentReview, updateCase } from '@/lib/poseidon-store';
+import { appendWorkflowEvent, appendWorkflowEvents, attachDocumentToCase, createCaseFromIntake, saveDocument, saveTridentReview, updateCase } from '@/lib/poseidon-store';
 import { isSpearApiAuthFailure, requireSpearApiAuth } from '@/lib/spear-auth';
 import { getMasterData, normalizePayer, normalizeProviderFacility, recommendConfiguredKit } from '@/lib/spear-master-data';
 
@@ -205,7 +205,9 @@ export async function POST(req: Request) {
       trident_status: intakeStatus === "trident_review" ? "ready" : record.trident_status,
     }) || record;
   }
-  await appendWorkflowEvent(record.id, "intake_received", { source: payload.source, document_id: pendingDocumentId || undefined });
+  const intakeEvents: Array<{ event_type: string; payload: unknown }> = [
+    { event_type: "intake_received", payload: { source: payload.source, document_id: pendingDocumentId || undefined } },
+  ];
   if (uploaded?.buffer) {
     const document = await saveDocument({
       case_id: record.id,
@@ -236,9 +238,12 @@ export async function POST(req: Request) {
           extraction_result: payload.extraction_result || null,
           operator_corrections: payload.operator_corrections || [],
         });
-        await appendWorkflowEvent(record.id, "source_document_attach_fallback", {
+        intakeEvents.push({
+          event_type: "source_document_attach_fallback",
+          payload: {
           pending_document_id: pendingDocumentId,
           document_id: fallbackDocument.id,
+          },
         });
       } else {
         await appendWorkflowEvent(record.id, "source_document_attach_failed", { document_id: pendingDocumentId });
@@ -260,60 +265,76 @@ export async function POST(req: Request) {
     }
   }
   if (parsedFieldsPresent) {
-    await appendWorkflowEvent(record.id, "extraction_complete", {
-      parser_confidence: payload.parser_confidence,
-      source: payload.source,
+    intakeEvents.push({
+      event_type: "extraction_complete",
+      payload: {
+        parser_confidence: payload.parser_confidence,
+        source: payload.source,
+      },
     });
   }
   if (payload.reviewed_fields) {
-    await appendWorkflowEvent(record.id, "extraction_reviewed", {
-      fields: payload.reviewed_fields,
-      operator_corrections: payload.operator_corrections || [],
+    intakeEvents.push({
+      event_type: "extraction_reviewed",
+      payload: {
+        fields: payload.reviewed_fields,
+        operator_corrections: payload.operator_corrections || [],
+      },
     });
   }
   if (payload.patient_match_decision) {
-    await appendWorkflowEvent(record.id, "patient_match_reviewed", {
-      decision: payload.patient_match_decision,
-      matched_case_id: payload.matched_case_id,
-      patient_name: payload.patient_name,
-      dob: payload.dob,
-      payer: payload.payer || payload.payer_id,
-      member_id: payload.member_id || payload.insurance_id,
+    intakeEvents.push({
+      event_type: "patient_match_reviewed",
+      payload: {
+        decision: payload.patient_match_decision,
+        matched_case_id: payload.matched_case_id,
+        patient_name: payload.patient_name,
+        dob: payload.dob,
+        payer: payload.payer || payload.payer_id,
+        member_id: payload.member_id || payload.insurance_id,
+      },
     });
   }
-  await appendWorkflowEvent(record.id, "payer_normalized", payerMatch);
+  intakeEvents.push({ event_type: "payer_normalized", payload: payerMatch });
   if (payerMatch.match_status === "unmatched") {
-    await appendWorkflowEvent(record.id, "payer_match_corrected", {
-      raw_value: payerMatch.raw_value,
-      next_action: "Select an existing payer or add a payer alias in Settings.",
+    intakeEvents.push({
+      event_type: "payer_match_corrected",
+      payload: {
+        raw_value: payerMatch.raw_value,
+        next_action: "Select an existing payer or add a payer alias in Settings.",
+      },
     });
   } else {
-    await appendWorkflowEvent(record.id, "payer_match_confirmed", payerMatch);
+    intakeEvents.push({ event_type: "payer_match_confirmed", payload: payerMatch });
   }
-  if (providerFacilityMatch.facility.facility_id) await appendWorkflowEvent(record.id, "facility_matched", providerFacilityMatch.facility);
-  if (providerFacilityMatch.provider.provider_id) await appendWorkflowEvent(record.id, "provider_matched", providerFacilityMatch.provider);
+  if (providerFacilityMatch.facility.facility_id) intakeEvents.push({ event_type: "facility_matched", payload: providerFacilityMatch.facility });
+  if (providerFacilityMatch.provider.provider_id) intakeEvents.push({ event_type: "provider_matched", payload: providerFacilityMatch.provider });
   if (providerFacilityMatch.provider.setup_status === "npi_required") {
-    await appendWorkflowEvent(record.id, "provider_registry_incomplete", {
-      provider: providerFacilityMatch.provider.display_name,
-      facility: providerFacilityMatch.facility.canonical_name,
-      missing: "npi",
+    intakeEvents.push({
+      event_type: "provider_registry_incomplete",
+      payload: {
+        provider: providerFacilityMatch.provider.display_name,
+        facility: providerFacilityMatch.facility.canonical_name,
+        missing: "npi",
+      },
     });
   }
   if (payload.override_reason) {
-    await appendWorkflowEvent(record.id, "manual_intake_selected", {
-      reason: payload.override_reason,
-      operator: payload.operator_identity || "spear_operator",
+    intakeEvents.push({
+      event_type: "manual_intake_selected",
+      payload: {
+        reason: payload.override_reason,
+        operator: payload.operator_identity || "spear_operator",
+      },
     });
   }
-  await appendWorkflowEvent(record.id, "patient_created", { patient_name: record.patient_name });
-  await appendWorkflowEvent(record.id, "case_created", { case_id: record.id });
-  await appendWorkflowEvent(record.id, "order_created", { order_id: record.order_id });
-  await appendWorkflowEvent(record.id, "intake_completed", {
-    status: record.status,
-    missing_fields: record.missing_fields,
-  });
-
-  await appendWorkflowEvent(record.id, "trident_auto_started", { source: "intake" });
+  intakeEvents.push(
+    { event_type: "patient_created", payload: { patient_name: record.patient_name } },
+    { event_type: "case_created", payload: { case_id: record.id } },
+    { event_type: "order_created", payload: { order_id: record.order_id } },
+    { event_type: "intake_completed", payload: { status: record.status, missing_fields: record.missing_fields } },
+    { event_type: "trident_auto_started", payload: { source: "intake" } },
+  );
   const recommendation = recommendConfiguredKit(record, masterData);
   const recommendedHcpcs = recommendation.hcpcsComponents.map((item) => String(item.code || item.hcpcs || "")).filter(Boolean);
   const sourceHcpcs = Array.isArray(record.source_hcpcs) ? record.source_hcpcs : [];
@@ -352,10 +373,13 @@ export async function POST(req: Request) {
     coding_status: "trident_recommended",
     status: "trident_review_complete",
   }) || record;
-  await appendWorkflowEvent(record.id, "trident_auto_completed", review);
-  await appendWorkflowEvent(record.id, "carepath_recommended", review.recommended_carepath);
-  await appendWorkflowEvent(record.id, "kit_recommended", review.recommended_kit);
-  await appendWorkflowEvent(record.id, "coding_recommended", { recommended_hcpcs: recommendedHcpcs, conflicts });
+  intakeEvents.push(
+    { event_type: "trident_auto_completed", payload: review },
+    { event_type: "carepath_recommended", payload: review.recommended_carepath },
+    { event_type: "kit_recommended", payload: review.recommended_kit },
+    { event_type: "coding_recommended", payload: { recommended_hcpcs: recommendedHcpcs, conflicts } },
+  );
+  await appendWorkflowEvents(record.id, intakeEvents);
 
   return NextResponse.json({
     ok: true,
