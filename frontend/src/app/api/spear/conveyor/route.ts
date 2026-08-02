@@ -258,11 +258,23 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const auth = await requireSpearApiAuth();
-  if (isSpearApiAuthFailure(auth)) return auth;
+  try {
+    const auth = await requireSpearApiAuth();
+    if (isSpearApiAuthFailure(auth)) return auth;
 
-  const contentType = req.headers.get("content-type") || "";
-  if (contentType.includes("multipart/form-data")) return uploadSignedDocument(req);
-  const body = await req.json().catch(() => ({}));
-  return jsonAction(body);
+    const contentType = req.headers.get("content-type") || "";
+    if (contentType.includes("multipart/form-data")) return uploadSignedDocument(req);
+    const body = await req.json().catch(() => ({}));
+    return jsonAction(body);
+  } catch (error) {
+    console.error("[spear/conveyor] action failed", error);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Conveyor action failed",
+        detail: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 },
+    );
+  }
 }
