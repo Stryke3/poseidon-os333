@@ -310,6 +310,20 @@ async function writeGistStore(store: SpearStore) {
   const token = process.env.SPEAR_GITHUB_TOKEN;
   if (!gistId || !token) return;
 
+  const compactStore = {
+    ...store,
+    documents: store.documents.map((document) => ({
+      ...document,
+      content_base64: "",
+      storage_note: "Binary content omitted from Gist fallback. Configure SQL/object storage for durable document bytes.",
+    })),
+    artifacts: store.artifacts.map((artifact) => ({
+      ...artifact,
+      content_base64: "",
+      storage_note: "Binary content omitted from Gist fallback. Configure SQL/object storage for durable artifact bytes.",
+    })),
+  };
+
   const response = await fetch(`https://api.github.com/gists/${gistId}`, {
     method: "PATCH",
     headers: {
@@ -321,7 +335,7 @@ async function writeGistStore(store: SpearStore) {
     body: JSON.stringify({
       files: {
         [GIST_FILENAME]: {
-          content: `${JSON.stringify(store, null, 2)}\n`,
+          content: `${JSON.stringify(compactStore, null, 2)}\n`,
         },
       },
     }),
