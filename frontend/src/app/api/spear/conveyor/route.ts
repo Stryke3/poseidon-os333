@@ -14,6 +14,7 @@ import {
 } from "@/lib/poseidon-store";
 import { buildConveyorPacket, packetFilename } from "@/lib/services/packet/conveyor-packets";
 import { isSpearApiAuthFailure, requireSpearApiAuth } from "@/lib/spear-auth";
+import { authorizationGate } from "@/lib/trident/authorization";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +85,12 @@ async function jsonAction(body: Record<string, unknown>) {
 
   const caseRecord = await getCase(caseId);
   if (!caseRecord) return NextResponse.json({ ok: false, error: "Case not found", case_id: caseId }, { status: 404 });
+  const gate = authorizationGate(caseRecord);
+  const gatedActions = new Set(["generate_provider_packet", "request_provider_signature", "generate_billing_packet", "generate_pod", "record_delivery", "stage_tebra", "finalize_bill_ready"]);
+  if (gatedActions.has(action) && !gate.cleared) {
+    await appendWorkflowEvent(caseRecord.id, "authorization_gate_blocked_action", { action, authorization_status: gate.status, reason: gate.reason });
+    return NextResponse.json({ ok: false, action, error: gate.reason, authorization_gate: gate }, { status: 423 });
+  }
 
   if (action === "run_trident_review") {
     const review = await runCompletenessReview(caseRecord);

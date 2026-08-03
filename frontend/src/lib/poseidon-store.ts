@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Pool as PgPool } from "pg";
 
 export type SpearCaseStatus =
@@ -62,7 +62,7 @@ export type SpearCase = {
   [key: string]: unknown;
 };
 
-type WorkflowEvent = {
+export type WorkflowEvent = {
   id: string;
   case_id: string;
   event_type: string;
@@ -91,6 +91,11 @@ export type StoredDocument = {
   content_type: string;
   size: number;
   content_base64: string;
+  sha256?: string;
+  storage_ref?: string;
+  storage_note?: string;
+  storage_status?: string;
+  metadata?: Record<string, unknown>;
   created_at: string;
 };
 
@@ -102,6 +107,9 @@ export type StoredArtifact = {
   content_type: string;
   size: number;
   content_base64: string;
+  sha256?: string;
+  storage_ref?: string;
+  storage_note?: string;
   metadata: Record<string, unknown>;
   created_at: string;
 };
@@ -130,6 +138,7 @@ const GIST_RAW_OWNER = process.env.SPEAR_STORE_GIST_OWNER || "Stryke3";
 const SQL_STORE_KEY = process.env.SPEAR_SQL_STORE_KEY || "spear-production";
 
 type SpearStore = {
+  revision: number;
   cases: SpearCase[];
   events: WorkflowEvent[];
   trident_reviews: TridentReview[];
@@ -166,6 +175,7 @@ function hasGistStore() {
 
 function emptyStore(): SpearStore {
   return {
+    revision: 0,
     cases: [],
     events: [],
     trident_reviews: [],
@@ -176,6 +186,28 @@ function emptyStore(): SpearStore {
     master_data: emptyMasterData(),
   };
 }
+
+function mergeRecords<T extends { id: string; updated_at?: string; created_at?: string }>(current: T[], incoming: T[]) {
+  const merged = new Map(current.map((record) => [record.id, record]));
+  for (const record of incoming) {
+    const existing = merged.get(record.id);
+    if (!existing) { merged.set(record.id, record); continue; }
+    const existingTime = Date.parse(existing.updated_at || existing.created_at || "") || 0;
+    const incomingTime = Date.parse(record.updated_at || record.created_at || "") || 0;
+    if (incomingTime >= existingTime) merged.set(record.id, { ...existing, ...record });
+  }
+  return Array.from(merged.values());
+}
+
+function mergeStores(current: SpearStore, incoming: SpearStore): SpearStore {
+  return { ...emptyStore(), ...current, ...incoming, revision: Math.max(current.revision || 0, incoming.revision || 0) + 1,
+    cases: mergeRecords(current.cases || [], incoming.cases || []), events: mergeRecords(current.events || [], incoming.events || []),
+    trident_reviews: mergeRecords(current.trident_reviews || [], incoming.trident_reviews || []), training_events: mergeRecords(current.training_events || [], incoming.training_events || []),
+    documents: mergeRecords(current.documents || [], incoming.documents || []), artifacts: mergeRecords(current.artifacts || [], incoming.artifacts || []),
+    trident_aggregates: { ...(current.trident_aggregates || {}), ...(incoming.trident_aggregates || {}) }, master_data: incoming.master_data || current.master_data || emptyMasterData() };
+}
+function binaryStorageRef(id: string) { return `spear-binary-${id}.b64`; }
+function binarySha256(content: Buffer) { return createHash("sha256").update(content).digest("hex"); }
 
 function emptyMasterData(): SpearMasterData {
   return {
@@ -252,15 +284,15 @@ async function readSqlStore(): Promise<SpearStore> {
 async function writeSqlStore(store: SpearStore) {
   await ensureSqlStore();
   const pool = await getSqlPool();
-  await pool.query(
-    `
-      insert into spear_store_snapshots (store_key, store, updated_at)
-      values ($1, $2::jsonb, now())
-      on conflict (store_key)
-      do update set store = excluded.store, updated_at = now()
-    `,
-    [SQL_STORE_KEY, JSON.stringify({ ...emptyStore(), ...store })],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const locked = await client.query("select store from spear_store_snapshots where store_key = $1 for update", [SQL_STORE_KEY]);
+    const merged = mergeStores({ ...emptyStore(), ...(locked.rows[0]?.store || {}) }, store);
+    await client.query(`insert into spear_store_snapshots (store_key, store, updated_at) values ($1, $2::jsonb, now()) on conflict (store_key) do update set store = excluded.store, updated_at = now()`, [SQL_STORE_KEY, JSON.stringify(merged)]);
+    await client.query("commit");
+  } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
+  finally { client.release(); }
 }
 
 async function readGistStore(): Promise<SpearStore> {
@@ -310,18 +342,12 @@ async function writeGistStore(store: SpearStore) {
   const token = process.env.SPEAR_GITHUB_TOKEN;
   if (!gistId || !token) return;
 
-  const compactStore = {
-    ...store,
-    documents: store.documents.map((document) => ({
-      ...document,
-      content_base64: "",
-      storage_note: "Binary content omitted from Gist fallback. Configure SQL/object storage for durable document bytes.",
-    })),
-    artifacts: store.artifacts.map((artifact) => ({
-      ...artifact,
-      content_base64: "",
-      storage_note: "Binary content omitted from Gist fallback. Configure SQL/object storage for durable artifact bytes.",
-    })),
+  const mergedStore = mergeStores(await readGistStore().catch(() => emptyStore()), store);
+  const binaryFiles: Record<string, { content: string }> = {};
+  for (const record of [...mergedStore.documents, ...mergedStore.artifacts]) if (record.content_base64) binaryFiles[record.storage_ref || binaryStorageRef(record.id)] = { content: record.content_base64 };
+  const compactStore = { ...mergedStore,
+    documents: mergedStore.documents.map((document) => ({ ...document, content_base64: "", storage_ref: document.storage_ref || binaryStorageRef(document.id), storage_note: "Exact bytes are stored as a separate private Gist payload. Configure Postgres/object storage for stronger production durability." })),
+    artifacts: mergedStore.artifacts.map((artifact) => ({ ...artifact, content_base64: "", storage_ref: artifact.storage_ref || binaryStorageRef(artifact.id), storage_note: "Exact bytes are stored as a separate private Gist payload. Configure Postgres/object storage for stronger production durability." })),
   };
 
   const response = await fetch(`https://api.github.com/gists/${gistId}`, {
@@ -334,6 +360,7 @@ async function writeGistStore(store: SpearStore) {
     },
     body: JSON.stringify({
       files: {
+        ...binaryFiles,
         [GIST_FILENAME]: {
           content: `${JSON.stringify(compactStore, null, 2)}\n`,
         },
@@ -345,6 +372,19 @@ async function writeGistStore(store: SpearStore) {
   if (!response.ok) {
     throw new Error(`SPEAR store write failed: GitHub returned ${response.status}`);
   }
+}
+
+async function hydrateGistBinary<T extends { content_base64: string; storage_ref?: string }>(record: T): Promise<T> {
+  if (!hasGistStore() || record.content_base64 || !record.storage_ref) return record;
+  const gistId = process.env.SPEAR_STORE_GIST_ID, token = process.env.SPEAR_GITHUB_TOKEN;
+  if (!gistId || !token) return record;
+  const response = await fetch(`https://api.github.com/gists/${gistId}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }, cache: "no-store" });
+  if (!response.ok) throw new Error(`SPEAR binary read failed: GitHub returned ${response.status}`);
+  const gist = await response.json(), file = gist?.files?.[record.storage_ref];
+  let content = typeof file?.content === "string" && !file?.truncated ? file.content : "";
+  if (!content && typeof file?.raw_url === "string") { const raw = await fetch(file.raw_url, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" }); if (raw.ok) content = await raw.text(); }
+  if (!content) throw new Error(`Stored binary payload ${record.storage_ref} is unavailable.`);
+  return { ...record, content_base64: content.trim() };
 }
 
 async function ensureStore() {
@@ -476,6 +516,27 @@ function missingFieldsFor(payload: Partial<SpearCase>) {
   return missing;
 }
 
+function withWorkflowDomains(patch: Partial<SpearCase>): Partial<SpearCase> {
+  const next: Partial<SpearCase> = { ...patch };
+  const overall = String(patch.status || "");
+  if (["provider_packet_generated", "provider_signature_requested", "signed_swo_received"].includes(overall)) next.provider_signature_status = overall.toUpperCase();
+  if (["ready_to_fulfill", "billing_packet_generated", "pod_needed", "pod_generated", "delivery_recorded"].includes(overall)) next.fulfillment_delivery_status = overall.toUpperCase();
+  if (["pod_needed", "pod_generated", "signed_pod_received"].includes(overall)) next.pod_status = overall.toUpperCase();
+  if (["tebra_ready", "staged_for_upload", "ready_to_bill"].includes(overall)) next.billing_tebra_status = overall.toUpperCase();
+  const authorization = String(patch.authorization_status || patch.auth_status || "").toUpperCase();
+  if (!authorization) return next;
+  if (["RECEIVED", "INTAKE_VALIDATION", "ROUTE_DETERMINED", "PACKET_BUILDING", "PACKET_REVIEW_REQUIRED", "REVIEWER_CERTIFIED"].includes(authorization)) {
+    next.trident_production_status = authorization;
+  }
+  if (["SUBMISSION_QUEUED", "SUBMISSION_SENT", "DELIVERY_CONFIRMED", "SUBMISSION_FAILED"].includes(authorization)) {
+    next.payer_submission_status = authorization;
+  }
+  if (["PAYER_DISPOSITION_PENDING", "PAYER_NO_AUTH_REQUIRED_VERIFIED", "AUTHORIZED", "PARTIALLY_AUTHORIZED", "DENIED", "ADDITIONAL_INFORMATION_REQUESTED", "CONCURRENT_REVIEW_PENDING", "RETRO_REVIEW_PENDING", "CLAIMS_REVIEW_PENDING", "APPEAL_REQUIRED"].includes(authorization)) {
+    next.payer_disposition_status = authorization;
+  }
+  return next;
+}
+
 export async function listCases(): Promise<SpearCase[]> {
   const records = await readArray<SpearCase>(CASES_PATH);
   if (records.length === 0 && process.env.POSEIDON_SEED_DEMO === "true") {
@@ -510,7 +571,7 @@ export async function saveDocument(input: {
   content_type: string;
   content: Buffer;
 }): Promise<StoredDocument> {
-  const document = {
+  const document: StoredDocument = {
     id: `doc_${randomUUID()}`,
     case_id: input.case_id,
     kind: input.kind,
@@ -518,6 +579,8 @@ export async function saveDocument(input: {
     content_type: input.content_type,
     size: input.content.length,
     content_base64: input.content.toString("base64"),
+    sha256: binarySha256(input.content),
+    storage_ref: binaryStorageRef(`doc_${binarySha256(input.content).slice(0, 24)}`),
     created_at: new Date().toISOString(),
   };
   if (hasRemoteStore()) {
@@ -558,14 +621,17 @@ export async function savePendingIntakeDocument(input: {
   metadata?: Record<string, unknown>;
 }): Promise<StoredDocument> {
   const records = await readArray<StoredDocument>(DOCUMENTS_PATH);
-  const document = {
-    id: `doc_${randomUUID()}`,
+  const documentId = `doc_${randomUUID()}`;
+  const document: StoredDocument = {
+    id: documentId,
     case_id: `pending_${randomUUID()}`,
     kind: "source_intake",
     filename: input.filename,
     content_type: input.content_type,
     size: input.content.length,
     content_base64: input.content.toString("base64"),
+    sha256: binarySha256(input.content),
+    storage_ref: binaryStorageRef(documentId),
     created_at: new Date().toISOString(),
     storage_status: "stored",
     metadata: input.metadata || {},
@@ -626,7 +692,8 @@ export async function listDocuments(caseId?: string): Promise<StoredDocument[]> 
 
 export async function getDocument(documentId: string): Promise<StoredDocument | null> {
   const records = await listDocuments();
-  return records.find((record) => record.id === documentId) ?? null;
+  const record = records.find((item) => item.id === documentId);
+  return record ? hydrateGistBinary(record) : null;
 }
 
 export async function saveArtifact(input: {
@@ -637,14 +704,17 @@ export async function saveArtifact(input: {
   content: Buffer;
   metadata?: Record<string, unknown>;
 }): Promise<StoredArtifact> {
-  const artifact = {
-    id: `art_${randomUUID()}`,
+  const artifactId = `art_${randomUUID()}`;
+  const artifact: StoredArtifact = {
+    id: artifactId,
     case_id: input.case_id,
     kind: input.kind,
     filename: input.filename,
     content_type: input.content_type,
     size: input.content.length,
     content_base64: input.content.toString("base64"),
+    sha256: binarySha256(input.content),
+    storage_ref: binaryStorageRef(artifactId),
     metadata: input.metadata || {},
     created_at: new Date().toISOString(),
   };
@@ -689,17 +759,21 @@ export async function saveArtifacts(inputs: Array<{
 }>): Promise<StoredArtifact[]> {
   if (inputs.length === 0) return [];
   const createdAt = new Date().toISOString();
-  const artifacts = inputs.map((input) => ({
-    id: `art_${randomUUID()}`,
+  const artifacts: StoredArtifact[] = inputs.map((input) => {
+    const artifactId = `art_${randomUUID()}`;
+    return ({
+    id: artifactId,
     case_id: input.case_id,
     kind: input.kind,
     filename: input.filename,
     content_type: input.content_type,
     size: input.content.length,
     content_base64: input.content.toString("base64"),
+    sha256: binarySha256(input.content),
+    storage_ref: binaryStorageRef(artifactId),
     metadata: input.metadata || {},
     created_at: createdAt,
-  }));
+  }); });
   if (hasRemoteStore()) {
     const store = await readRemoteStore();
     store.artifacts.push(...artifacts);
@@ -734,11 +808,39 @@ export async function listArtifacts(caseId?: string): Promise<StoredArtifact[]> 
 
 export async function getArtifact(artifactId: string): Promise<StoredArtifact | null> {
   const records = await listArtifacts();
-  return records.find((record) => record.id === artifactId) ?? null;
+  const record = records.find((item) => item.id === artifactId);
+  return record ? hydrateGistBinary(record) : null;
+}
+
+export function buildIntakeIdempotencyKey(payload: Record<string, unknown>) {
+  const source = textField(payload, "source", "intake_source").toLowerCase() || "spear_intake";
+  const sourceReference = textField(payload, "source_reference", "external_id", "fax_id", "message_id", "document_id");
+  const identity = [
+    source,
+    sourceReference,
+    textField(payload, "patient_id", "external_patient_id", "member_id").toLowerCase(),
+    textField(payload, "order_id", "external_order_id").toLowerCase(),
+    textField(payload, "order_date", "date_of_service"),
+    textField(payload, "patient_name", "patient").toLowerCase(),
+    textField(payload, "dob", "date_of_birth"),
+  ].join("|");
+  return createHash("sha256").update(identity).digest("hex");
 }
 
 export async function createCaseFromIntake(payload: Record<string, unknown>): Promise<SpearCase> {
-  const record = normalizeCase(payload);
+  const idempotencyKey = textField(payload, "intake_idempotency_key") || buildIntakeIdempotencyKey(payload);
+  const deterministicPayload = {
+    ...payload,
+    id: textField(payload, "id", "case_id") || `case_${idempotencyKey.slice(0, 24)}`,
+    order_id: textField(payload, "order_id") || `ord_${idempotencyKey.slice(0, 24)}`,
+    intake_idempotency_key: idempotencyKey,
+  };
+  const existing = (await listCases()).find((item) => item.intake_idempotency_key === idempotencyKey || item.id === deterministicPayload.id);
+  if (existing) {
+    await appendWorkflowEvent(existing.id, "duplicate_intake_ignored", { intake_idempotency_key: idempotencyKey, source: payload.source || "spear_intake" });
+    return { ...existing, _duplicate_intake: true };
+  }
+  const record = normalizeCase(deterministicPayload);
   if (hasRemoteStore()) {
     const store = await readRemoteStore();
     store.cases.unshift(record);
@@ -776,6 +878,7 @@ function normalizeCase(payload: Record<string, unknown>): SpearCase {
   const icd = finalIcd?.length ? finalIcd : sourceIcd;
   const codingPending = !finalHcpcs?.length;
   const base: Partial<SpearCase> = {
+    ...payload,
     id: textField(payload, "id", "case_id") || `case_${randomUUID()}`,
     order_id: textField(payload, "order_id") || `ord_${randomUUID()}`,
     patient_name: textField(payload, "patient_name", "patient"),
@@ -831,10 +934,23 @@ function normalizeCase(payload: Record<string, unknown>): SpearCase {
     source_document_id: optionalText(payload, "source_document_id", "document_id"),
     extraction_result: objectField(payload, "extraction_result"),
     operator_corrections: Array.isArray(payload.operator_corrections) ? payload.operator_corrections : [],
+    requested_line_items: Array.isArray(payload.requested_line_items) ? payload.requested_line_items : hcpcs.map((code, index) => ({
+      id: `line_${createHash("sha256").update(`${textField(payload, "id", "case_id", "order_id")}|${code}|${index}`).digest("hex").slice(0, 20)}`,
+      hcpcs: code,
+      diagnoses: icd,
+      status: "TRIDENT_INTAKE_VALIDATION",
+    })),
     patient_match_decision: optionalText(payload, "patient_match_decision"),
     matched_case_id: optionalText(payload, "matched_case_id"),
     priority: optionalText(payload, "priority") || "standard",
     billing_status: textField(payload, "billing_status") || "not_ready",
+    intake_documentation_status: textField(payload, "intake_documentation_status") || "RECEIVED",
+    trident_production_status: textField(payload, "trident_production_status") || "INTAKE_VALIDATION",
+    payer_submission_status: textField(payload, "payer_submission_status") || "NOT_SUBMITTED",
+    payer_disposition_status: textField(payload, "payer_disposition_status") || "PENDING",
+    provider_signature_status: textField(payload, "provider_signature_status") || "NOT_REQUESTED",
+    fulfillment_delivery_status: textField(payload, "fulfillment_delivery_status") || "BLOCKED_AUTHORIZATION",
+    billing_tebra_status: textField(payload, "billing_tebra_status") || "NOT_READY",
     trident_status: textField(payload, "trident_status") || "pending",
     pod_status: textField(payload, "pod_status") || "not_started",
     tebra_status: textField(payload, "tebra_status") || "not_staged",
@@ -852,13 +968,14 @@ function normalizeCase(payload: Record<string, unknown>): SpearCase {
 }
 
 export async function updateCase(caseId: string, patch: Partial<SpearCase>): Promise<SpearCase | null> {
+  const domainPatch = withWorkflowDomains(patch);
   if (hasRemoteStore()) {
     const store = await readRemoteStore();
     const index = store.cases.findIndex((record) => record.id === caseId || record.order_id === caseId);
     if (index === -1) return null;
-    const updated = {
+    const updated: SpearCase = {
       ...store.cases[index],
-      ...patch,
+      ...domainPatch,
       updated_at: new Date().toISOString(),
     };
     store.cases[index] = updated;
@@ -869,9 +986,9 @@ export async function updateCase(caseId: string, patch: Partial<SpearCase>): Pro
   const records = await readArray<SpearCase>(CASES_PATH);
   const index = records.findIndex((record) => record.id === caseId || record.order_id === caseId);
   if (index === -1) return null;
-  const updated = {
+  const updated: SpearCase = {
     ...records[index],
-    ...patch,
+    ...domainPatch,
     updated_at: new Date().toISOString(),
   };
   records[index] = updated;
@@ -885,22 +1002,30 @@ export async function updateCaseAndAppendEvent(
   eventType: string,
   payload: unknown,
 ): Promise<{ case: SpearCase | null; event: WorkflowEvent | null }> {
-  const event = {
-    id: `evt_${randomUUID()}`,
-    case_id: caseId,
-    event_type: eventType,
-    payload,
-    created_at: new Date().toISOString(),
-  };
-
+  const domainPatch = withWorkflowDomains(patch);
   if (hasRemoteStore()) {
     const store = await readRemoteStore();
     const index = store.cases.findIndex((record) => record.id === caseId || record.order_id === caseId);
     if (index === -1) return { case: null, event: null };
-    const updated = {
-      ...store.cases[index],
-      ...patch,
+    const previous = store.cases[index];
+    const updated: SpearCase = {
+      ...previous,
+      ...domainPatch,
       updated_at: new Date().toISOString(),
+    };
+    const event: WorkflowEvent = {
+      id: `evt_${randomUUID()}`,
+      case_id: caseId,
+      event_type: eventType,
+      payload: {
+        ...(payload && typeof payload === "object" ? payload as Record<string, unknown> : { detail: payload }),
+        previous_status: previous.status,
+        next_status: updated.status,
+        previous_authorization_status: previous.authorization_status || previous.auth_status || null,
+        next_authorization_status: updated.authorization_status || updated.auth_status || null,
+        changed_fields: Object.keys(domainPatch),
+      },
+      created_at: new Date().toISOString(),
     };
     store.cases[index] = updated;
     store.events.push(event);
@@ -911,14 +1036,23 @@ export async function updateCaseAndAppendEvent(
   const records = await readArray<SpearCase>(CASES_PATH);
   const index = records.findIndex((record) => record.id === caseId || record.order_id === caseId);
   if (index === -1) return { case: null, event: null };
-  const updated = {
-    ...records[index],
-    ...patch,
+  const previous = records[index];
+  const updated: SpearCase = {
+    ...previous,
+    ...domainPatch,
     updated_at: new Date().toISOString(),
   };
   records[index] = updated;
   await writeArray(CASES_PATH, records);
-  await appendWorkflowEvent(caseId, eventType, payload);
+  const eventPayload = {
+    ...(payload && typeof payload === "object" ? payload as Record<string, unknown> : { detail: payload }),
+    previous_status: previous.status,
+    next_status: updated.status,
+    previous_authorization_status: previous.authorization_status || previous.auth_status || null,
+    next_authorization_status: updated.authorization_status || updated.auth_status || null,
+    changed_fields: Object.keys(domainPatch),
+  };
+  const event = await appendWorkflowEvent(caseId, eventType, eventPayload);
   return { case: updated, event };
 }
 
@@ -1099,8 +1233,42 @@ export async function updateTrainingAggregates(payload: Record<string, unknown>)
 export async function getMetrics() {
   const records = await listCases();
   const normal = records.filter((record) => !record.archived && !String(record.patient_name || "").toLowerCase().includes("test patient") && !String(record.patient_name || "").toLowerCase().includes("synthetic") && !String(record.patient_name || "").toLowerCase().includes("validation"));
+  const events = await listWorkflowEvents();
+  const productionEvents = events.filter((event) => normal.some((record) => record.id === event.case_id));
+  const authorizationFinal = ["PAYER_NO_AUTH_REQUIRED_VERIFIED", "AUTHORIZED", "PARTIALLY_AUTHORIZED", "DENIED", "ADDITIONAL_INFORMATION_REQUESTED", "CONCURRENT_REVIEW_PENDING", "RETRO_REVIEW_PENDING", "CLAIMS_REVIEW_PENDING", "APPEAL_REQUIRED"];
+  const averageHours = (startTypes: string[], endTypes: string[]) => {
+    const durations = normal.flatMap((record) => {
+      const caseEvents = productionEvents.filter((event) => event.case_id === record.id);
+      const start = caseEvents.filter((event) => startTypes.includes(event.event_type)).sort((a, b) => a.created_at.localeCompare(b.created_at))[0]?.created_at || (startTypes.includes("case_created") ? record.created_at : "");
+      const end = caseEvents.filter((event) => endTypes.includes(event.event_type)).sort((a, b) => a.created_at.localeCompare(b.created_at))[0]?.created_at || "";
+      const elapsed = Date.parse(end) - Date.parse(start);
+      return elapsed >= 0 ? [elapsed / 36e5] : [];
+    });
+    return durations.length ? Number((durations.reduce((sum, value) => sum + value, 0) / durations.length).toFixed(2)) : 0;
+  };
+  const agingByStage = Object.fromEntries(Object.entries(normal.reduce<Record<string, { total: number; count: number }>>((groups, record) => {
+    const key = String(record.status || "unknown");
+    const days = Math.max(0, (Date.now() - Date.parse(record.updated_at || record.created_at)) / 86_400_000);
+    groups[key] = groups[key] || { total: 0, count: 0 }; groups[key].total += days; groups[key].count += 1; return groups;
+  }, {})).map(([stage, row]) => [stage, Number((row.total / row.count).toFixed(1))]));
+  const casesByPosture = normal.reduce<Record<string, number>>((groups, record) => { const posture = String(record.authorization_route || (record.authorization_route_decision as Record<string, unknown> | undefined)?.route || "undetermined"); groups[posture] = (groups[posture] || 0) + 1; return groups; }, {});
+  const outcomes = normal.reduce<Record<string, number>>((groups, record) => { const outcome = String(record.payer_disposition_status || record.authorization_status || "PENDING"); if (authorizationFinal.includes(outcome)) groups[outcome] = (groups[outcome] || 0) + 1; return groups; }, {});
   return {
     open_cases: normal.filter((record) => record.status !== "closed").length,
+    total_active_cases: normal.filter((record) => record.status !== "closed").length,
+    new_cases: normal.filter((record) => ["created", "intake_received", "missing_docs", "trident_review"].includes(record.status)).length,
+    cases_by_procedural_posture: casesByPosture,
+    documentation_deficiencies: normal.filter((record) => record.missing_fields.length > 0 || record.authorization_status === "BLOCKED_MISSING_DOCUMENTATION").length,
+    packets_awaiting_certification: normal.filter((record) => record.authorization_status === "PACKET_REVIEW_REQUIRED").length,
+    submissions_awaiting_confirmation: normal.filter((record) => ["SUBMISSION_QUEUED", "SUBMISSION_SENT"].includes(String(record.authorization_status || ""))).length,
+    authorization_outcomes: outcomes,
+    denials_and_appeals: normal.filter((record) => ["DENIED", "APPEAL_REQUIRED"].includes(String(record.authorization_status || ""))).length,
+    deliveries_pending_pod: normal.filter((record) => ["pod_needed", "pod_generated", "delivery_recorded"].includes(record.status) && record.pod_status !== "signed").length,
+    average_intake_to_packet_hours: averageHours(["case_created"], ["authorization_packet_built"]),
+    average_packet_to_submission_hours: averageHours(["authorization_packet_built"], ["authorization_submission_sent"]),
+    average_submission_to_disposition_hours: averageHours(["authorization_submission_sent"], ["authorization_payer_disposition_recorded", "authorization_no_auth_required_verified"]),
+    aging_by_workflow_stage_days: agingByStage,
+    authorization_exceptions: normal.filter((record) => String(record.authorization_status || "").startsWith("BLOCKED_") || record.authorization_status === "SUBMISSION_FAILED").length,
     missing_docs: normal.filter((record) => record.status === "missing_docs" || record.missing_fields.length > 0).length,
     trident_review: normal.filter((record) => record.status === "trident_review" || record.trident_status === "pending").length,
     ready_to_fulfill: normal.filter((record) => record.status === "ready_to_fulfill").length,
@@ -1114,6 +1282,42 @@ export async function getMetrics() {
     ready_to_bill: normal.filter((record) => record.status === "ready_to_bill").length,
     blocked_cases: normal.filter((record) => record.status === "blocked_missing_fields" || record.missing_fields.length > 0).length,
   };
+}
+
+export async function getRevenueMetrics() {
+  const records = (await listCases()).filter((record) => !isNonProductionRecord(record));
+  const authorizationEvents = await listWorkflowEvents();
+  const money = (value: unknown) => Number(value || 0) || 0;
+  const submitted = records.filter((record) => ["tebra_ready", "staged_for_upload", "ready_to_bill", "closed"].includes(record.status) || ["staged_not_submitted", "staged_for_upload", "submitted"].includes(String(record.tebra_status || "")));
+  const paid = records.filter((record) => String(record.revenue_outcome || record.claim_status || "").toLowerCase() === "paid");
+  const denied = records.filter((record) => String(record.revenue_outcome || record.claim_status || "").toLowerCase().includes("deni"));
+  const allowedTotal = records.reduce((sum, record) => sum + money(record.allowed_amount), 0);
+  const paidTotal = records.reduce((sum, record) => sum + money(record.paid_amount), 0);
+  return {
+    source: "spear_persisted_case_store",
+    total_cases: records.length,
+    submitted_cases: submitted.length,
+    paid_cases: paid.length,
+    denied_cases: denied.length,
+    gross_charges: records.reduce((sum, record) => sum + money(record.charge_amount || record.billed_amount), 0),
+    allowed_amount: allowedTotal,
+    paid_amount: paidTotal,
+    outstanding_amount: Math.max(0, allowedTotal - paidTotal),
+    denial_rate: submitted.length ? denied.length / submitted.length : 0,
+    collection_rate: allowedTotal ? paidTotal / allowedTotal : 0,
+    authorization_delivery_confirmed: authorizationEvents.filter((event) => event.event_type === "authorization_delivery_confirmed").length,
+    generated_at: new Date().toISOString(),
+  };
+}
+
+function isNonProductionRecord(record: SpearCase) {
+  const haystack = `${record.patient_name || ""} ${record.member_id || ""} ${record.source || ""}`.toLowerCase();
+  return record.archived === true || record.synthetic === true || /test patient|synthetic|validation/.test(haystack);
+}
+
+export async function findCaseByFaxProviderId(providerId: string): Promise<SpearCase | null> {
+  const records = await listCases();
+  return records.find((record) => [record.authorization_fax_provider_id, record.fax_provider_id, record.authorization_submission_id].some((value) => String(value || "") === providerId)) || null;
 }
 
 export async function getStoreSnapshot() {

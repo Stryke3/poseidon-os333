@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { correlationHeaders, internalApiKeyHeaders } from "@/lib/proxy-headers";
 import { getServiceBaseUrl } from "@/lib/runtime-config";
+import { findCaseByFaxProviderId, updateCaseAndAppendEvent } from "@/lib/poseidon-store";
 
 function secureCompare(left: string, right: string) {
   if (left.length !== right.length) return false;
@@ -88,11 +89,45 @@ export async function POST(req: NextRequest) {
   const event = String(body.event || "");
 
   if (event === "FAX_COMPLETED" && String(fax.direction || "").toUpperCase() === "OUTBOUND") {
+    const providerId = String(fax.id || body.id || body.faxId || "");
+    const caseRecord = providerId ? await findCaseByFaxProviderId(providerId) : null;
+    const providerStatus = String(fax.status || body.status || "UNKNOWN").toUpperCase();
+    const failureReason = String(fax.errorCode || fax.failureReason || body.error || "").trim();
+    const delivered = ["COMPLETED", "DELIVERED", "SUCCESS"].includes(providerStatus) && !failureReason;
+    if (caseRecord && delivered) {
+      const receipt = {
+        provider: "sinch",
+        provider_id: providerId,
+        status: providerStatus,
+        pages: Number(fax.numberOfPages || body.numberOfPages || 0) || null,
+        completed_at: String(fax.completedTime || body.eventTime || new Date().toISOString()),
+        reference: String(fax.reference || fax.resultCode || "") || null,
+      };
+      await updateCaseAndAppendEvent(caseRecord.id, {
+        authorization_status: "DELIVERY_CONFIRMED",
+        auth_status: "DELIVERY_CONFIRMED",
+        authorization_delivery_status: providerStatus,
+        authorization_delivery_confirmed_at: receipt.completed_at,
+        authorization_delivery_receipt: receipt,
+      }, "authorization_delivery_confirmed", { actor: "sinch_webhook", ...receipt });
+      await updateCaseAndAppendEvent(caseRecord.id, {
+        authorization_status: "PAYER_DISPOSITION_PENDING",
+        auth_status: "PAYER_DISPOSITION_PENDING",
+      }, "authorization_payer_disposition_pending", { actor: "sinch_webhook", provider_id: providerId });
+    } else if (caseRecord) {
+      await updateCaseAndAppendEvent(caseRecord.id, {
+        authorization_status: "SUBMISSION_FAILED",
+        auth_status: "SUBMISSION_FAILED",
+        authorization_delivery_status: providerStatus,
+        authorization_last_failure: failureReason || "Provider completion event did not confirm delivery.",
+      }, "authorization_submission_failed", { actor: "sinch_webhook", provider_id: providerId, provider_status: providerStatus, failure_reason: failureReason || null });
+    }
     return NextResponse.json({
       received: true,
-      ignored: true,
-      reason: "Outbound completion callback handled without creating an inbound fax record.",
-      id: fax.id || null,
+      handled: Boolean(caseRecord),
+      delivered,
+      reason: caseRecord ? "Outbound authorization delivery state updated." : "No SPEAR case matched the outbound provider ID.",
+      id: providerId || null,
     });
   }
 

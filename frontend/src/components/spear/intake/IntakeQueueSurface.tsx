@@ -344,6 +344,8 @@ function inferOrderType(text: string, hcpcsList: string[]) {
   return hcpcsList[0] ? `HCPCS ${hcpcsList[0]}` : ""
 }
 
+// Retained as the deterministic fallback parser for rollback compatibility.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function extractFromText(raw: string, result?: LegacyOcrResult): { stage: StagedIntake; signals: ParsedSignal[]; rawText: string } {
   const rawText = raw || result?.rawText || result?.raw_text_preview || ""
   const patientName =

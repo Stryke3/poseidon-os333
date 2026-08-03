@@ -2,8 +2,6 @@
 
 import React, { useEffect, useState } from "react"
 
-const API_BASE = "https://api.strykefox.com/api/v1/spear"
-
 function fmt(val: unknown): string {
   if (val === null || val === undefined || val === "") return "--"
   return String(val)
@@ -15,12 +13,12 @@ export function SpearRevenueSupport() {
   const [unavailable, setUnavailable] = useState(false)
 
   useEffect(() => {
-    fetch(`${API_BASE}/revenue`)
+    fetch("/api/spear/revenue", { cache: "no-store" })
       .then((r) => (r.ok ? (r.json() as Promise<Record<string, unknown>>) : Promise.resolve(null)))
       .catch(() => null)
       .then((d) => {
         if (!d) setUnavailable(true)
-        else setData(d)
+        else setData((d.metrics && typeof d.metrics === "object" ? d.metrics : d) as Record<string, unknown>)
       })
       .finally(() => setLoading(false))
   }, [])
@@ -30,11 +28,11 @@ export function SpearRevenueSupport() {
   }
 
   const cards = [
-    { label: "Tebra Ready", key: "tebra_ready" },
-    { label: "Packet Prep", key: "packet_prep" },
-    { label: "Revenue at Risk", key: "revenue_at_risk" },
-    { label: "Billed This Month", key: "billed_this_month" },
-    { label: "Collected", key: "collected" },
+    { label: "Submitted Cases", key: "submitted_cases" },
+    { label: "Paid Cases", key: "paid_cases" },
+    { label: "Denied Cases", key: "denied_cases" },
+    { label: "Allowed Amount", key: "allowed_amount" },
+    { label: "Collected", key: "paid_amount" },
     { label: "Denial Rate", key: "denial_rate" },
   ]
 

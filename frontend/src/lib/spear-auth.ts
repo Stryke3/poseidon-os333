@@ -1,10 +1,10 @@
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
+import { getSafeServerSession } from "@/lib/auth";
 
 export type SpearAuthResult = {
   ok: boolean;
-  mode: "spear_session" | "nextauth" | "none";
+  mode: "nextauth" | "none";
   user?: {
     id?: string;
     email?: string;
@@ -13,34 +13,16 @@ export type SpearAuthResult = {
   reason?: string;
 };
 
-const SPEAR_SESSION_VALUE = "spear-session-2026";
-
 export async function getSpearAuthFromCookies(): Promise<SpearAuthResult> {
-  const jar = await cookies();
-  const spearSession = jar.get("spear_session")?.value;
-
-  if (spearSession === SPEAR_SESSION_VALUE) {
-    return {
-      ok: true,
-      mode: "spear_session",
-      user: {
-        id: "spear-admin",
-        email: "admin@strykefox.com",
-        role: "admin",
-      },
-    };
-  }
-
-  const nextAuthSession =
-    jar.get("next-auth.session-token")?.value ||
-    jar.get("__Secure-next-auth.session-token")?.value;
-
-  if (nextAuthSession) {
+  const session = await getSafeServerSession();
+  if (session?.user?.id && session.user.role) {
     return {
       ok: true,
       mode: "nextauth",
       user: {
-        role: "operator",
+        id: session.user.id,
+        email: session.user.email || undefined,
+        role: session.user.role,
       },
     };
   }
@@ -48,7 +30,7 @@ export async function getSpearAuthFromCookies(): Promise<SpearAuthResult> {
   return {
     ok: false,
     mode: "none",
-    reason: "Missing SPEAR session.",
+    reason: "Missing or invalid authenticated dashboard session.",
   };
 }
 

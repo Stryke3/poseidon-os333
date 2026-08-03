@@ -18,6 +18,9 @@ export async function POST(req: Request) {
 
   const payload = await req.json().catch(() => ({}));
   const record = await createCaseFromIntake(payload);
+  if (record._duplicate_intake === true) {
+    return NextResponse.json({ ok: true, idempotent_replay: true, case: { ...record, _duplicate_intake: undefined }, case_id: record.id, order_id: record.order_id });
+  }
   await appendWorkflowEvent(record.id, "case_posted", { source: "api/spear/cases" });
 
   return NextResponse.json({

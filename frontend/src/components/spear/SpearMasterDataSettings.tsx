@@ -23,7 +23,7 @@ function labelFor(section: string, row: Record<string, unknown>) {
 function sublineFor(section: string, row: Record<string, unknown>) {
   if (section === "providers") return `NPI: ${row.npi || "setup required"} · Specialty: ${row.specialty || "not set"}`
   if (section === "facilities") return `Aliases: ${Array.isArray(row.aliases) ? row.aliases.join(", ") : "none"}`
-  if (section === "payers") return `Type: ${row.payer_type || "not set"} · Aliases: ${Array.isArray(row.aliases) ? row.aliases.length : 0}`
+  if (section === "payers") return `Type: ${row.payer_type || "not set"} · Route: ${row.authorization_route || "not set"} · Destination: ${row.destination_verified === true ? "verified" : "verification required"}`
   if (section === "kits") return `CarePath: ${row.carepath_id || "not linked"} · Components: ${Array.isArray(row.hcpcs_codes) ? row.hcpcs_codes.length : 0}`
   return String(row.description || row.notes || "Configured record")
 }
@@ -45,7 +45,7 @@ export function SpearMasterDataSettings() {
 
   useEffect(() => {
     void load()
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- initial load only; section changes use the local snapshot
 
   useEffect(() => {
     setJsonDraft(JSON.stringify(data[selected] || [], null, 2))
@@ -113,6 +113,7 @@ export function SpearMasterDataSettings() {
           <p style={{ margin: "10px 0 0", fontSize: 12, color: "#64748B" }}>
             Authorized setup users can add/edit providers, NPIs, aliases, facility relationships, payer aliases, CarePaths, kits, and code-set components here. Do not invent NPIs; leave blank and keep setup status visible until verified.
           </p>
+          {selected === "payers" ? <p style={{ margin: "8px 0 0", fontSize: 12, color: "#92400E", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 7, padding: 9 }}>Authorization routing requires <code>authorization_route</code>, a current policy reference/effective date, and a submission destination with <code>destination_verified: true</code>. Unverified destinations hard-block packet transmission.</p> : null}
         </div>
       </div>
     </div>

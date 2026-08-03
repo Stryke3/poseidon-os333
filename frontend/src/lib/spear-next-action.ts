@@ -3,6 +3,7 @@ import type { SpearCase, StoredArtifact, StoredDocument } from "@/lib/poseidon-s
 export type SpearPrimaryAction =
   | "review_intake"
   | "run_trident_review"
+  | "complete_authorization"
   | "resolve_trident_blockers"
   | "generate_provider_packet"
   | "request_provider_signature"
@@ -31,6 +32,7 @@ export type SpearNextAction = {
 export const WORKFLOW_STEPS = [
   "Intake",
   "Trident",
+  "Authorization",
   "Provider Packet",
   "Provider Signature",
   "Fulfillment",
@@ -108,6 +110,14 @@ function hasArtifact(artifacts: StoredArtifact[], kind: string) {
   return artifacts.some((artifact) => artifact.kind === kind);
 }
 
+function authorizationGate(record: Record<string, unknown>) {
+  const status = String(record.authorization_status || record.auth_status || "RECEIVED").toUpperCase();
+  const noAuthEvidence = record.auth_requirement === "not_required" && Boolean(record.auth_requirement_verified_at && record.auth_requirement_verified_by && record.auth_requirement_evidence_ref && record.auth_requirement_source && record.auth_requirement_verification_method);
+  const override = record.authorization_gate_override === true && Boolean(record.authorization_override_reason && record.authorization_override_by && record.authorization_override_at);
+  const cleared = ["DELIVERY_CONFIRMED", "PAYER_DISPOSITION_PENDING", "AUTHORIZED", "PARTIALLY_AUTHORIZED"].includes(status) || (["PAYER_NO_AUTH_REQUIRED_VERIFIED", "NO_AUTH_REQUIRED_VERIFIED"].includes(status) && noAuthEvidence) || override;
+  return { cleared, status, reason: cleared ? "Authorization transmission or payer disposition clears the gate." : "Confirmed authorization delivery or affirmative no-auth evidence is required before fulfillment or billing." };
+}
+
 function missingFieldBlockers(caseRecord: SpearCase) {
   const blockers: SpearNextAction["blockers"] = [];
   const fields = [
@@ -172,6 +182,7 @@ export function getSpearNextAction(
   const pod = hasArtifact(artifacts, "pod");
   const finalPacket = hasArtifact(artifacts, "final_bill_ready_packet");
   const tebraManifest = hasArtifact(artifacts, "tebra_staging_manifest") || String(caseRecord.tebra_status || "") === "staged_not_submitted";
+  const authGate = authorizationGate(caseRecord);
 
   if (status === "missing_docs" || status === "intake_received" || status === "created") {
     return state(status, {
@@ -207,6 +218,18 @@ export function getSpearNextAction(
   }
 
   if (status === "trident_review_complete") {
+    if (!authGate.cleared) {
+      return state(status, {
+        stageLabel: "Authorization Required",
+        nextActionLabel: "Complete TRIDENT Authorization",
+        explanation: "Determine the verified payer route, build and certify the authorization packet, then confirm delivery and payer disposition before fulfillment.",
+        primaryAction: "complete_authorization",
+        primaryActionEnabled: true,
+        blockerSummary: authGate.reason,
+        blockers: [{ category: "Authorization gate", title: `Authorization status: ${authGate.status}`, detail: authGate.reason, resolution: "Use the TRIDENT Authorization panel to complete the next required authorization step." }],
+        progressIndex: 2,
+      });
+    }
     return state(status, {
       nextActionLabel: arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length ? "Generate Provider Packet" : "Review Trident Coding",
       explanation: arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length ? "Trident has cleared the case. Generate the coding cover, SWO, and addendum." : "Trident recommended a configured kit. Operator coding approval is required before packet generation.",
@@ -214,7 +237,7 @@ export function getSpearNextAction(
       primaryActionEnabled: missing.length === 0 && arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length > 0,
       blockerSummary: missing.length ? "Missing fields still block provider packet generation." : arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length ? "Ready to generate provider packet." : "Coding recommendation needs operator approval.",
       blockers: missing,
-      progressIndex: 2,
+      progressIndex: 3,
     });
   }
 
@@ -336,6 +359,7 @@ export function formatActionLabel(action: SpearPrimaryAction) {
   const labels: Record<SpearPrimaryAction, string> = {
     review_intake: "Review Intake",
     run_trident_review: "Run Trident",
+    complete_authorization: "Complete TRIDENT Authorization",
     resolve_trident_blockers: "Resolve Trident Blockers",
     generate_provider_packet: "Generate Provider Packet",
     request_provider_signature: "Request Provider Signature",

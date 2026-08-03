@@ -3,9 +3,10 @@ import { parseUnpdf } from '@/lib/ocr/unpdf';
 import { parseTesseract } from '@/lib/ocr/tesseract';
 import { parseTextract } from '@/lib/ocr/textract';
 import { extractStructuredFieldsFromText } from '@/lib/intake-extraction';
-import { appendWorkflowEvent, appendWorkflowEvents, attachDocumentToCase, createCaseFromIntake, saveDocument, saveTridentReview, updateCase } from '@/lib/poseidon-store';
+import { appendWorkflowEvent, appendWorkflowEvents, attachDocumentToCase, createCaseFromIntake, listDocuments, readMasterData, saveDocument, saveTridentReview, updateCase } from '@/lib/poseidon-store';
 import { isSpearApiAuthFailure, requireSpearApiAuth } from '@/lib/spear-auth';
 import { getMasterData, normalizePayer, normalizeProviderFacility, recommendConfiguredKit } from '@/lib/spear-master-data';
+import { determineProceduralRoute, payerRuleFor, validateAuthorizationIntake } from '@/lib/trident/authorization';
 
 function firstMatch(text: string, patterns: RegExp[]) {
   for (const pattern of patterns) {
@@ -198,6 +199,18 @@ export async function POST(req: Request) {
   payload.coding_status = "pending_trident";
   payload.status = "trident_review";
   let record = await createCaseFromIntake(payload);
+  if (record._duplicate_intake === true) {
+    return NextResponse.json({
+      ok: true,
+      idempotent_replay: true,
+      patient_id: record.patient_id || `pat_${record.id.replace(/^case_/, "").slice(0, 12)}`,
+      case_id: record.id,
+      order_id: record.order_id,
+      status: record.status,
+      destination: `/spear/cases/${record.id}`,
+      case: { ...record, _duplicate_intake: undefined },
+    });
+  }
   const intakeStatus = record.missing_fields?.length ? "missing_docs" : "trident_review";
   if (record.status !== intakeStatus) {
     record = await updateCase(record.id, {
@@ -380,6 +393,24 @@ export async function POST(req: Request) {
     { event_type: "coding_recommended", payload: { recommended_hcpcs: recommendedHcpcs, conflicts } },
   );
   await appendWorkflowEvents(record.id, intakeEvents);
+  const authorizationRoute = determineProceduralRoute(record);
+  const authorizationMasterData = await readMasterData();
+  const authorizationPayerRule = payerRuleFor(record, authorizationMasterData);
+  const authorizationDocuments = await listDocuments(record.id);
+  const authorizationValidation = validateAuthorizationIntake(record, authorizationDocuments, authorizationPayerRule);
+  const authorizationStatus = authorizationValidation.ok ? "ROUTE_DETERMINED" : authorizationValidation.recommended_status;
+  record = await updateCase(record.id, {
+    authorization_status: authorizationStatus,
+    auth_status: authorizationStatus,
+    authorization_route: authorizationRoute.route,
+    procedural_title: authorizationRoute.title,
+    authorization_route_decision: authorizationRoute,
+    authorization_validation: authorizationValidation,
+  }) || record;
+  await appendWorkflowEvents(record.id, [
+    { event_type: "authorization_intake_validation_completed", payload: { actor: "TRIDENT", validation: authorizationValidation } },
+    { event_type: "authorization_route_determined", payload: { actor: "TRIDENT", route: authorizationRoute, validation: authorizationValidation } },
+  ]);
 
   return NextResponse.json({
     ok: true,

@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import React, { useEffect, useMemo, useState } from "react"
+import { TridentAuthorizationPanel } from "@/components/spear/TridentAuthorizationPanel"
 import { formatActionLabel, getStageLabel, isSyntheticCase, WORKFLOW_STEPS, type SpearNextAction, type SpearPrimaryAction } from "@/lib/spear-next-action"
 
 type Item = Record<string, unknown>
@@ -174,7 +175,7 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
 
   useEffect(() => {
     load()
-  }, [caseId])
+  }, [caseId]) // eslint-disable-line react-hooks/exhaustive-deps -- loading is intentionally keyed only to the route case ID
 
   const c = detail?.case || {}
   const readiness = detail?.readiness
@@ -182,6 +183,11 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
   const finalPacket = useMemo(() => latestByKind(detail?.artifacts || [], "final_bill_ready_packet"), [detail])
 
   async function runAction(action: SpearPrimaryAction) {
+    if (action === "complete_authorization") {
+      document.getElementById("trident-authorization")?.scrollIntoView({ behavior: "smooth", block: "start" })
+      setMessage("Continue in the TRIDENT Authorization panel above.")
+      return
+    }
     if (!detail || action === "review_intake" || action === "resolve_trident_blockers") {
       setMessage("Update missing fields through intake edit tooling before retrying this step.")
       return
@@ -278,6 +284,7 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
       </div>
 
       <div style={{ padding: "24px 32px", display: "grid", gap: 18 }}>
+        <TridentAuthorizationPanel caseId={caseId} />
         <section style={{ border: "1px solid #BFDBFE", background: "#EFF6FF", borderRadius: 12, padding: 18 }}>
           <p style={{ margin: "0 0 8px", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#1D4ED8", fontWeight: 800 }}>Current Stage</p>
           <h2 style={{ margin: "0 0 8px", fontSize: 22 }}>{readiness.stageLabel}</h2>

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { getToken } from "next-auth/jwt";
 
-const PUBLIC = ["/login", "/api/auth", "/api/spear/metrics", "/images"];
+const PUBLIC = ["/login", "/api/auth", "/images", "/api/fax/inbound"];
 const DASHBOARD_ENTRY_REDIRECTS = [
   "/",
   "/carepath",
@@ -15,14 +16,11 @@ const DASHBOARD_ENTRY_REDIRECTS = [
   "/matia",
 ];
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (PUBLIC.some(p => pathname.startsWith(p))) return NextResponse.next();
 
-  const session =
-    req.cookies.get("next-auth.session-token") ??
-    req.cookies.get("__Secure-next-auth.session-token") ??
-    req.cookies.get("spear_session");
+  const session = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
 
   if (!session) {
     return NextResponse.redirect(new URL("/login", req.url));

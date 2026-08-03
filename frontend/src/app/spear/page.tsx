@@ -4,11 +4,18 @@ import Link from "next/link";
 import SpearShellLayout from "@/components/spear/SpearShellLayout";
 
 const PIPELINE = [
-  "Intake","OCR","Match","Optimize","Trident","SWO",
-  "Addendum","Sign","Receive","Deploy","Bill","Close"
+  "Intake","Classify","Match","Trident","Authorize","Sign",
+  "Fulfill","Deliver","POD","Tebra","Bill","Close"
 ];
 
 const METRICS = [
+  { label: "Active Cases",       key: "total_active_cases", href: "/spear/cases" },
+  { label: "New Cases",          key: "new_cases", href: "/spear/intake" },
+  { label: "Missing Evidence",   key: "documentation_deficiencies", href: "/spear/queues" },
+  { label: "Awaiting Review",    key: "packets_awaiting_certification", href: "/spear/queues" },
+  { label: "Awaiting Delivery",  key: "submissions_awaiting_confirmation", href: "/spear/queues" },
+  { label: "Auth Exceptions",    key: "authorization_exceptions", href: "/spear/queues" },
+  { label: "Denials / Appeals",  key: "denials_and_appeals", href: "/spear/queues" },
   { label: "Needs Action",       key: "needsAction", href: "/spear/cases?filter=needs-action" },
   { label: "Awaiting Provider",  key: "awaitingProvider", href: "/spear/cases?filter=awaiting-provider" },
   { label: "Ready to Fulfill",   key: "readyToFulfill", href: "/spear/cases?filter=ready-to-fulfill" },
@@ -84,7 +91,7 @@ export default function CommandPage() {
           Metrics connection warning: {error}
         </div>
       ) : null}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
         {METRICS.map(({ label, key, href }) => (
           <Link key={key} href={href} style={{
             background: "#FFFFFF", border: "1px solid #E2E8F0",
