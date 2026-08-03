@@ -1,19 +1,17 @@
-import { redirect } from "next/navigation"
 import IntakeQueueSurface from "@/components/spear/intake/IntakeQueueSurface"
 import { SpearShellLayout } from "@/components/spear/SpearShellLayout"
-import { getSafeServerSession } from "@/lib/auth"
+import { requireSpearPageAuth } from "@/lib/spear-auth"
 
 export const dynamic = "force-dynamic"
 
 export default async function SpearIntakePage() {
-  const session = await getSafeServerSession()
-  
-  if (!session?.user?.accessToken) {
-    redirect("/login?callbackUrl=/spear/intake")
-  }
+  const auth = await requireSpearPageAuth("/spear/intake")
 
   return (
-    <SpearShellLayout>
+    <SpearShellLayout
+      userName={auth.user?.email ?? auth.user?.id}
+      userEmail={auth.user?.email}
+    >
       <IntakeQueueSurface />
     </SpearShellLayout>
   )

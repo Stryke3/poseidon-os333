@@ -1,57 +1,29 @@
-"use client"
+"use client";
+import React from "react";
+import SpearNavigation from "./SpearNavigation";
 
-import React from "react"
-import { SpearNavigation } from "./SpearNavigation"
-
-const T = {
-  bg: "#05070B",
-  bgSoft: "#080D14", 
-  panel: "#0B1220",
-  panelSoft: "#111827",
-  panelLift: "#151E2E",
-  border: "#243044",
-  borderSoft: "#1A2433",
-  ivory: "#F7F2E8",
-  white: "#FFFFFF",
-  muted: "#A7B0C0",
-  mutedSoft: "#6B7280",
-  gold: "#B89B5E",
-  goldSoft: "#D7C28A",
-  blue: "#132238",
-  blueBright: "#1E3A5F",
-  danger: "#B91C1C",
-  warning: "#C08403",
-  success: "#15803D",
-}
-
-interface SpearShellLayoutProps {
-  children: React.ReactNode
-}
+type SpearShellLayoutProps = {
+  children: React.ReactNode;
+  userName?: string;
+  userEmail?: string;
+};
 
 export function SpearShellLayout({ children }: SpearShellLayoutProps) {
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: T.bg,
-      display: "flex",
-    }}>
-      {/* Sidebar Navigation */}
+    <div style={{ display: "flex", minHeight: "100vh", background: "#F8FAFC" }}>
       <div style={{
-        width: "240px",
-        padding: "24px",
-        borderRight: `1px solid ${T.border}`,
-        background: T.bgSoft,
+        width: 200, minWidth: 200, background: "#FFFFFF",
+        borderRight: "1px solid #E2E8F0", position: "fixed",
+        top: 0, left: 0, height: "100vh", zIndex: 50,
+        display: "flex", flexDirection: "column",
       }}>
         <SpearNavigation />
       </div>
-
-      {/* Main Content */}
-      <div style={{
-        flex: 1,
-        overflow: "auto",
-      }}>
+      <div style={{ marginLeft: 200, flex: 1, padding: "40px 48px", background: "#F8FAFC", minHeight: "100vh" }}>
         {children}
       </div>
     </div>
-  )
+  );
 }
+
+export default SpearShellLayout;

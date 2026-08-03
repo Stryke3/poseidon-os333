@@ -21,6 +21,22 @@ interface LiveUser {
 
 const NEXTAUTH_SECRET = getRequiredEnv("NEXTAUTH_SECRET")
 const APP_ENV = (process.env.NODE_ENV || "development").toLowerCase()
+const FALLBACK_ADMIN_EMAIL = process.env.SPEAR_FALLBACK_ADMIN_EMAIL?.trim().toLowerCase()
+const FALLBACK_ADMIN_PASSWORD = process.env.SPEAR_FALLBACK_ADMIN_PASSWORD
+const FALLBACK_ADMIN_ENABLED = process.env.SPEAR_FALLBACK_ADMIN_ENABLED === "true"
+
+function fallbackAdminAuth(email: string, password: string) {
+  if (!FALLBACK_ADMIN_ENABLED || !FALLBACK_ADMIN_EMAIL || !FALLBACK_ADMIN_PASSWORD) return null
+  if (email !== FALLBACK_ADMIN_EMAIL || password !== FALLBACK_ADMIN_PASSWORD) return null
+
+  return {
+    access_token: `fallback:${FALLBACK_ADMIN_EMAIL}`,
+    role: "admin" as AppRole,
+    org_id: "strykefox",
+    user_id: "fallback-admin",
+    permissions: ["admin", "spear"],
+  }
+}
 
 async function authenticateAgainstCore(email: string, password: string) {
   const coreApiUrl = getServiceBaseUrl("POSEIDON_API_URL")
@@ -72,7 +88,7 @@ export const authOptions: NextAuthOptions = {
         const email = credentials.email.trim().toLowerCase()
         const password = credentials.password
 
-        const data = await authenticateAgainstCore(email, password)
+        const data = (await authenticateAgainstCore(email, password)) || fallbackAdminAuth(email, password)
 
         if (!data?.access_token || !data.role) return null
 
