@@ -777,6 +777,86 @@ export async function saveArtifact(input: {
   return artifact;
 }
 
+export async function saveArtifactAndUpdateCase(input: {
+  case_id: string;
+  kind: string;
+  filename: string;
+  content_type: string;
+  content: Buffer;
+  metadata?: Record<string, unknown>;
+  case_patch: Partial<SpearCase>;
+  event_type: string;
+  event_payload?: Record<string, unknown>;
+}): Promise<{ artifact: StoredArtifact; case: SpearCase | null; event: WorkflowEvent | null }> {
+  const artifact = {
+    id: `art_${randomUUID()}`,
+    case_id: input.case_id,
+    kind: input.kind,
+    filename: input.filename,
+    content_type: input.content_type,
+    size: input.content.length,
+    content_base64: input.content.toString("base64"),
+    metadata: input.metadata || {},
+    created_at: new Date().toISOString(),
+  };
+  const event = {
+    id: `evt_${randomUUID()}`,
+    case_id: input.case_id,
+    event_type: input.event_type,
+    payload: {
+      artifact_id: artifact.id,
+      kind: artifact.kind,
+      filename: artifact.filename,
+      ...(input.event_payload || {}),
+    },
+    created_at: new Date().toISOString(),
+  };
+  const artifactCasePatch = {
+    ...input.case_patch,
+    ...(input.kind === "billing_packet" ? { billing_packet_artifact_id: artifact.id } : {}),
+    ...(input.kind === "pod" ? { pod_artifact_id: artifact.id } : {}),
+    ...(input.kind === "tebra_staging_manifest" ? { tebra_manifest_artifact_id: artifact.id } : {}),
+    ...(input.kind === "final_bill_ready_packet" ? { final_bill_ready_artifact_id: artifact.id } : {}),
+  };
+
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    const index = store.cases.findIndex((record) => record.id === input.case_id || record.order_id === input.case_id);
+    if (index === -1) return { artifact, case: null, event: null };
+    const updated = {
+      ...store.cases[index],
+      ...artifactCasePatch,
+      updated_at: new Date().toISOString(),
+    };
+    store.cases[index] = updated;
+    store.artifacts.push(artifact);
+    store.events.push(event);
+    await writeRemoteStore(store);
+    return { artifact, case: updated, event };
+  }
+
+  const records = await readArray<SpearCase>(CASES_PATH);
+  const index = records.findIndex((record) => record.id === input.case_id || record.order_id === input.case_id);
+  if (index === -1) return { artifact, case: null, event: null };
+  const updated = {
+    ...records[index],
+    ...artifactCasePatch,
+    updated_at: new Date().toISOString(),
+  };
+  records[index] = updated;
+  await writeArray(CASES_PATH, records);
+
+  const artifacts = await readArray<StoredArtifact>(ARTIFACTS_PATH);
+  artifacts.push(artifact);
+  await writeArray(ARTIFACTS_PATH, artifacts);
+
+  const events = await readArray<WorkflowEvent>(EVENTS_PATH);
+  events.push(event);
+  await writeArray(EVENTS_PATH, events);
+
+  return { artifact, case: updated, event };
+}
+
 export async function saveArtifacts(inputs: Array<{
   case_id: string;
   kind: string;

@@ -5,6 +5,7 @@ import {
   listArtifacts,
   listDocuments,
   saveArtifact,
+  saveArtifactAndUpdateCase,
   saveArtifacts,
   saveDocument,
   saveDocumentAndUpdateCase,
@@ -130,18 +131,26 @@ async function jsonAction(body: Record<string, unknown>) {
         payer_disposition_status: caseRecord.payer_disposition_status || "NOT_STARTED",
       }, { status: 422 });
     }
-    const documents = await listDocuments(caseRecord.id);
+  const documents = await listDocuments(caseRecord.id);
     if (!documents.some((doc) => doc.kind === "signed_swo")) {
       return NextResponse.json({ ok: false, action, error: "Signed SWO upload required before billing packet generation" }, { status: 422 });
     }
-    const packet = await generateArtifact(caseRecord, "billing_packet", "Billing Packet", "billing_packet");
-    await updateCase(caseRecord.id, { status: "billing_packet_generated", billing_status: "packet_generated", billing_packet_artifact_id: packet.id });
+    const packetInput = await buildArtifactInput(caseRecord, "billing_packet", "Billing Packet", "billing_packet");
+    const { artifact: packet } = await saveArtifactAndUpdateCase({
+      ...packetInput,
+      case_patch: { status: "billing_packet_generated", billing_status: "packet_generated" },
+      event_type: "billing_packet_generated",
+    });
     return NextResponse.json({ ok: true, action, artifact: packet });
   }
 
   if (action === "generate_pod") {
-    const pod = await generateArtifact(caseRecord, "pod", "Proof of Delivery", "pod", "PENDING RECIPIENT SIGNATURE");
-    await updateCase(caseRecord.id, { status: "pod_generated", pod_status: "signature_required", pod_artifact_id: pod.id });
+    const podInput = await buildArtifactInput(caseRecord, "pod", "Proof of Delivery", "pod", "PENDING RECIPIENT SIGNATURE");
+    const { artifact: pod } = await saveArtifactAndUpdateCase({
+      ...podInput,
+      case_patch: { status: "pod_generated", pod_status: "signature_required" },
+      event_type: "pod_generated",
+    });
     return NextResponse.json({ ok: true, action, artifact: pod });
   }
 
@@ -182,15 +191,16 @@ async function jsonAction(body: Record<string, unknown>) {
       tebra_submission_status: "staged_not_submitted",
       staged_at: new Date().toISOString(),
     };
-    const artifact = await saveArtifact({
+    const { artifact } = await saveArtifactAndUpdateCase({
       case_id: caseRecord.id,
       kind: "tebra_staging_manifest",
       filename: packetFilename(caseRecord, "tebra_staging_manifest").replace(/\.pdf$/, ".json"),
       content_type: "application/json",
       content: Buffer.from(JSON.stringify(tebraPacket, null, 2)),
       metadata: { tebra_submission_status: "staged_not_submitted" },
+      case_patch: { status: "tebra_ready", tebra_status: "staged_not_submitted" },
+      event_type: "tebra_staged",
     });
-    await updateCase(caseRecord.id, { status: "tebra_ready", tebra_status: "staged_not_submitted", tebra_manifest_artifact_id: artifact.id });
     return NextResponse.json({ ok: true, action, tebra_submission_status: "staged_not_submitted", artifact, tebra_packet: tebraPacket });
   }
 
@@ -200,12 +210,15 @@ async function jsonAction(body: Record<string, unknown>) {
     if (!documents.some((doc) => doc.kind === "signed_swo")) return NextResponse.json({ ok: false, action, error: "Signed SWO required" }, { status: 422 });
     if (!documents.some((doc) => doc.kind === "signed_pod")) return NextResponse.json({ ok: false, action, error: "Signed POD required" }, { status: 422 });
     if (refreshed?.tebra_status !== "staged_not_submitted") return NextResponse.json({ ok: false, action, error: "Tebra staging manifest required" }, { status: 422 });
-    const finalPacket = await generateArtifact(refreshed, "final_bill_ready_packet", "Final Bill-Ready Packet", "final_bill_ready_packet");
-    await updateCase(caseRecord.id, {
-      status: "ready_to_bill",
-      billing_status: "ready",
-      tebra_status: "staged_not_submitted",
-      final_bill_ready_artifact_id: finalPacket.id,
+    const finalInput = await buildArtifactInput(refreshed, "final_bill_ready_packet", "Final Bill-Ready Packet", "final_bill_ready_packet");
+    const { artifact: finalPacket } = await saveArtifactAndUpdateCase({
+      ...finalInput,
+      case_patch: {
+        status: "ready_to_bill",
+        billing_status: "ready",
+        tebra_status: "staged_not_submitted",
+      },
+      event_type: "final_bill_ready_packet_generated",
     });
     return NextResponse.json({ ok: true, action, status: "ready_to_bill", artifact: finalPacket });
   }
