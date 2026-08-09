@@ -50,6 +50,13 @@ const QUEUES = [
 
 function patientSummary(record: SpearCase) {
   const action = getSpearNextAction(record);
+  const firstNonEmptyList = (...values: unknown[]) => {
+    for (const value of values) {
+      if (Array.isArray(value) && value.length) return value;
+      if (typeof value === "string" && value.trim()) return value.split(/[,\s]+/).filter(Boolean);
+    }
+    return [];
+  };
   return {
     case_id: record.id,
     order_id: record.order_id,
@@ -60,8 +67,8 @@ function patientSummary(record: SpearCase) {
     provider: record.provider || "",
     npi: record.npi || "",
     product: record.product || "",
-    hcpcs: record.final_hcpcs || record.operator_approved_hcpcs || record.trident_recommended_hcpcs || record.hcpcs || [],
-    icd: record.final_icd || record.operator_approved_icd || record.trident_recommended_icd || record.icd || [],
+    hcpcs: firstNonEmptyList(record.final_hcpcs, record.operator_approved_hcpcs, record.trident_recommended_hcpcs, record.hcpcs, record.source_hcpcs),
+    icd: firstNonEmptyList(record.final_icd, record.operator_approved_icd, record.trident_recommended_icd, record.icd, record.source_icd),
     laterality: record.laterality || "",
     order_date: record.order_date || "",
     status: record.status || "",
