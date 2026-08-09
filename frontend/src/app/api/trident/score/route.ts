@@ -43,7 +43,7 @@ export async function POST(req: Request) {
   const payload = { ...(storedCase || {}), ...body } as Record<string, unknown>;
   const masterData = await getMasterData();
   const kitRecommendation = recommendConfiguredKit(payload, masterData);
-  const recommendedHcpcs = kitRecommendation.hcpcsComponents.map((item) => String(item.hcpcs || "")).filter(Boolean);
+  const recommendedHcpcs = kitRecommendation.hcpcsComponents.map((item) => String(item.hcpcs || item.code || "")).filter(Boolean);
   const sourceHcpcs = listValue(payload.source_hcpcs || payload.hcpcs).map(String);
   const codingConflicts = sourceHcpcs.length ? sourceHcpcs.filter((code) => !recommendedHcpcs.includes(code)) : [];
   const missing = missingFields(payload);
@@ -54,7 +54,12 @@ export async function POST(req: Request) {
     ? missing.map((field) => `Complete ${field.replace(/_/g, " ")} before billing readiness.`)
     : codingConflicts.length
       ? ["Source HCPCS differs from configured kit. Operator coding review required."]
-    : ["Documentation set is complete for Trident review. Prepare signature and fulfillment workflow."];
+      : [
+          "Documentation set is complete for Trident review. Prepare signature and fulfillment workflow.",
+          kitRecommendation.payerType === "commercial"
+            ? "Commercial plan: full knee recovery kit is available for operator/payer-policy review, including E0676 when documentation supports the NOC narrative."
+            : "Medicare/Medicaid payer: E0676 is blocked; review remaining brace, TENS, compression, and icing lines against policy before billing.",
+        ];
 
   const resolvedCaseId = storedCase?.id || caseId || "";
   const review = {
@@ -63,15 +68,25 @@ export async function POST(req: Request) {
     review_status: reviewStatus,
     billing_readiness: billingReadiness,
     missing_fields: missing,
+    payer_type: kitRecommendation.payerType,
     recommended_carepath: kitRecommendation.carepath ? { id: kitRecommendation.carepath.id, name: kitRecommendation.carepath.name } : null,
     recommended_kit: kitRecommendation.kit ? { id: kitRecommendation.kit.id, name: kitRecommendation.kit.name } : null,
     recommended_hcpcs: kitRecommendation.hcpcsComponents.map((item) => ({
-      code: item.hcpcs,
+      code: item.hcpcs || item.code,
       description: item.description,
       quantity: item.quantity,
       modifier: item.modifier,
-      rationale: "Configured kit recommendation from Trident master data.",
+      rationale: item.noc_narrative || "Configured kit recommendation from Trident master data.",
       confidence: 0.82,
+      requires_noc_narrative: item.requires_noc_narrative === true,
+      payer_policy: item.payer_policy || "",
+    })),
+    excluded_hcpcs: kitRecommendation.excludedComponents.map((item) => ({
+      code: item.hcpcs || item.code,
+      description: item.description,
+      reason: item.payer_policy === "commercial_only"
+        ? "Commercial/private payer only; excluded for Medicare/Medicaid compliance."
+        : "Excluded by payer policy.",
     })),
     source_hcpcs: sourceHcpcs,
     coding_conflicts: codingConflicts,
@@ -89,6 +104,7 @@ export async function POST(req: Request) {
       recommended_kit_id: String(kitRecommendation.kit?.id || ""),
       recommended_kit_name: String(kitRecommendation.kit?.name || ""),
       trident_recommended_hcpcs: recommendedHcpcs,
+      hcpcs_status: recommendedHcpcs.length ? "trident_recommended" : "pending_trident",
       coding_status: "trident_recommended",
     });
   }

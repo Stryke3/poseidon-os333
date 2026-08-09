@@ -32,6 +32,69 @@ export type NormalizedProviderFacility = {
 };
 
 const NOW = "2026-07-16T00:00:00.000Z";
+const KNEE_RECOVERY_KIT_COMPONENTS: Array<Record<string, unknown>> = [
+  {
+    code: "L1833",
+    hcpcs: "L1833",
+    description: "Knee orthosis",
+    quantity: 1,
+    modifier: "",
+    laterality_rule: "required",
+    required: true,
+    source: "configured_kit",
+    notes: "Core knee recovery brace line. Requires supported order and diagnosis pointer.",
+  },
+  {
+    code: "E0676",
+    hcpcs: "E0676",
+    description: "Intermittent limb compression device / DVT cold-flow support",
+    quantity: 1,
+    modifier: "",
+    laterality_rule: "when_applicable",
+    required: false,
+    source: "configured_kit",
+    payer_policy: "commercial_only",
+    excluded_payer_types: ["medicare", "medicaid"],
+    requires_noc_narrative: true,
+    noc_narrative: "DVT prophylaxis and post-operative edema control support requested as part of the knee recovery pathway; commercial coverage requires payer-specific medical necessity review and claim-line narrative.",
+    notes: "Commercial/private payer review only. Never recommend for Medicare or Medicaid billing.",
+  },
+  {
+    code: "E0730",
+    hcpcs: "E0730",
+    description: "TENS unit",
+    quantity: 1,
+    modifier: "",
+    laterality_rule: "none",
+    required: false,
+    source: "configured_kit",
+    notes: "Include only when supported by order, symptoms, and payer coverage.",
+  },
+  {
+    code: "A6531",
+    hcpcs: "A6531",
+    description: "Compression garment or device support",
+    quantity: 1,
+    modifier: "",
+    laterality_rule: "when_applicable",
+    required: false,
+    source: "configured_kit",
+    notes: "Compression support for edema management when documentation and payer policy allow.",
+  },
+  {
+    code: "E0218",
+    hcpcs: "E0218",
+    description: "Cold therapy / icing support",
+    quantity: 1,
+    modifier: "",
+    laterality_rule: "when_applicable",
+    required: false,
+    source: "configured_kit",
+    payer_policy: "payer_review",
+    requires_policy_check: true,
+    notes: "Icing support line for payer review. Include only when supported by order and plan policy.",
+  },
+];
 
 function rec(id: string, extra: Record<string, unknown>) {
   return { id, active: true, created_at: NOW, updated_at: NOW, ...extra };
@@ -60,7 +123,7 @@ export const DEFAULT_MASTER_DATA: SpearMasterData = {
       display_name: "Medicare",
       payer_type: "medicare",
       payer_id: "",
-      aliases: ["Medicare", "Medicare Part B", "CMS Medicare"],
+      aliases: ["Medicare", "Medicare Part B", "CMS Medicare", "Medicare Of Nevada", "MEDICARE_OF_NEVADA"],
       notes: "Default SPEAR payer normalization record.",
     }),
     rec("payer_medicaid", {
@@ -131,14 +194,14 @@ export const DEFAULT_MASTER_DATA: SpearMasterData = {
       name: "Knee Recovery Standard Kit",
       carepath_id: "carepath_orthopedic_knee_recovery",
       description: "Configured knee recovery DME kit.",
-      product_components: ["Knee brace", "TENS support", "Compression garment"],
-      hcpcs_codes: [
-        { code: "L1833", hcpcs: "L1833", description: "Knee orthosis", quantity: 1, modifier: "", laterality_rule: "required", required: true, source: "configured_kit", notes: "" },
-        { code: "E0730", hcpcs: "E0730", description: "TENS unit", quantity: 1, modifier: "", laterality_rule: "none", required: false, source: "configured_kit", notes: "Include only when supported by order/coverage." },
-        { code: "A6531", hcpcs: "A6531", description: "Compression garment", quantity: 1, modifier: "", laterality_rule: "when_applicable", required: false, source: "configured_kit", notes: "" },
-      ],
+      product_components: ["Knee brace", "DVT cold-flow/compression support", "TENS support", "Compression garment/device", "Cold therapy / icing support"],
+      hcpcs_codes: KNEE_RECOVERY_KIT_COMPONENTS,
       required_documents: ["source intake", "provider SWO", "medical necessity addendum", "POD"],
-      payer_overrides: {},
+      payer_overrides: {
+        commercial: { include: ["L1833", "E0676", "E0730", "A6531", "E0218"], requires_policy_review: ["E0676", "E0218"] },
+        medicare: { exclude: ["E0676"], review_optional: ["E0730", "A6531", "E0218"] },
+        medicaid: { exclude: ["E0676"], review_optional: ["E0730", "A6531", "E0218"] },
+      },
       provider_overrides: {},
     }),
     rec("kit_hip_recovery_standard", {
@@ -189,6 +252,15 @@ function arr(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
 }
 
+function componentCode(component: Record<string, unknown>) {
+  return String(component.hcpcs || component.code || "").trim().toUpperCase();
+}
+
+function normalizeKitComponent(component: Record<string, unknown>) {
+  const code = String(component.code || component.hcpcs || "").trim().toUpperCase();
+  return { ...component, code, hcpcs: String(component.hcpcs || code).trim().toUpperCase() };
+}
+
 function normalizeProviderRows(providers: Array<Record<string, unknown>>) {
   return providers.map((provider) => {
     const facilityIds = arr(provider.facility_ids);
@@ -202,15 +274,39 @@ function normalizeProviderRows(providers: Array<Record<string, unknown>>) {
 }
 
 function normalizeKitRows(kits: Array<Record<string, unknown>>) {
-  return kits.map((kit) => ({
-    ...kit,
-    hcpcs_codes: Array.isArray(kit.hcpcs_codes)
-      ? (kit.hcpcs_codes as Array<Record<string, unknown>>).map((component) => {
-          const code = String(component.code || component.hcpcs || "");
-          return { ...component, code, hcpcs: String(component.hcpcs || code) };
-        })
-      : [],
-  }));
+  return kits.map((kit) => {
+    const existing = Array.isArray(kit.hcpcs_codes)
+      ? (kit.hcpcs_codes as Array<Record<string, unknown>>).map(normalizeKitComponent)
+      : [];
+    if (String(kit.id) !== "kit_knee_recovery_standard") {
+      return { ...kit, hcpcs_codes: existing };
+    }
+
+    const byCode = new Map(existing.map((component) => [componentCode(component), component]));
+    for (const builtIn of KNEE_RECOVERY_KIT_COMPONENTS.map(normalizeKitComponent)) {
+      const code = componentCode(builtIn);
+      byCode.set(code, { ...builtIn, ...(byCode.get(code) || {}) });
+    }
+    const productComponents = Array.from(new Set([
+      ...arr(kit.product_components),
+      "Knee brace",
+      "DVT cold-flow/compression support",
+      "TENS support",
+      "Compression garment/device",
+      "Cold therapy / icing support",
+    ]));
+    return {
+      ...kit,
+      product_components: productComponents,
+      hcpcs_codes: Array.from(byCode.values()),
+      payer_overrides: {
+        commercial: { include: ["L1833", "E0676", "E0730", "A6531", "E0218"], requires_policy_review: ["E0676", "E0218"] },
+        medicare: { exclude: ["E0676"], review_optional: ["E0730", "A6531", "E0218"] },
+        medicaid: { exclude: ["E0676"], review_optional: ["E0730", "A6531", "E0218"] },
+        ...(kit.payer_overrides && typeof kit.payer_overrides === "object" ? kit.payer_overrides : {}),
+      },
+    };
+  });
 }
 
 export async function getMasterData() {
@@ -320,6 +416,40 @@ export function normalizeProviderFacility(input: {
   };
 }
 
+export type TridentPayerType = "commercial" | "medicare" | "medicaid" | "unknown";
+
+export function classifyPayerType(caseRecord: Record<string, unknown>, masterData: SpearMasterData): TridentPayerType {
+  const payerId = String(caseRecord.canonical_payer_id || caseRecord.payer_id || "").trim();
+  const matchedPayer = payerId ? masterData.payers.find((payer) => String(payer.id) === payerId) : undefined;
+  const haystack = [
+    caseRecord.payer,
+    caseRecord.canonical_payer,
+    caseRecord.raw_payer,
+    caseRecord.payer_id,
+    caseRecord.canonical_payer_id,
+    (caseRecord.payer_normalization as Record<string, unknown> | undefined)?.canonical_name,
+    (caseRecord.payer_normalization as Record<string, unknown> | undefined)?.raw_value,
+    matchedPayer?.canonical_name,
+    matchedPayer?.display_name,
+    matchedPayer?.payer_type,
+  ].map((value) => norm(value)).join(" ");
+
+  if (/\bmedicaid\b/.test(haystack)) return "medicaid";
+  if (/\bmedicare\b|\bcms\b|\bpart b\b/.test(haystack)) return "medicare";
+  const matchedType = norm(matchedPayer?.payer_type);
+  if (matchedType === "commercial") return "commercial";
+  if (/\bcigna\b|\bunited\b|\buhc\b|\baetna\b|\banthem\b|\bbcbs\b|\bblue cross\b|\bcommercial\b|\bppo\b|\bhmo\b/.test(haystack)) return "commercial";
+  return "unknown";
+}
+
+function componentAllowedForPayer(component: Record<string, unknown>, payerType: TridentPayerType) {
+  const policy = norm(component.payer_policy);
+  const excluded = arr(component.excluded_payer_types).map(norm);
+  if (policy === "commercial only" && payerType !== "commercial") return false;
+  if (excluded.includes(payerType)) return false;
+  return true;
+}
+
 export function recommendConfiguredKit(caseRecord: Record<string, unknown>, masterData: SpearMasterData) {
   const text = [
     caseRecord.product,
@@ -334,6 +464,9 @@ export function recommendConfiguredKit(caseRecord: Record<string, unknown>, mast
     return terms.some((term) => text.includes(String(term).toLowerCase()));
   }) || masterData.carepaths.find((row) => row.id === "carepath_orthopedic_knee_recovery") || masterData.carepaths[0];
   const kit = masterData.kits.find((row) => String(row.carepath_id) === String(carepath?.id) && row.active !== false) || masterData.kits[0];
-  const hcpcsComponents = Array.isArray(kit?.hcpcs_codes) ? kit.hcpcs_codes as Array<Record<string, unknown>> : [];
-  return { carepath, kit, hcpcsComponents };
+  const payerType = classifyPayerType(caseRecord, masterData);
+  const allComponents = Array.isArray(kit?.hcpcs_codes) ? kit.hcpcs_codes as Array<Record<string, unknown>> : [];
+  const hcpcsComponents = allComponents.filter((component) => componentAllowedForPayer(component, payerType));
+  const excludedComponents = allComponents.filter((component) => !componentAllowedForPayer(component, payerType));
+  return { carepath, kit, hcpcsComponents, excludedComponents, payerType };
 }

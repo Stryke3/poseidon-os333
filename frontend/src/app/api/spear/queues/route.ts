@@ -57,6 +57,9 @@ function patientSummary(record: SpearCase) {
     }
     return [];
   };
+  const hcpcs = firstNonEmptyList(record.final_hcpcs, record.operator_approved_hcpcs, record.trident_recommended_hcpcs, record.hcpcs, record.source_hcpcs);
+  const product = String(record.product || record.order_type || record.recommended_kit_name || record.carepath_name || "").trim()
+    || (hcpcs.length ? `Recommended kit: ${hcpcs.join(", ")}` : "");
   return {
     case_id: record.id,
     order_id: record.order_id,
@@ -66,8 +69,8 @@ function patientSummary(record: SpearCase) {
     member_id: record.member_id || "",
     provider: record.provider || "",
     npi: record.npi || "",
-    product: record.product || "",
-    hcpcs: firstNonEmptyList(record.final_hcpcs, record.operator_approved_hcpcs, record.trident_recommended_hcpcs, record.hcpcs, record.source_hcpcs),
+    product,
+    hcpcs,
     icd: firstNonEmptyList(record.final_icd, record.operator_approved_icd, record.trident_recommended_icd, record.icd, record.source_icd),
     laterality: record.laterality || "",
     order_date: record.order_date || "",

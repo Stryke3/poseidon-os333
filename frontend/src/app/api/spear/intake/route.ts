@@ -285,8 +285,10 @@ export async function POST(req: Request) {
   const conflicts = sourceHcpcs.length
     ? sourceHcpcs.filter((code) => !recommendedHcpcs.includes(String(code)))
     : [];
+  const effectiveMissingInputs = (record.missing_fields || []).filter((field) => !(field === "hcpcs" && recommendedHcpcs.length > 0));
   const review = {
     case_id: record.id,
+    payer_type: recommendation.payerType,
     recommended_carepath: recommendation.carepath ? { id: recommendation.carepath.id, name: recommendation.carepath.name } : null,
     recommended_kit: recommendation.kit ? { id: recommendation.kit.id, name: recommendation.kit.name } : null,
     recommended_hcpcs: recommendation.hcpcsComponents.map((item) => ({
@@ -294,16 +296,30 @@ export async function POST(req: Request) {
       description: item.description,
       quantity: item.quantity,
       modifier: item.modifier,
-      rationale: "Configured kit recommendation from Trident master data.",
+      rationale: item.noc_narrative || "Configured kit recommendation from Trident master data.",
       confidence: 0.82,
+      requires_noc_narrative: item.requires_noc_narrative === true,
+      payer_policy: item.payer_policy || "",
+    })),
+    excluded_hcpcs: recommendation.excludedComponents.map((item) => ({
+      code: item.code || item.hcpcs,
+      description: item.description,
+      reason: item.payer_policy === "commercial_only"
+        ? "Commercial/private payer only; excluded for Medicare/Medicaid compliance."
+        : "Excluded by payer policy.",
     })),
     source_hcpcs: sourceHcpcs,
     coding_conflicts: conflicts,
-    missing_inputs: record.missing_fields,
-    review_status: conflicts.length || record.missing_fields.length ? "review" : "pass",
+    missing_inputs: effectiveMissingInputs,
+    review_status: conflicts.length || effectiveMissingInputs.length ? "review" : "pass",
     recommendations: conflicts.length
       ? ["Review source HCPCS conflict against configured kit before packet generation."]
-      : ["Review and approve Trident kit recommendation before provider packet generation."],
+      : [
+          "Review and approve Trident kit recommendation before provider packet generation.",
+          recommendation.payerType === "commercial"
+            ? "Commercial plan: full knee recovery kit is available for operator/payer-policy review, including E0676 when documentation supports the NOC narrative."
+            : "Medicare/Medicaid payer: E0676 is blocked; review remaining brace, TENS, compression, and icing lines against policy before billing.",
+        ],
   };
   const finalized = await finalizeIntakeCase({
     case_id: record.id,
@@ -328,9 +344,11 @@ export async function POST(req: Request) {
     recommended_kit_name: String(recommendation.kit?.name || ""),
     trident_recommended_hcpcs: recommendedHcpcs,
     trident_recommended_icd: Array.isArray(record.source_icd) ? record.source_icd : [],
+    missing_fields: effectiveMissingInputs,
     trident_status: review.review_status,
+    hcpcs_status: recommendedHcpcs.length ? "trident_recommended" : "pending_trident",
     coding_status: "trident_recommended",
-    status: "trident_review_complete",
+    status: effectiveMissingInputs.length ? "blocked_missing_fields" : "trident_review_complete",
     },
   });
   record = finalized.case || record;
