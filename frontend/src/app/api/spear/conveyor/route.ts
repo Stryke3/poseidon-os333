@@ -14,6 +14,7 @@ import {
 } from "@/lib/poseidon-store";
 import { buildConveyorPacket, packetFilename } from "@/lib/services/packet/conveyor-packets";
 import { isSpearApiAuthFailure, requireSpearApiAuth } from "@/lib/spear-auth";
+import { hasPayerSubmissionGate } from "@/lib/trident-v21";
 
 export const dynamic = "force-dynamic";
 
@@ -118,6 +119,16 @@ async function jsonAction(body: Record<string, unknown>) {
   }
 
   if (action === "generate_billing_packet") {
+    const payerGateSatisfied = hasPayerSubmissionGate(caseRecord);
+    if (!payerGateSatisfied) {
+      return NextResponse.json({
+        ok: false,
+        action,
+        error: "Payer submission gate is not satisfied. Generate, certify, and transmit the TRIDENT hard packet or record verified no-authorization-required disposition before billing packet generation.",
+        payer_submission_status: caseRecord.payer_submission_status || "NOT_READY",
+        payer_disposition_status: caseRecord.payer_disposition_status || "NOT_STARTED",
+      }, { status: 422 });
+    }
     const documents = await listDocuments(caseRecord.id);
     if (!documents.some((doc) => doc.kind === "signed_swo")) {
       return NextResponse.json({ ok: false, action, error: "Signed SWO upload required before billing packet generation" }, { status: 422 });

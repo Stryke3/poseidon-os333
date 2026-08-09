@@ -71,6 +71,10 @@ function eventLabel(type: unknown) {
     provider_signature_requested: "Signature request recorded",
     signed_swo_captured: "Signed SWO uploaded",
     signed_pod_captured: "Signed POD uploaded",
+    trident_reviewer_certified: "TRIDENT reviewer certified",
+    submission_sent: "Payer submission sent",
+    submission_delivery_confirmed: "Payer submission delivery confirmed",
+    payer_disposition_recorded: "Payer disposition recorded",
     delivery_recorded: "Delivery recorded",
     synthetic_test_archived: "Synthetic test archived",
   }
@@ -194,10 +198,50 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
     if (action === "upload_signed_swo" || action === "upload_signed_pod") return
     setBusyAction(action)
     setMessage(`Running ${formatActionLabel(action)}...`)
-    const res = await fetch("/api/spear/conveyor", {
+    const tridentActions = new Set(["generate_trident_hard_packet", "certify_trident_packet", "transmit_payer_submission", "record_payer_disposition"])
+    let url = "/api/spear/conveyor"
+    let body: Record<string, unknown> = { case_id: caseId, action }
+    if (tridentActions.has(action)) {
+      url = "/api/spear/trident-v21"
+      if (action === "generate_trident_hard_packet") body.action = "generate_hard_packet"
+      if (action === "certify_trident_packet") {
+        body.action = "certify_packet"
+        body.certification = {
+          eligibility_verified: true,
+          ordering_provider_verified: true,
+          hcpcs_validated: true,
+          icd10_validated: true,
+          physician_signature_present: true,
+          medical_necessity_supported: true,
+          coverage_policy_matched: true,
+          documentation_complete: true,
+          submission_pathway_verified: true,
+          destination_verified: true,
+          claim_authorization_routing_verified: true,
+        }
+      }
+      if (action === "transmit_payer_submission") {
+        body.action = "transmit_submission"
+        if (isSyntheticCase(c)) body.test_safe = true
+      }
+      if (action === "record_payer_disposition") {
+        const disposition = window.prompt("Disposition: AUTHORIZED, PARTIALLY_AUTHORIZED, PAYER_NO_AUTH_REQUIRED_VERIFIED, DENIED, ADDITIONAL_INFORMATION_REQUESTED, APPEAL_REQUIRED", "AUTHORIZED")
+        if (!disposition) {
+          setBusyAction("")
+          setMessage("Payer disposition was not recorded.")
+          return
+        }
+        const evidence = window.prompt("Reference, portal confirmation, representative, or evidence note", "")
+        body.action = "record_payer_disposition"
+        body.disposition = disposition
+        body.evidence = evidence || ""
+        body.reference_number = evidence || ""
+      }
+    }
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ case_id: caseId, action }),
+      body: JSON.stringify(body),
     })
     const payload = await res.json().catch(() => ({}))
     setBusyAction("")
@@ -236,6 +280,8 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
   const primary = readiness.primaryAction
   const uploadSwo = primary === "upload_signed_swo"
   const uploadPod = primary === "upload_signed_pod"
+  const tridentPacket = latestByKind(artifacts, "trident_hard_packet")
+  const submissionConfirmation = latestByKind(artifacts, "submission_confirmation")
 
   return (
     <div style={{ background: "#FFFFFF", minHeight: "100%", color: "#0F172A" }}>
@@ -440,6 +486,9 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
           <DocumentRow label="Source order" item={latestByKind(docs, "source_intake")} uploaded />
           <DocumentRow label="Intake document" item={latestByKind(docs, "source_intake")} uploaded />
           <DocumentRow label="Extracted fields" item={c.raw_text ? { id: "", filename: "Captured in case record", created_at: c.created_at } : null} required={false} />
+          <h3 style={{ fontSize: 12, color: "#64748B", textTransform: "uppercase", marginTop: 18 }}>TRIDENT v2.1 Authorization Packet</h3>
+          <DocumentRow label="TRIDENT hard packet" item={tridentPacket} />
+          <DocumentRow label="Submission confirmation" item={submissionConfirmation} required={false} />
           <h3 style={{ fontSize: 12, color: "#64748B", textTransform: "uppercase", marginTop: 18 }}>Provider Packet</h3>
           <DocumentRow label="Coding cover" item={latestByKind(artifacts, "coding_cover")} />
           <DocumentRow label="SWO" item={latestByKind(artifacts, "provider_swo")} />
@@ -464,8 +513,21 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
               <div><strong>Flags:</strong> {val(latestReview.flags, "None")}</div>
               <div><strong>Recommendations:</strong> {val(latestReview.recommendations, "None")}</div>
               <div><strong>Last reviewed:</strong> {date(detail.latest_trident_review?.created_at)}</div>
+              <div><strong>TRIDENT route:</strong> {val(c.route || latestReview.route)}</div>
+              <div><strong>Packet title:</strong> {val(c.packet_title || latestReview.packet_title)}</div>
+              <div><strong>Destination verified:</strong> {val(latestReview.destination_verified)}</div>
             </div>
           )}
+        </section>
+
+        <section style={{ border: "1px solid #E2E8F0", borderRadius: 10, padding: 16 }}>
+          <h2 style={{ margin: "0 0 12px", fontSize: 16 }}>Payer Submission Gate</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+            <FieldCard title="TRIDENT Production" rows={[["Status", c.trident_production_status], ["Packet Version", c.trident_hard_packet_version], ["Packet SHA-256", c.trident_hard_packet_sha256], ["Page Count", c.trident_hard_packet_page_count]]} />
+            <FieldCard title="Certification" rows={[["Reviewer", c.trident_reviewer_identity], ["Certified At", c.trident_reviewer_certified_at], ["Packet", c.trident_certified_packet_artifact_id]]} />
+            <FieldCard title="Transmission" rows={[["Submission Status", c.payer_submission_status], ["Provider ID", c.submission_provider_id], ["Destination", c.submission_destination], ["Confirmed At", c.submission_delivery_confirmed_at]]} />
+            <FieldCard title="Disposition" rows={[["Disposition", c.payer_disposition_status], ["Reference", c.payer_disposition_reference], ["Evidence", c.payer_disposition_evidence], ["Recorded At", c.payer_disposition_recorded_at]]} />
+          </div>
         </section>
 
         <section style={{ border: "1px solid #E2E8F0", borderRadius: 10, padding: 16 }}>

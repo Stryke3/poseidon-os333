@@ -25,5 +25,10 @@ export async function GET() {
     readyToBill: metrics.ready_to_bill,
     blockedCases: metrics.blocked_cases,
     highRiskFlags: metrics.high_risk_flags,
+    packetsAwaitingCertification: metrics.packets_awaiting_certification,
+    submissionsAwaitingConfirmation: metrics.submissions_awaiting_confirmation,
+    payerDispositionPending: metrics.payer_disposition_pending,
+    authorized: metrics.authorized,
+    denialsAndAppeals: metrics.denials_and_appeals,
   });
 }

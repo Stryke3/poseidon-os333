@@ -4,6 +4,10 @@ export type SpearPrimaryAction =
   | "review_intake"
   | "run_trident_review"
   | "resolve_trident_blockers"
+  | "generate_trident_hard_packet"
+  | "certify_trident_packet"
+  | "transmit_payer_submission"
+  | "record_payer_disposition"
   | "generate_provider_packet"
   | "request_provider_signature"
   | "upload_signed_swo"
@@ -31,9 +35,12 @@ export type SpearNextAction = {
 export const WORKFLOW_STEPS = [
   "Intake",
   "Trident",
+  "Hard Packet",
+  "Certification",
+  "Payer Submission",
+  "Disposition",
   "Provider Packet",
   "Provider Signature",
-  "Fulfillment",
   "Billing Packet",
   "POD",
   "Tebra",
@@ -46,6 +53,19 @@ const STAGE_LABELS: Record<string, string> = {
   missing_docs: "Missing Documentation",
   trident_review: "Trident Review Needed",
   trident_review_complete: "Trident Complete",
+  packet_review_required: "Packet Review Required",
+  reviewer_certified: "Reviewer Certified",
+  submission_queued: "Submission Queued",
+  submission_sent: "Submission Sent",
+  delivery_confirmed: "Delivery Confirmed",
+  payer_disposition_pending: "Awaiting Payer Disposition",
+  payer_no_auth_required_verified: "No Auth Required Verified",
+  authorized: "Authorized",
+  partially_authorized: "Partially Authorized",
+  denied: "Denied",
+  additional_information_requested: "Additional Information Requested",
+  appeal_required: "Appeal Required",
+  blocked_destination_unverified: "Destination Unverified",
   blocked_missing_fields: "Trident Blocked",
   provider_packet_generated: "Provider Packet Ready",
   provider_signature_requested: "Awaiting Provider Signature",
@@ -172,6 +192,9 @@ export function getSpearNextAction(
   const pod = hasArtifact(artifacts, "pod");
   const finalPacket = hasArtifact(artifacts, "final_bill_ready_packet");
   const tebraManifest = hasArtifact(artifacts, "tebra_staging_manifest") || String(caseRecord.tebra_status || "") === "staged_not_submitted";
+  const hardPacket = hasArtifact(artifacts, "trident_hard_packet");
+  const submissionGateSatisfied = ["DELIVERY_CONFIRMED"].includes(String(caseRecord.payer_submission_status || ""))
+    || ["PAYER_NO_AUTH_REQUIRED_VERIFIED", "AUTHORIZED", "PARTIALLY_AUTHORIZED", "PAYER_DISPOSITION_PENDING"].includes(String(caseRecord.payer_disposition_status || ""));
 
   if (status === "missing_docs" || status === "intake_received" || status === "created") {
     return state(status, {
@@ -207,14 +230,69 @@ export function getSpearNextAction(
   }
 
   if (status === "trident_review_complete") {
+    if (!hardPacket) {
+      return state(status, {
+        nextActionLabel: arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length ? "Generate TRIDENT Hard Packet" : "Review Trident Coding",
+        explanation: arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length ? "Coding is approved. Generate the TRIDENT v2.1 evidence-indexed hard packet before payer submission." : "Trident recommended a configured kit. Operator coding approval is required before hard-packet production.",
+        primaryAction: "generate_trident_hard_packet",
+        primaryActionEnabled: missing.length === 0 && arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length > 0,
+        blockerSummary: missing.length ? "Missing fields still block hard-packet generation." : arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length ? "Ready to generate TRIDENT hard packet." : "Coding recommendation needs operator approval.",
+        blockers: missing,
+        progressIndex: 2,
+      });
+    }
     return state(status, {
-      nextActionLabel: arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length ? "Generate Provider Packet" : "Review Trident Coding",
-      explanation: arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length ? "Trident has cleared the case. Generate the coding cover, SWO, and addendum." : "Trident recommended a configured kit. Operator coding approval is required before packet generation.",
-      primaryAction: "generate_provider_packet",
-      primaryActionEnabled: missing.length === 0 && arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length > 0,
-      blockerSummary: missing.length ? "Missing fields still block provider packet generation." : arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length ? "Ready to generate provider packet." : "Coding recommendation needs operator approval.",
+      nextActionLabel: "Certify TRIDENT Packet",
+      explanation: "The TRIDENT v2.1 hard packet exists and requires authenticated reviewer certification.",
+      primaryAction: "certify_trident_packet",
+      primaryActionEnabled: true,
+      blockerSummary: "Reviewer certification is required before payer transmission.",
       blockers: missing,
-      progressIndex: 2,
+      progressIndex: 3,
+    });
+  }
+
+  if (status === "packet_review_required") {
+    return state(status, {
+      nextActionLabel: "Certify TRIDENT Packet",
+      explanation: "Reviewer must certify the hard packet before transmission can be queued.",
+      primaryAction: "certify_trident_packet",
+      primaryActionEnabled: hardPacket,
+      blockerSummary: hardPacket ? "Ready for reviewer certification." : "TRIDENT hard packet artifact is missing.",
+      progressIndex: 3,
+    });
+  }
+
+  if (status === "reviewer_certified" || status === "submission_queued") {
+    return state(status, {
+      nextActionLabel: "Transmit Payer Submission",
+      explanation: "Certification queued the packet for payer transmission. Send through the verified route or configured test-safe production mode.",
+      primaryAction: "transmit_payer_submission",
+      primaryActionEnabled: true,
+      blockerSummary: "Ready to transmit.",
+      progressIndex: 4,
+    });
+  }
+
+  if (status === "submission_sent" || status === "delivery_confirmed" || status === "payer_disposition_pending") {
+    return state(status, {
+      nextActionLabel: "Record Payer Disposition",
+      explanation: "Submission has been sent or confirmed. Record payer disposition before fulfillment and billing proceed.",
+      primaryAction: "record_payer_disposition",
+      primaryActionEnabled: true,
+      blockerSummary: "Awaiting payer disposition.",
+      progressIndex: 5,
+    });
+  }
+
+  if (status === "ready_to_fulfill" || status === "authorized" || status === "payer_no_auth_required_verified" || status === "partially_authorized") {
+    return state(status, {
+      nextActionLabel: "Generate Provider Packet",
+      explanation: "Payer submission gate is satisfied. Generate provider packet and signature documents.",
+      primaryAction: "generate_provider_packet",
+      primaryActionEnabled: submissionGateSatisfied,
+      blockerSummary: submissionGateSatisfied ? "Payer gate satisfied." : "Payer gate is not satisfied.",
+      progressIndex: 6,
     });
   }
 
@@ -240,6 +318,17 @@ export function getSpearNextAction(
   }
 
   if (status === "signed_swo_received") {
+    if (!submissionGateSatisfied) {
+      return state(status, {
+        nextActionLabel: "Resolve Payer Submission Gate",
+        explanation: "Signed SWO is captured, but billing remains blocked until payer submission is confirmed or no-authorization-required is verified.",
+        primaryAction: "transmit_payer_submission",
+        primaryActionEnabled: String(caseRecord.trident_production_status || "") === "REVIEWER_CERTIFIED",
+        blockerSummary: "Payer submission gate blocks billing packet generation.",
+        blockers: [{ category: "Payer gate", title: "Payer submission not satisfied.", detail: "Billing readiness is blocked until confirmed submission or verified no-auth disposition exists.", resolution: "Transmit the certified TRIDENT packet or record verified no-authorization-required disposition." }],
+        progressIndex: 4,
+      });
+    }
     return state(status, {
       nextActionLabel: "Generate Billing Packet",
       explanation: "Signed SWO is captured. Generate the billing packet.",
@@ -337,6 +426,10 @@ export function formatActionLabel(action: SpearPrimaryAction) {
     review_intake: "Review Intake",
     run_trident_review: "Run Trident",
     resolve_trident_blockers: "Resolve Trident Blockers",
+    generate_trident_hard_packet: "Generate TRIDENT Hard Packet",
+    certify_trident_packet: "Certify TRIDENT Packet",
+    transmit_payer_submission: "Transmit Payer Submission",
+    record_payer_disposition: "Record Payer Disposition",
     generate_provider_packet: "Generate Provider Packet",
     request_provider_signature: "Request Provider Signature",
     upload_signed_swo: "Upload Signed SWO",

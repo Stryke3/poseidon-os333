@@ -23,6 +23,19 @@ export type SpearCaseStatus =
   | "staged_for_upload"
   | "ready_to_bill"
   | "blocked_missing_fields"
+  | "blocked_destination_unverified"
+  | "packet_review_required"
+  | "reviewer_certified"
+  | "submission_queued"
+  | "submission_sent"
+  | "delivery_confirmed"
+  | "payer_disposition_pending"
+  | "payer_no_auth_required_verified"
+  | "authorized"
+  | "partially_authorized"
+  | "denied"
+  | "additional_information_requested"
+  | "appeal_required"
   | "closed";
 
 export type SpearCase = {
@@ -162,6 +175,13 @@ function hasSqlStore() {
 
 function hasGistStore() {
   return Boolean(process.env.SPEAR_STORE_GIST_ID && process.env.SPEAR_GITHUB_TOKEN);
+}
+
+function shouldPreserveRemoteBytes(record: { kind?: string; metadata?: Record<string, unknown> }) {
+  return record.metadata?.preserve_bytes === true || [
+    "trident_hard_packet",
+    "submission_confirmation",
+  ].includes(String(record.kind || ""));
 }
 
 function emptyStore(): SpearStore {
@@ -317,11 +337,13 @@ async function writeGistStore(store: SpearStore) {
       content_base64: "",
       storage_note: "Binary content omitted from Gist fallback. Configure SQL/object storage for durable document bytes.",
     })),
-    artifacts: store.artifacts.map((artifact) => ({
-      ...artifact,
-      content_base64: "",
-      storage_note: "Binary content omitted from Gist fallback. Configure SQL/object storage for durable artifact bytes.",
-    })),
+    artifacts: store.artifacts.map((artifact) => shouldPreserveRemoteBytes(artifact)
+      ? artifact
+      : {
+          ...artifact,
+          content_base64: "",
+          storage_note: "Binary content omitted from Gist fallback. Configure SQL/object storage for durable artifact bytes.",
+        }),
   };
 
   const response = await fetch(`https://api.github.com/gists/${gistId}`, {
@@ -741,6 +763,8 @@ export async function createCaseFromIntake(payload: Record<string, unknown>): Pr
   const record = normalizeCase(payload);
   if (hasRemoteStore()) {
     const store = await readRemoteStore();
+    const existing = findDuplicateCase(store.cases, record);
+    if (existing) return existing;
     store.cases.unshift(record);
     store.events.push({
       id: `evt_${randomUUID()}`,
@@ -754,10 +778,32 @@ export async function createCaseFromIntake(payload: Record<string, unknown>): Pr
   }
 
   const records = await readArray<SpearCase>(CASES_PATH);
+  const existing = findDuplicateCase(records, record);
+  if (existing) return existing;
   records.unshift(record);
   await writeArray(CASES_PATH, records);
   await appendWorkflowEvent(record.id, "case_created", { order_id: record.order_id, status: record.status });
   return record;
+}
+
+function findDuplicateCase(records: SpearCase[], incoming: SpearCase): SpearCase | null {
+  const idempotencyKey = String(incoming.idempotency_key || "");
+  if (idempotencyKey) {
+    const exact = records.find((record) => String(record.idempotency_key || "") === idempotencyKey);
+    if (exact) return exact;
+  }
+  const patient = String(incoming.patient_name || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const member = String(incoming.member_id || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const dos = String(incoming.order_date || "");
+  const hcpcs = (incoming.hcpcs || []).join(",");
+  const sourceRef = String(incoming.source_reference || incoming.source_document_id || "");
+  return records.find((record) => {
+    if (sourceRef && String(record.source_reference || record.source_document_id || "") === sourceRef) return true;
+    return String(record.patient_name || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() === patient
+      && String(record.member_id || "").toLowerCase().replace(/[^a-z0-9]+/g, "") === member
+      && String(record.order_date || "") === dos
+      && (record.hcpcs || []).join(",") === hcpcs;
+  }) || null;
 }
 
 function normalizeCase(payload: Record<string, unknown>): SpearCase {
@@ -838,6 +884,18 @@ function normalizeCase(payload: Record<string, unknown>): SpearCase {
     trident_status: textField(payload, "trident_status") || "pending",
     pod_status: textField(payload, "pod_status") || "not_started",
     tebra_status: textField(payload, "tebra_status") || "not_staged",
+    intake_status: textField(payload, "intake_status") || "INTAKE_VALIDATION",
+    trident_production_status: textField(payload, "trident_production_status") || "RECEIVED",
+    payer_submission_status: textField(payload, "payer_submission_status") || "NOT_READY",
+    payer_disposition_status: textField(payload, "payer_disposition_status") || "NOT_STARTED",
+    provider_signature_status: textField(payload, "provider_signature_status") || "NOT_REQUESTED",
+    fulfillment_delivery_status: textField(payload, "fulfillment_delivery_status") || "NOT_READY",
+    billing_tebra_status: textField(payload, "billing_tebra_status") || "NOT_READY",
+    overall_case_status: textField(payload, "overall_case_status") || "RECEIVED",
+    procedural_posture: textField(payload, "procedural_posture") || "",
+    route: textField(payload, "route") || "",
+    packet_title: textField(payload, "packet_title") || "",
+    idempotency_key: textField(payload, "idempotency_key") || buildIdempotencyKey(payload),
     high_risk_flags: listField(payload.high_risk_flags),
     created_at: textField(payload, "created_at") || now,
     updated_at: now,
@@ -849,6 +907,20 @@ function normalizeCase(payload: Record<string, unknown>): SpearCase {
     missing_fields: missing,
     status: (textField(payload, "status") || (missing.length ? "missing_docs" : codingPending ? "trident_review" : "created")) as SpearCaseStatus,
   };
+}
+
+function buildIdempotencyKey(payload: Record<string, unknown>) {
+  const basis = [
+    textField(payload, "source") || "spear_intake",
+    textField(payload, "source_reference", "source_document_id", "document_id"),
+    textField(payload, "patient_name", "patient"),
+    textField(payload, "dob", "date_of_birth"),
+    textField(payload, "payer", "payer_name", "payer_id"),
+    textField(payload, "member_id", "insurance_id", "insuranceId"),
+    textField(payload, "order_date", "date_of_service"),
+    listField(payload.hcpcs || payload.hcpcs_codes).join(","),
+  ].join("|").toLowerCase();
+  return `idem_${Buffer.from(basis).toString("base64url").slice(0, 48)}`;
 }
 
 export async function updateCase(caseId: string, patch: Partial<SpearCase>): Promise<SpearCase | null> {
@@ -1113,6 +1185,11 @@ export async function getMetrics() {
     tebra_staged: normal.filter((record) => record.tebra_status === "staged_not_submitted" || record.tebra_status === "staged_for_upload" || record.status === "tebra_ready" || record.status === "staged_for_upload").length,
     ready_to_bill: normal.filter((record) => record.status === "ready_to_bill").length,
     blocked_cases: normal.filter((record) => record.status === "blocked_missing_fields" || record.missing_fields.length > 0).length,
+    packets_awaiting_certification: normal.filter((record) => record.trident_production_status === "PACKET_REVIEW_REQUIRED").length,
+    submissions_awaiting_confirmation: normal.filter((record) => ["SUBMISSION_QUEUED", "SUBMISSION_SENT"].includes(String(record.payer_submission_status || ""))).length,
+    payer_disposition_pending: normal.filter((record) => record.payer_disposition_status === "PAYER_DISPOSITION_PENDING").length,
+    authorized: normal.filter((record) => record.payer_disposition_status === "AUTHORIZED").length,
+    denials_and_appeals: normal.filter((record) => ["DENIED", "APPEAL_REQUIRED"].includes(String(record.payer_disposition_status || ""))).length,
   };
 }
 
