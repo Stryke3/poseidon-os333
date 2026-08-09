@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { listCases, type SpearCase } from "@/lib/poseidon-store";
 import { isSpearApiAuthFailure, requireSpearApiAuth } from "@/lib/spear-auth";
-import { getSpearNextAction } from "@/lib/spear-next-action";
+import { getSpearNextAction, isArchivedCase, isSyntheticCase } from "@/lib/spear-next-action";
 
 export const dynamic = "force-dynamic";
 
@@ -77,7 +77,7 @@ export async function GET() {
   const auth = await requireSpearApiAuth();
   if (isSpearApiAuthFailure(auth)) return auth;
 
-  const cases = await listCases();
+  const cases = (await listCases()).filter((record) => !isArchivedCase(record) && !isSyntheticCase(record));
   const queues = QUEUES.map((queue) => {
     const records = cases
       .filter((record) => queue.statuses.has(String(record.status)))
