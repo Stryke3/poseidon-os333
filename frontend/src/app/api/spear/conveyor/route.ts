@@ -7,6 +7,7 @@ import {
   saveArtifact,
   saveArtifacts,
   saveDocument,
+  saveDocumentAndUpdateCase,
   saveTridentReviewAndUpdateCase,
   updateCase,
   updateCaseAndAppendEvent,
@@ -234,20 +235,18 @@ async function uploadSignedDocument(req: Request) {
   const kind = action === "upload_signed_swo" ? "signed_swo" : action === "upload_signed_pod" ? "signed_pod" : "";
   if (!kind) return NextResponse.json({ ok: false, error: `Unsupported upload action: ${action}` }, { status: 400 });
 
-  const document = await saveDocument({
+  const { document } = await saveDocumentAndUpdateCase({
     case_id: caseRecord.id,
     kind,
     filename: file.name || `${kind}.pdf`,
     content_type: file.type || "application/pdf",
     content: Buffer.from(await file.arrayBuffer()),
+    case_patch: kind === "signed_swo"
+      ? { status: "signed_swo_received", billing_status: "signed_swo_received" }
+      : { status: "signed_pod_received", pod_status: "signed" },
+    event_type: `${kind}_captured`,
+    event_payload: {},
   });
-
-  await updateCaseAndAppendEvent(caseRecord.id, kind === "signed_swo"
-    ? { status: "signed_swo_received", billing_status: "signed_swo_received", signed_swo_document_id: document.id }
-    : { status: "signed_pod_received", pod_status: "signed", signed_pod_document_id: document.id },
-    `${kind}_captured`,
-    { document_id: document.id, filename: document.filename },
-  );
   return NextResponse.json({ ok: true, action, document });
 }
 

@@ -573,6 +573,82 @@ export async function saveDocument(input: {
   return document;
 }
 
+export async function saveDocumentAndUpdateCase(input: {
+  case_id: string;
+  kind: string;
+  filename: string;
+  content_type: string;
+  content: Buffer;
+  case_patch: Partial<SpearCase>;
+  event_type: string;
+  event_payload: Record<string, unknown>;
+}): Promise<{ document: StoredDocument; case: SpearCase | null; event: WorkflowEvent | null }> {
+  const document = {
+    id: `doc_${randomUUID()}`,
+    case_id: input.case_id,
+    kind: input.kind,
+    filename: input.filename,
+    content_type: input.content_type,
+    size: input.content.length,
+    content_base64: input.content.toString("base64"),
+    created_at: new Date().toISOString(),
+  };
+  const event = {
+    id: `evt_${randomUUID()}`,
+    case_id: input.case_id,
+    event_type: input.event_type,
+    payload: {
+      document_id: document.id,
+      filename: document.filename,
+      kind: document.kind,
+      ...input.event_payload,
+    },
+    created_at: new Date().toISOString(),
+  };
+  const documentCasePatch = {
+    ...input.case_patch,
+    ...(input.kind === "signed_swo" ? { signed_swo_document_id: document.id } : {}),
+    ...(input.kind === "signed_pod" ? { signed_pod_document_id: document.id } : {}),
+  };
+
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    const index = store.cases.findIndex((record) => record.id === input.case_id || record.order_id === input.case_id);
+    if (index === -1) return { document, case: null, event: null };
+    const updated = {
+      ...store.cases[index],
+      ...documentCasePatch,
+      updated_at: new Date().toISOString(),
+    };
+    store.cases[index] = updated;
+    store.documents.push(document);
+    store.events.push(event);
+    await writeRemoteStore(store);
+    return { document, case: updated, event };
+  }
+
+  const records = await readArray<SpearCase>(CASES_PATH);
+  const index = records.findIndex((record) => record.id === input.case_id || record.order_id === input.case_id);
+  if (index === -1) return { document, case: null, event: null };
+  const updated = {
+    ...records[index],
+    ...documentCasePatch,
+    updated_at: new Date().toISOString(),
+  };
+  records[index] = updated;
+  await writeArray(CASES_PATH, records);
+
+  const documents = await readArray<StoredDocument>(DOCUMENTS_PATH);
+  documents.push(document);
+  await writeArray(DOCUMENTS_PATH, documents);
+
+  const events = await readArray<WorkflowEvent>(EVENTS_PATH);
+  events.push(event);
+  await writeArray(EVENTS_PATH, events);
+
+  return { document, case: updated, event };
+}
+
 export async function savePendingIntakeDocument(input: {
   filename: string;
   content_type: string;
