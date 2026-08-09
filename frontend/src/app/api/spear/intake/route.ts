@@ -3,7 +3,7 @@ import { parseUnpdf } from '@/lib/ocr/unpdf';
 import { parseTesseract } from '@/lib/ocr/tesseract';
 import { parseTextract } from '@/lib/ocr/textract';
 import { extractStructuredFieldsFromText } from '@/lib/intake-extraction';
-import { appendWorkflowEvent, appendWorkflowEvents, attachDocumentToCase, createCaseFromIntake, saveDocument, saveTridentReview, updateCase } from '@/lib/poseidon-store';
+import { createCaseFromIntake, finalizeIntakeCase, updateCase } from '@/lib/poseidon-store';
 import { isSpearApiAuthFailure, requireSpearApiAuth } from '@/lib/spear-auth';
 import { getMasterData, normalizePayer, normalizeProviderFacility, recommendConfiguredKit } from '@/lib/spear-master-data';
 
@@ -208,62 +208,6 @@ export async function POST(req: Request) {
   const intakeEvents: Array<{ event_type: string; payload: unknown }> = [
     { event_type: "intake_received", payload: { source: payload.source, document_id: pendingDocumentId || undefined } },
   ];
-  if (uploaded?.buffer) {
-    const document = await saveDocument({
-      case_id: record.id,
-      kind: "source_intake",
-      filename: uploaded.filename,
-      content_type: uploaded.content_type,
-      content: uploaded.buffer,
-    });
-    await updateCase(record.id, {
-      document_ids: [document.id],
-      source_document_id: document.id,
-    });
-  }
-  if (pendingDocumentId) {
-    const document = await attachDocumentToCase(pendingDocumentId, record.id);
-    if (!document) {
-      if (uploaded?.buffer) {
-        const fallbackDocument = await saveDocument({
-          case_id: record.id,
-          kind: "source_intake",
-          filename: uploaded.filename,
-          content_type: uploaded.content_type,
-          content: uploaded.buffer,
-        });
-        await updateCase(record.id, {
-          document_ids: [fallbackDocument.id],
-          source_document_id: fallbackDocument.id,
-          extraction_result: payload.extraction_result || null,
-          operator_corrections: payload.operator_corrections || [],
-        });
-        intakeEvents.push({
-          event_type: "source_document_attach_fallback",
-          payload: {
-          pending_document_id: pendingDocumentId,
-          document_id: fallbackDocument.id,
-          },
-        });
-      } else {
-        await appendWorkflowEvent(record.id, "source_document_attach_failed", { document_id: pendingDocumentId });
-        return NextResponse.json({
-          ok: false,
-          error: "Case created, but the stored source document could not be attached.",
-          case_id: record.id,
-          order_id: record.order_id,
-          next_action: "Open the case workspace and re-upload the source document before Trident review.",
-        }, { status: 500 });
-      }
-    } else {
-      await updateCase(record.id, {
-        document_ids: [document.id],
-        source_document_id: document.id,
-        extraction_result: payload.extraction_result || null,
-        operator_corrections: payload.operator_corrections || [],
-      });
-    }
-  }
   if (parsedFieldsPresent) {
     intakeEvents.push({
       event_type: "extraction_complete",
@@ -361,8 +305,23 @@ export async function POST(req: Request) {
       ? ["Review source HCPCS conflict against configured kit before packet generation."]
       : ["Review and approve Trident kit recommendation before provider packet generation."],
   };
-  await saveTridentReview(record.id, review);
-  record = await updateCase(record.id, {
+  const finalized = await finalizeIntakeCase({
+    case_id: record.id,
+    pending_document_id: pendingDocumentId,
+    fallback_document: uploaded?.buffer ? {
+      filename: uploaded.filename,
+      content_type: uploaded.content_type,
+      content: uploaded.buffer,
+    } : undefined,
+    review,
+    events: [
+      ...intakeEvents,
+      { event_type: "trident_auto_completed", payload: review },
+      { event_type: "carepath_recommended", payload: review.recommended_carepath },
+      { event_type: "kit_recommended", payload: review.recommended_kit },
+      { event_type: "coding_recommended", payload: { recommended_hcpcs: recommendedHcpcs, conflicts } },
+    ],
+    case_patch: {
     carepath_id: String(recommendation.carepath?.id || ""),
     carepath_name: String(recommendation.carepath?.name || ""),
     recommended_kit_id: String(recommendation.kit?.id || ""),
@@ -372,14 +331,9 @@ export async function POST(req: Request) {
     trident_status: review.review_status,
     coding_status: "trident_recommended",
     status: "trident_review_complete",
-  }) || record;
-  intakeEvents.push(
-    { event_type: "trident_auto_completed", payload: review },
-    { event_type: "carepath_recommended", payload: review.recommended_carepath },
-    { event_type: "kit_recommended", payload: review.recommended_kit },
-    { event_type: "coding_recommended", payload: { recommended_hcpcs: recommendedHcpcs, conflicts } },
-  );
-  await appendWorkflowEvents(record.id, intakeEvents);
+    },
+  });
+  record = finalized.case || record;
 
   return NextResponse.json({
     ok: true,

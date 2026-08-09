@@ -105,6 +105,9 @@ export type StoredDocument = {
   size: number;
   content_base64: string;
   created_at: string;
+  attached_at?: string;
+  storage_status?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type StoredArtifact = {
@@ -647,6 +650,184 @@ export async function saveDocumentAndUpdateCase(input: {
   await writeArray(EVENTS_PATH, events);
 
   return { document, case: updated, event };
+}
+
+export async function finalizeIntakeCase(input: {
+  case_id: string;
+  case_patch: Partial<SpearCase>;
+  pending_document_id?: string;
+  fallback_document?: {
+    filename: string;
+    content_type: string;
+    content: Buffer;
+  };
+  review: unknown;
+  events: Array<{ event_type: string; payload: unknown }>;
+}): Promise<{ case: SpearCase | null; document: StoredDocument | null; review: TridentReview }> {
+  const now = new Date().toISOString();
+  const reviewRecord = {
+    id: `tri_${randomUUID()}`,
+    case_id: input.case_id,
+    created_at: now,
+    review: input.review,
+  };
+
+  if (hasRemoteStore()) {
+    const store = await readRemoteStore();
+    const caseIndex = store.cases.findIndex((record) => record.id === input.case_id || record.order_id === input.case_id);
+    if (caseIndex === -1) return { case: null, document: null, review: reviewRecord };
+
+    let document: StoredDocument | null = null;
+    if (input.pending_document_id) {
+      const docIndex = store.documents.findIndex((record) => record.id === input.pending_document_id);
+      if (docIndex !== -1) {
+        document = {
+          ...store.documents[docIndex],
+          case_id: store.cases[caseIndex].id,
+          attached_at: now,
+        };
+        store.documents[docIndex] = document;
+      }
+    }
+
+    if (!document && input.fallback_document) {
+      document = {
+        id: `doc_${randomUUID()}`,
+        case_id: store.cases[caseIndex].id,
+        kind: "source_intake",
+        filename: input.fallback_document.filename,
+        content_type: input.fallback_document.content_type,
+        size: input.fallback_document.content.length,
+        content_base64: input.fallback_document.content.toString("base64"),
+        created_at: now,
+        attached_at: now,
+      };
+      store.documents.push(document);
+    }
+
+    const documentPatch = document ? {
+      document_ids: [document.id],
+      source_document_id: document.id,
+    } : {};
+    const updated = {
+      ...store.cases[caseIndex],
+      ...input.case_patch,
+      ...documentPatch,
+      updated_at: now,
+    };
+    store.cases[caseIndex] = updated;
+    store.trident_reviews.push(reviewRecord);
+    store.events.push({
+      id: `evt_${randomUUID()}`,
+      case_id: updated.id,
+      event_type: "trident_review_stored",
+      payload: input.review,
+      created_at: now,
+    });
+    if (document) {
+      store.events.push({
+        id: `evt_${randomUUID()}`,
+        case_id: updated.id,
+        event_type: "source_document_attached",
+        payload: {
+          document_id: document.id,
+          filename: document.filename,
+          size: document.size,
+        },
+        created_at: now,
+      });
+    }
+    store.events.push(...input.events.map((entry) => ({
+      id: `evt_${randomUUID()}`,
+      case_id: updated.id,
+      event_type: entry.event_type,
+      payload: entry.payload,
+      created_at: now,
+    })));
+    await writeRemoteStore(store);
+    return { case: updated, document, review: reviewRecord };
+  }
+
+  const cases = await readArray<SpearCase>(CASES_PATH);
+  const caseIndex = cases.findIndex((record) => record.id === input.case_id || record.order_id === input.case_id);
+  if (caseIndex === -1) return { case: null, document: null, review: reviewRecord };
+
+  const documents = await readArray<StoredDocument>(DOCUMENTS_PATH);
+  let document: StoredDocument | null = null;
+  if (input.pending_document_id) {
+    const docIndex = documents.findIndex((record) => record.id === input.pending_document_id);
+    if (docIndex !== -1) {
+      document = {
+        ...documents[docIndex],
+        case_id: cases[caseIndex].id,
+        attached_at: now,
+      };
+      documents[docIndex] = document;
+    }
+  }
+  if (!document && input.fallback_document) {
+    document = {
+      id: `doc_${randomUUID()}`,
+      case_id: cases[caseIndex].id,
+      kind: "source_intake",
+      filename: input.fallback_document.filename,
+      content_type: input.fallback_document.content_type,
+      size: input.fallback_document.content.length,
+      content_base64: input.fallback_document.content.toString("base64"),
+      created_at: now,
+      attached_at: now,
+    };
+    documents.push(document);
+  }
+  await writeArray(DOCUMENTS_PATH, documents);
+
+  const documentPatch = document ? {
+    document_ids: [document.id],
+    source_document_id: document.id,
+  } : {};
+  const updated = {
+    ...cases[caseIndex],
+    ...input.case_patch,
+    ...documentPatch,
+    updated_at: now,
+  };
+  cases[caseIndex] = updated;
+  await writeArray(CASES_PATH, cases);
+
+  const reviews = await readArray<TridentReview>(REVIEWS_PATH);
+  reviews.push(reviewRecord);
+  await writeArray(REVIEWS_PATH, reviews);
+
+  const events = await readArray<WorkflowEvent>(EVENTS_PATH);
+  events.push(
+    {
+      id: `evt_${randomUUID()}`,
+      case_id: updated.id,
+      event_type: "trident_review_stored",
+      payload: input.review,
+      created_at: now,
+    },
+    ...(document ? [{
+      id: `evt_${randomUUID()}`,
+      case_id: updated.id,
+      event_type: "source_document_attached",
+      payload: {
+        document_id: document.id,
+        filename: document.filename,
+        size: document.size,
+      },
+      created_at: now,
+    }] : []),
+    ...input.events.map((entry) => ({
+      id: `evt_${randomUUID()}`,
+      case_id: updated.id,
+      event_type: entry.event_type,
+      payload: entry.payload,
+      created_at: now,
+    })),
+  );
+  await writeArray(EVENTS_PATH, events);
+  return { case: updated, document, review: reviewRecord };
 }
 
 export async function savePendingIntakeDocument(input: {
