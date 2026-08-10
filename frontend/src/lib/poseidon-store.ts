@@ -183,6 +183,13 @@ function hasGistStore() {
 function shouldPreserveRemoteBytes(record: { kind?: string; metadata?: Record<string, unknown> }) {
   return record.metadata?.preserve_bytes === true || [
     "trident_hard_packet",
+    "coding_cover",
+    "provider_swo",
+    "payer_addendum",
+    "billing_packet",
+    "pod",
+    "final_bill_ready_packet",
+    "tebra_staging_manifest",
     "submission_confirmation",
   ].includes(String(record.kind || ""));
 }

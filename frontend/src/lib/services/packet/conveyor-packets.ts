@@ -24,6 +24,37 @@ function asList(value: unknown): string[] {
   return [];
 }
 
+function unique(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function payerType(caseRecord: SpearCase) {
+  const haystack = [
+    caseRecord.payer,
+    caseRecord.canonical_payer,
+    caseRecord.raw_payer,
+    caseRecord.payer_id,
+    caseRecord.canonical_payer_id,
+  ].map((value) => String(value || "").toLowerCase()).join(" ");
+  if (haystack.includes("medicaid")) return "medicaid";
+  if (haystack.includes("medicare") || haystack.includes("cms")) return "medicare";
+  return "commercial_or_review";
+}
+
+function operationalHcpcs(caseRecord: SpearCase) {
+  return unique([
+    ...asList(caseRecord.final_hcpcs),
+    ...asList(caseRecord.operator_approved_hcpcs),
+    ...asList(caseRecord.trident_recommended_hcpcs),
+    ...asList(caseRecord.hcpcs),
+    ...asList(caseRecord.source_hcpcs),
+  ]);
+}
+
+function packetHcpcs(caseRecord: SpearCase) {
+  return unique([...operationalHcpcs(caseRecord), "E0676"]);
+}
+
 function wrapText(text: string, maxChars = 92): string[] {
   const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
@@ -55,13 +86,42 @@ function patientLines(caseRecord: SpearCase) {
 }
 
 function billingLines(caseRecord: SpearCase) {
-  const hcpcs = asList(caseRecord.hcpcs);
-  const icd = asList(caseRecord.icd);
+  const hcpcs = packetHcpcs(caseRecord);
+  const operational = operationalHcpcs(caseRecord);
+  const icd = unique([
+    ...asList(caseRecord.final_icd),
+    ...asList(caseRecord.operator_approved_icd),
+    ...asList(caseRecord.trident_recommended_icd),
+    ...asList(caseRecord.icd),
+    ...asList(caseRecord.source_icd),
+  ]);
+  const payer = payerType(caseRecord);
   return [
-    `HCPCS Lines: ${hcpcs.join(", ") || "Missing"}`,
+    `Packet HCPCS / provider review lines: ${hcpcs.join(", ") || "Missing"}`,
+    `Operational claim-ready HCPCS before provider sign-off: ${operational.join(", ") || "Pending Trident/operator approval"}`,
     `ICD-10 Pointers: ${icd.join(", ") || "Missing"}`,
+    payer === "commercial_or_review"
+      ? "E0676: included for provider medical-necessity sign-off and commercial payer-policy review."
+      : "E0676: included for provider medical-necessity sign-off; Medicare/Medicaid claim release requires separate coverage/legal billing review.",
     "Place of Service: 12 - Home unless updated by billing operator",
     "Submission State: Tebra-ready metadata staged only. No payer or Tebra API submission made.",
+  ];
+}
+
+function e0676AddendumLines(caseRecord: SpearCase) {
+  const payer = payerType(caseRecord);
+  return [
+    "HCPCS E0676 - Intermittent limb compression device / DVT cold-flow support.",
+    `Patient: ${caseRecord.patient_name || "Missing"} | DOB: ${caseRecord.dob || "Missing"} | Laterality: ${caseRecord.laterality || "Missing"}`,
+    `Diagnosis support: ${unique([...asList(caseRecord.icd), ...asList(caseRecord.source_icd), ...asList(caseRecord.trident_recommended_icd)]).join(", ") || "Missing"}`,
+    "Provider attestation: I have reviewed E0676 for this patient and either order it as medically necessary or decline it below.",
+    "[  ] ORDER E0676 - medically necessary for post-operative DVT risk / edema control / recovery support.",
+    "[  ] DO NOT ORDER E0676 for this patient.",
+    payer === "commercial_or_review"
+      ? "Billing note: commercial/private payer coverage must be verified and NOC narrative included where required."
+      : "Billing note: payer appears Medicare/Medicaid. Do not release E0676 as a claim line without separate coverage determination, ABN/non-covered workflow where applicable, and billing approval.",
+    "Physician signature: ________________________________",
+    "Date: __________________",
   ];
 }
 
@@ -78,6 +138,7 @@ function defaultSections(caseRecord: SpearCase, kind: PacketKind) {
     return [
       ...common,
       { heading: "Standard Written Order", lines: billingLines(caseRecord) },
+      { heading: "E0676 Provider Addendum / Sign-Off", lines: e0676AddendumLines(caseRecord) },
       { heading: "Provider Signature", lines: ["Physician signature required before claim packet can be marked signed.", "Signature: ________________________________", "Date: __________________"] },
     ];
   }
@@ -85,13 +146,15 @@ function defaultSections(caseRecord: SpearCase, kind: PacketKind) {
     return [
       ...common,
       { heading: "Medical Necessity Rationale", lines: [`Requested product: ${caseRecord.product || "DME/orthotic support"}`, `Diagnosis support: ${asList(caseRecord.icd).join(", ") || "Missing"}`] },
+      { heading: "E0676 Addendum", lines: e0676AddendumLines(caseRecord) },
       { heading: "Audit Checklist", lines: ["Signed order present", "Diagnosis supports HCPCS", "Payer/member identifiers present", "Proof of delivery required before final billing"] },
     ];
   }
   if (kind === "pod") {
     return [
       ...common,
-      { heading: "Proof of Delivery", lines: [`Items delivered: ${asList(caseRecord.hcpcs).join(", ") || "Missing"}`, "Beneficiary signature required. Do not mark delivered without uploaded signed POD."] },
+      { heading: "Proof of Delivery", lines: [`Items delivered / reviewed: ${packetHcpcs(caseRecord).join(", ") || "Missing"}`, "Beneficiary signature required. Do not mark delivered without uploaded signed POD."] },
+      { heading: "E0676 Delivery Note", lines: ["If E0676 is delivered, signed POD must specifically support the item. If not delivered, operator must mark it not fulfilled before billing release."] },
       { heading: "Recipient Signature", lines: ["Signature: ________________________________", "Date: __________________"] },
     ];
   }
@@ -99,12 +162,14 @@ function defaultSections(caseRecord: SpearCase, kind: PacketKind) {
     return [
       ...common,
       { heading: "Final Packet Contents", lines: ["Signed SWO captured", "Billing packet generated", "POD generated", "Signed POD captured", "Tebra staging metadata created"] },
+      { heading: "E0676 Final Review", lines: e0676AddendumLines(caseRecord) },
       { heading: "Billing Status", lines: ["READY TO BILL. This is staging readiness only, not proof of payer submission or payment."] },
     ];
   }
   return [
     ...common,
     { heading: "CMS-1500 Line Summary", lines: billingLines(caseRecord) },
+    { heading: "E0676 Billing Review Addendum", lines: e0676AddendumLines(caseRecord) },
     { heading: "Tebra Staging", lines: ["Packet metadata prepared for Tebra import. No external Tebra API call has been performed."] },
   ];
 }

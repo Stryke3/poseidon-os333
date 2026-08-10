@@ -28,10 +28,21 @@ function listValue(value: unknown): unknown[] {
   return [];
 }
 
+function operationalHcpcs(caseRecord: SpearCase) {
+  return [
+    ...listValue(caseRecord.final_hcpcs),
+    ...listValue(caseRecord.operator_approved_hcpcs),
+    ...listValue(caseRecord.trident_recommended_hcpcs),
+    ...listValue(caseRecord.hcpcs),
+    ...listValue(caseRecord.source_hcpcs),
+  ].map(String).filter(Boolean);
+}
+
 function missingFields(caseRecord: SpearCase) {
   return REQUIRED_FIELDS.filter((field) => {
     const value = caseRecord[field];
-    if (field === "hcpcs" || field === "icd") return listValue(value).length === 0;
+    if (field === "hcpcs") return operationalHcpcs(caseRecord).length === 0;
+    if (field === "icd") return listValue(caseRecord.final_icd || caseRecord.operator_approved_icd || caseRecord.trident_recommended_icd || caseRecord.icd || caseRecord.source_icd).length === 0;
     return !String(value || "").trim();
   });
 }
@@ -186,6 +197,12 @@ async function jsonAction(body: Record<string, unknown>) {
       provider: caseRecord.provider,
       npi: caseRecord.npi,
       hcpcs: caseRecord.hcpcs,
+      provider_review_hcpcs: Array.from(new Set([...operationalHcpcs(caseRecord), "E0676"])),
+      e0676_addendum: {
+        included_in_packet: true,
+        required_in_swo: true,
+        billing_release_note: "E0676 requires provider sign-off and payer-specific coverage review before claim release.",
+      },
       icd: caseRecord.icd,
       place_of_service: "12",
       tebra_submission_status: "staged_not_submitted",

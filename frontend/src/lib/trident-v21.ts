@@ -18,6 +18,10 @@ function arr(value: unknown): string[] {
   return [];
 }
 
+function uniq(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
 function text(value: unknown, fallback = "") {
   return String(value || fallback).trim();
 }
@@ -63,21 +67,34 @@ export function determineProceduralRoute(caseRecord: SpearCase): { route: Proced
 }
 
 export function buildLineItems(caseRecord: SpearCase, documents: StoredDocument[]) {
-  const hcpcs = arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs || caseRecord.trident_recommended_hcpcs || caseRecord.hcpcs);
-  const icd = arr(caseRecord.final_icd || caseRecord.operator_approved_icd || caseRecord.trident_recommended_icd || caseRecord.icd);
+  const hcpcs = uniq([
+    ...arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs || caseRecord.trident_recommended_hcpcs || caseRecord.hcpcs),
+    "E0676",
+  ]);
+  const icd = uniq([
+    ...arr(caseRecord.final_icd || caseRecord.operator_approved_icd || caseRecord.trident_recommended_icd || caseRecord.icd),
+    ...arr(caseRecord.source_icd),
+  ]);
   const hasSource = documents.some((doc) => doc.kind === "source_intake");
   const hasSignedOrder = documents.some((doc) => doc.kind === "signed_swo");
+  const payerText = [caseRecord.payer, caseRecord.canonical_payer, caseRecord.raw_payer].map((value) => text(value).toLowerCase()).join(" ");
+  const payerRestricted = payerText.includes("medicare") || payerText.includes("medicaid") || payerText.includes("cms");
   return hcpcs.map((code, index) => {
     const diagnosis = icd[index] || icd[0] || "";
-    const status: EvidenceStatus = diagnosis && (hasSource || hasSignedOrder) ? "pass" : "deficiency";
+    const e0676Restricted = code === "E0676" && payerRestricted;
+    const status: EvidenceStatus = e0676Restricted ? "reviewer_needed" : diagnosis && (hasSource || hasSignedOrder) ? "pass" : "deficiency";
     return {
       id: `line_${index + 1}_${code}`,
       hcpcs: code,
       diagnosis,
-      coverage_requirement: "Documented order, diagnosis support, and item-specific medical necessity.",
-      evidence_satisfying_requirement: hasSignedOrder ? "Signed SWO and intake evidence present." : hasSource ? "Source intake evidence present; signed SWO still required for downstream billing." : "No supporting source document stored.",
+      coverage_requirement: code === "E0676"
+        ? "E0676 provider addendum/sign-off, item-specific medical necessity, NOC narrative where payer requires, and payer-specific coverage review."
+        : "Documented order, diagnosis support, and item-specific medical necessity.",
+      evidence_satisfying_requirement: e0676Restricted
+        ? "E0676 appears in the packet for provider sign-off; Medicare/Medicaid billing release requires separate coverage review and billing approval."
+        : hasSignedOrder ? "Signed SWO and intake evidence present." : hasSource ? "Source intake evidence present; signed SWO still required for downstream billing." : "No supporting source document stored.",
       exhibit: hasSignedOrder ? "Exhibit A" : hasSource ? "Exhibit B" : "Unmapped",
-      page_location: hasSignedOrder ? "Provider packet / signed SWO" : hasSource ? "Source intake document" : "Missing",
+      page_location: code === "E0676" ? "Provider packet / E0676 addendum" : hasSignedOrder ? "Provider packet / signed SWO" : hasSource ? "Source intake document" : "Missing",
       status,
       policy_crosswalk: {
         payer: caseRecord.payer || "Unknown payer",
@@ -86,14 +103,16 @@ export function buildLineItems(caseRecord: SpearCase, documents: StoredDocument[
         applicable_policy: `${caseRecord.payer || "Payer"} ${code} coverage policy`,
         policy_version_or_effective_date: caseRecord.policy_effective_date || "Requires verification",
         benefit_category: "DME/medical benefit unless payer policy states otherwise",
-        documentation_requirement: "Order, diagnosis support, medical necessity, and item evidence.",
+        documentation_requirement: code === "E0676" ? "Signed E0676 addendum, provider order, medical necessity, payer policy review, and NOC narrative if billed." : "Order, diagnosis support, medical necessity, and item evidence.",
         physician_order_requirement: "Signed physician order/SWO required before fulfillment and billing.",
-        medical_necessity_requirement: "Functional limitation or recovery need documented in submitted record.",
-        supporting_exhibit_and_page: hasSource ? "Evidence index references submitted source document." : "Missing evidence",
+        medical_necessity_requirement: code === "E0676" ? "Document post-operative DVT risk, edema control need, recovery support need, or payer-specific medical necessity basis." : "Functional limitation or recovery need documented in submitted record.",
+        supporting_exhibit_and_page: code === "E0676" ? "E0676 provider addendum / sign-off section." : hasSource ? "Evidence index references submitted source document." : "Missing evidence",
         source_reference: caseRecord.policy_source || "Internal payer library/operator verification required",
-        reviewer_conclusion: status === "pass" ? "Criteria mapped for reviewer certification." : "Deficiency blocks certification.",
+        reviewer_conclusion: status === "pass" ? "Criteria mapped for reviewer certification." : status === "reviewer_needed" ? "Reviewer must verify payer-specific release before billing." : "Deficiency blocks certification.",
       },
-      medical_necessity_narrative: `${code} is requested for ${caseRecord.patient_name || "the patient"} with diagnosis ${diagnosis || "not captured"}. The submitted record must support the functional deficit, physician assessment, treatment objective, and expected clinical benefit before release.`,
+      medical_necessity_narrative: code === "E0676"
+        ? `E0676 is included for provider review/sign-off for ${caseRecord.patient_name || "the patient"} with diagnosis ${diagnosis || "not captured"}. The signed addendum must document medical necessity for DVT prophylaxis, edema control, and recovery support before any payer-specific billing release.`
+        : `${code} is requested for ${caseRecord.patient_name || "the patient"} with diagnosis ${diagnosis || "not captured"}. The submitted record must support the functional deficit, physician assessment, treatment objective, and expected clinical benefit before release.`,
     };
   });
 }
