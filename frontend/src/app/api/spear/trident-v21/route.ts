@@ -49,10 +49,11 @@ async function generatePacket(caseId: string) {
   if (!caseRecord) return NextResponse.json({ ok: false, error: "Case not found", case_id: caseId }, { status: 404 });
   const documents = await listDocuments(caseRecord.id);
   const review = buildTridentV21Review(caseRecord, documents);
-  if (review.review_status !== "packet_review_required") {
+  const hardBlockers = [...review.missing_fields, ...review.deficiencies];
+  if (hardBlockers.length) {
     await saveTridentReviewAndUpdateCase(caseRecord.id, review, {
-      status: review.destination_verified ? "blocked_missing_fields" : "blocked_destination_unverified",
-      trident_production_status: review.destination_verified ? "BLOCKED_MISSING_DOCUMENTATION" : "BLOCKED_DESTINATION_UNVERIFIED",
+      status: "blocked_missing_fields",
+      trident_production_status: "BLOCKED_MISSING_DOCUMENTATION",
       payer_submission_status: "NOT_READY",
       payer_disposition_status: review.route === "no_authorization_required" ? "BLOCKED_ROUTING_UNVERIFIED" : "NOT_STARTED",
       procedural_posture: review.route,
@@ -79,6 +80,8 @@ async function generatePacket(caseId: string) {
       sha256: packet.sha256,
       route: review.route,
       packet_title: review.packet_title,
+      destination_verified: review.destination_verified,
+      destination_warning: review.destination_verified ? "" : "Payer destination is not verified. Packet generated for review; transmission remains blocked until destination is verified.",
     },
   });
   await saveTridentReviewAndUpdateCase(caseRecord.id, review, {
@@ -88,13 +91,27 @@ async function generatePacket(caseId: string) {
     procedural_posture: review.route,
     route: review.route,
     packet_title: review.packet_title,
-    trident_v21_review: review,
+    trident_v21_review: {
+      ...review,
+      review_status: "packet_review_required",
+      packet_generation_warning: review.destination_verified ? "" : "Destination verification is required before transmission, not before hard-packet generation.",
+    },
     trident_hard_packet_artifact_id: artifact.id,
     trident_hard_packet_version: packet.version,
     trident_hard_packet_sha256: packet.sha256,
     trident_hard_packet_page_count: packet.page_count,
   });
-  return NextResponse.json({ ok: true, action: "generate_hard_packet", artifact, packet: { version: packet.version, page_count: packet.page_count, sha256: packet.sha256 }, review });
+  return NextResponse.json({
+    ok: true,
+    action: "generate_hard_packet",
+    artifact,
+    packet: { version: packet.version, page_count: packet.page_count, sha256: packet.sha256 },
+    review: {
+      ...review,
+      review_status: "packet_review_required",
+      packet_generation_warning: review.destination_verified ? "" : "Destination verification is required before transmission, not before hard-packet generation.",
+    },
+  });
 }
 
 async function certifyPacket(body: Record<string, unknown>, authUser: string) {

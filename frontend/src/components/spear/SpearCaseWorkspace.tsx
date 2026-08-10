@@ -46,6 +46,21 @@ function age(value: unknown) {
   return `${Math.floor(hours / 24)} days open`
 }
 
+function useViewportWidth() {
+  const [width, setWidth] = useState(1200)
+  useEffect(() => {
+    const update = () => setWidth(window.innerWidth)
+    update()
+    window.addEventListener("resize", update)
+    window.addEventListener("orientationchange", update)
+    return () => {
+      window.removeEventListener("resize", update)
+      window.removeEventListener("orientationchange", update)
+    }
+  }, [])
+  return width
+}
+
 function productLine(c: Item) {
   const product = val(c.product ?? c.order_type, "")
   const hcpcs = val(c.final_hcpcs ?? c.operator_approved_hcpcs ?? c.trident_recommended_hcpcs ?? c.source_hcpcs ?? c.hcpcs, "")
@@ -98,8 +113,10 @@ function FieldCard({ title, rows }: { title: string; rows: Array<[string, unknow
 }
 
 function DocumentRow({ label, item, required = true, uploaded = false }: { label: string; item: Item | null; required?: boolean; uploaded?: boolean }) {
+  const width = useViewportWidth()
+  const compact = width < 820
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.8fr 1fr 0.7fr", gap: 10, alignItems: "center", borderTop: "1px solid #F1F5F9", padding: "10px 0" }}>
+    <div style={{ display: "grid", gridTemplateColumns: compact ? "1fr" : "1.1fr 0.8fr 1fr 0.7fr", gap: compact ? 8 : 10, alignItems: compact ? "start" : "center", borderTop: "1px solid #F1F5F9", padding: "10px 0" }}>
       <div>
         <div style={{ fontSize: 13, color: "#0F172A", fontWeight: 600 }}>{label}</div>
         <div style={{ fontSize: 11, color: "#64748B" }}>{required ? "Required" : "Optional"}</div>
@@ -111,7 +128,7 @@ function DocumentRow({ label, item, required = true, uploaded = false }: { label
         {item ? <>{val(item.filename, "Unnamed file")}<br /><span style={{ color: "#94A3B8" }}>{date(item.created_at)}</span></> : "Not present"}
       </div>
       {item?.id ? (
-        <a href={`/api/spear/${uploaded ? "documents" : "artifacts"}/${item.id}`} style={{ fontSize: 12, color: "#2563EB", fontWeight: 600 }}>Download</a>
+        <a href={`/api/spear/${uploaded ? "documents" : "artifacts"}/${item.id}`} style={{ fontSize: 12, color: "#2563EB", fontWeight: 600, minHeight: 32, display: "inline-flex", alignItems: "center" }}>Download</a>
       ) : item ? <span style={{ fontSize: 12, color: "#64748B" }}>Stored</span> : <span style={{ fontSize: 12, color: "#CBD5E1" }}>View</span>}
     </div>
   )
@@ -161,6 +178,13 @@ function UploadPanel({ title, instructions, action, caseId, onDone }: { title: s
 }
 
 export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
+  const viewportWidth = useViewportWidth()
+  const isPhone = viewportWidth < 720
+  const isTablet = viewportWidth < 1100
+  const pagePadding = isPhone ? "16px" : isTablet ? "20px" : "24px 32px"
+  const headerGridColumns = isPhone ? "1fr" : isTablet ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(160px, 1fr))"
+  const tripleGridColumns = isTablet ? "1fr" : "repeat(3, minmax(0, 1fr))"
+  const quadGridColumns = isPhone ? "1fr" : isTablet ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))"
   const [detail, setDetail] = useState<Detail | null>(null)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState("")
@@ -284,13 +308,13 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
   const submissionConfirmation = latestByKind(artifacts, "submission_confirmation")
 
   return (
-    <div style={{ background: "#FFFFFF", minHeight: "100%", color: "#0F172A" }}>
-      <div style={{ padding: "22px 32px", borderBottom: "1px solid #E2E8F0" }}>
+    <div style={{ background: "#FFFFFF", minHeight: "100%", color: "#0F172A", overflowX: "hidden" }}>
+      <div style={{ padding: isPhone ? "18px 16px" : isTablet ? "20px" : "22px 32px", borderBottom: "1px solid #E2E8F0" }}>
         <Link href="/spear/cases" style={{ fontSize: 12, color: "#2563EB", textDecoration: "none", fontWeight: 700 }}>Back to Cases</Link>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 20, marginTop: 14 }}>
+        <div style={{ display: "flex", flexDirection: isTablet ? "column" : "row", justifyContent: "space-between", gap: 20, marginTop: 14 }}>
           <div style={{ flex: 1 }}>
-            <h1 style={{ margin: "0 0 8px", fontSize: 28 }}>{val(c.patient_name, "Missing patient")}</h1>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(160px, 1fr))", gap: 10, marginBottom: 12 }}>
+            <h1 style={{ margin: "0 0 8px", fontSize: isPhone ? 24 : 28, lineHeight: 1.12 }}>{val(c.patient_name, "Missing patient")}</h1>
+            <div style={{ display: "grid", gridTemplateColumns: headerGridColumns, gap: 10, marginBottom: 12 }}>
               {([
                 ["DOB", c.dob],
                 ["MRN", c.mrn],
@@ -309,7 +333,7 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
               ] as Array<[string, unknown]>).map(([label, value]) => (
                 <div key={String(label)} style={{ border: "1px solid #E2E8F0", borderRadius: 8, padding: "8px 10px", background: "#F8FAFC" }}>
                   <div style={{ fontSize: 10, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 800 }}>{label}</div>
-                  <div style={{ fontSize: 13, color: "#0F172A", fontWeight: 700, marginTop: 2 }}>{val(value)}</div>
+                  <div style={{ fontSize: 13, color: "#0F172A", fontWeight: 700, marginTop: 2, overflowWrap: "anywhere" }}>{val(value)}</div>
                 </div>
               ))}
             </div>
@@ -323,7 +347,7 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
         </div>
       </div>
 
-      <div style={{ padding: "24px 32px", display: "grid", gap: 18 }}>
+      <div style={{ padding: pagePadding, display: "grid", gap: 18 }}>
         <section style={{ border: "1px solid #BFDBFE", background: "#EFF6FF", borderRadius: 12, padding: 18 }}>
           <p style={{ margin: "0 0 8px", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#1D4ED8", fontWeight: 800 }}>Current Stage</p>
           <h2 style={{ margin: "0 0 8px", fontSize: 22 }}>{readiness.stageLabel}</h2>
@@ -350,7 +374,7 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
               {val(c.coding_status, "pending_trident").replace(/_/g, " ")}
             </span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: tripleGridColumns, gap: 12 }}>
             <FieldCard title="Source Coding" rows={[
               ["Source order/product", c.product],
               ["Source HCPCS", c.source_hcpcs, "No source HCPCS. To be assigned by Trident."],
@@ -385,8 +409,8 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
           ) : null}
         </section>
 
-        <div style={{ border: "1px solid #E2E8F0", borderRadius: 10, padding: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", overflowX: "auto" }}>
+        <div style={{ border: "1px solid #E2E8F0", borderRadius: 10, padding: isPhone ? 12 : 16 }}>
+          <div style={{ display: "flex", alignItems: "center", overflowX: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 4 }}>
             {WORKFLOW_STEPS.map((step, index) => {
               const complete = index < readiness.progressIndex
               const current = index === readiness.progressIndex
@@ -413,7 +437,7 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
           />
         ) : null}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: quadGridColumns, gap: 12 }}>
           <FieldCard title="Patient" rows={[["Name", c.patient_name, "Missing"], ["DOB", c.dob, "Missing"], ["MRN", c.mrn], ["Phone", c.phone], ["Email", c.email], ["Address", c.address]]} />
           <FieldCard title="Payer" rows={[
             ["Canonical Payer", c.canonical_payer || c.payer, "Missing"],
@@ -442,7 +466,7 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
 
         <details style={{ border: "1px solid #E2E8F0", borderRadius: 10, padding: 16, background: "#F8FAFC" }}>
           <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 800, color: "#334155" }}>Technical Details</summary>
-          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, fontSize: 12, color: "#475569" }}>
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: isPhone ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10, fontSize: 12, color: "#475569" }}>
             {([
               ["Case ID", c.id],
               ["Order ID", c.order_id],
@@ -522,7 +546,7 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
 
         <section style={{ border: "1px solid #E2E8F0", borderRadius: 10, padding: 16 }}>
           <h2 style={{ margin: "0 0 12px", fontSize: 16 }}>Payer Submission Gate</h2>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: quadGridColumns, gap: 10 }}>
             <FieldCard title="TRIDENT Production" rows={[["Status", c.trident_production_status], ["Packet Version", c.trident_hard_packet_version], ["Packet SHA-256", c.trident_hard_packet_sha256], ["Page Count", c.trident_hard_packet_page_count]]} />
             <FieldCard title="Certification" rows={[["Reviewer", c.trident_reviewer_identity], ["Certified At", c.trident_reviewer_certified_at], ["Packet", c.trident_certified_packet_artifact_id]]} />
             <FieldCard title="Transmission" rows={[["Submission Status", c.payer_submission_status], ["Provider ID", c.submission_provider_id], ["Destination", c.submission_destination], ["Confirmed At", c.submission_delivery_confirmed_at]]} />
@@ -531,7 +555,7 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
         </section>
 
         <section style={{ border: "1px solid #E2E8F0", borderRadius: 10, padding: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ display: "flex", flexDirection: isPhone ? "column" : "row", justifyContent: "space-between", alignItems: isPhone ? "stretch" : "center", gap: 10, marginBottom: 12 }}>
             <h2 style={{ margin: 0, fontSize: 16 }}>Workflow Timeline</h2>
             <button onClick={() => setChronological((v) => !v)} style={{ border: "1px solid #CBD5E1", background: "#FFFFFF", borderRadius: 8, padding: "6px 9px", fontSize: 12 }}>{chronological ? "Newest First" : "Chronological"}</button>
           </div>
