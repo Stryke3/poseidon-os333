@@ -41,6 +41,11 @@ function payerType(caseRecord: SpearCase) {
   return "commercial_or_review";
 }
 
+function shouldAutoIncludeE0676(caseRecord: SpearCase) {
+  const payer = payerType(caseRecord);
+  return payer !== "medicare" && payer !== "medicaid";
+}
+
 function operationalHcpcs(caseRecord: SpearCase) {
   return unique([
     ...asList(caseRecord.final_hcpcs),
@@ -52,7 +57,8 @@ function operationalHcpcs(caseRecord: SpearCase) {
 }
 
 function packetHcpcs(caseRecord: SpearCase) {
-  return unique([...operationalHcpcs(caseRecord), "E0676"]);
+  const codes = operationalHcpcs(caseRecord).filter((code) => shouldAutoIncludeE0676(caseRecord) || code !== "E0676");
+  return unique(shouldAutoIncludeE0676(caseRecord) ? [...codes, "E0676"] : codes);
 }
 
 function wrapText(text: string, maxChars = 92): string[] {
@@ -100,9 +106,9 @@ function billingLines(caseRecord: SpearCase) {
     `Packet HCPCS / provider review lines: ${hcpcs.join(", ") || "Missing"}`,
     `Operational claim-ready HCPCS before provider sign-off: ${operational.join(", ") || "Pending Trident/operator approval"}`,
     `ICD-10 Pointers: ${icd.join(", ") || "Missing"}`,
-    payer === "commercial_or_review"
-      ? "E0676: included for provider medical-necessity sign-off and commercial payer-policy review."
-      : "E0676: included for provider medical-necessity sign-off; Medicare/Medicaid claim release requires separate coverage/legal billing review.",
+    ...(payer === "commercial_or_review"
+      ? ["E0676: automatically included for provider medical-necessity sign-off and commercial payer-policy review."]
+      : []),
     "Place of Service: 12 - Home unless updated by billing operator",
     "Submission State: Tebra-ready metadata staged only. No payer or Tebra API submission made.",
   ];
@@ -138,7 +144,7 @@ function defaultSections(caseRecord: SpearCase, kind: PacketKind) {
     return [
       ...common,
       { heading: "Standard Written Order", lines: billingLines(caseRecord) },
-      { heading: "E0676 Provider Addendum / Sign-Off", lines: e0676AddendumLines(caseRecord) },
+      ...(shouldAutoIncludeE0676(caseRecord) ? [{ heading: "E0676 Provider Addendum / Sign-Off", lines: e0676AddendumLines(caseRecord) }] : []),
       { heading: "Provider Signature", lines: ["Physician signature required before claim packet can be marked signed.", "Signature: ________________________________", "Date: __________________"] },
     ];
   }
@@ -146,7 +152,7 @@ function defaultSections(caseRecord: SpearCase, kind: PacketKind) {
     return [
       ...common,
       { heading: "Medical Necessity Rationale", lines: [`Requested product: ${caseRecord.product || "DME/orthotic support"}`, `Diagnosis support: ${asList(caseRecord.icd).join(", ") || "Missing"}`] },
-      { heading: "E0676 Addendum", lines: e0676AddendumLines(caseRecord) },
+      ...(shouldAutoIncludeE0676(caseRecord) ? [{ heading: "E0676 Addendum", lines: e0676AddendumLines(caseRecord) }] : []),
       { heading: "Audit Checklist", lines: ["Signed order present", "Diagnosis supports HCPCS", "Payer/member identifiers present", "Proof of delivery required before final billing"] },
     ];
   }
@@ -154,7 +160,7 @@ function defaultSections(caseRecord: SpearCase, kind: PacketKind) {
     return [
       ...common,
       { heading: "Proof of Delivery", lines: [`Items delivered / reviewed: ${packetHcpcs(caseRecord).join(", ") || "Missing"}`, "Beneficiary signature required. Do not mark delivered without uploaded signed POD."] },
-      { heading: "E0676 Delivery Note", lines: ["If E0676 is delivered, signed POD must specifically support the item. If not delivered, operator must mark it not fulfilled before billing release."] },
+      ...(shouldAutoIncludeE0676(caseRecord) ? [{ heading: "E0676 Delivery Note", lines: ["If E0676 is delivered, signed POD must specifically support the item. If not delivered, operator must mark it not fulfilled before billing release."] }] : []),
       { heading: "Recipient Signature", lines: ["Signature: ________________________________", "Date: __________________"] },
     ];
   }
@@ -162,14 +168,14 @@ function defaultSections(caseRecord: SpearCase, kind: PacketKind) {
     return [
       ...common,
       { heading: "Final Packet Contents", lines: ["Signed SWO captured", "Billing packet generated", "POD generated", "Signed POD captured", "Tebra staging metadata created"] },
-      { heading: "E0676 Final Review", lines: e0676AddendumLines(caseRecord) },
+      ...(shouldAutoIncludeE0676(caseRecord) ? [{ heading: "E0676 Final Review", lines: e0676AddendumLines(caseRecord) }] : []),
       { heading: "Billing Status", lines: ["READY TO BILL. This is staging readiness only, not proof of payer submission or payment."] },
     ];
   }
   return [
     ...common,
     { heading: "CMS-1500 Line Summary", lines: billingLines(caseRecord) },
-    { heading: "E0676 Billing Review Addendum", lines: e0676AddendumLines(caseRecord) },
+    ...(shouldAutoIncludeE0676(caseRecord) ? [{ heading: "E0676 Billing Review Addendum", lines: e0676AddendumLines(caseRecord) }] : []),
     { heading: "Tebra Staging", lines: ["Packet metadata prepared for Tebra import. No external Tebra API call has been performed."] },
   ];
 }

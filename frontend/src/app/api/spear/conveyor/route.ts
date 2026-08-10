@@ -38,6 +38,22 @@ function operationalHcpcs(caseRecord: SpearCase) {
   ].map(String).filter(Boolean);
 }
 
+function isMedicareOrMedicaid(caseRecord: SpearCase) {
+  const haystack = [
+    caseRecord.payer,
+    caseRecord.canonical_payer,
+    caseRecord.raw_payer,
+    caseRecord.payer_id,
+    caseRecord.canonical_payer_id,
+  ].map((value) => String(value || "").toLowerCase()).join(" ");
+  return haystack.includes("medicare") || haystack.includes("medicaid") || haystack.includes("cms");
+}
+
+function providerReviewHcpcs(caseRecord: SpearCase) {
+  const codes = operationalHcpcs(caseRecord).filter((code) => !isMedicareOrMedicaid(caseRecord) || code !== "E0676");
+  return Array.from(new Set(isMedicareOrMedicaid(caseRecord) ? codes : [...codes, "E0676"]));
+}
+
 function missingFields(caseRecord: SpearCase) {
   return REQUIRED_FIELDS.filter((field) => {
     const value = caseRecord[field];
@@ -197,11 +213,13 @@ async function jsonAction(body: Record<string, unknown>) {
       provider: caseRecord.provider,
       npi: caseRecord.npi,
       hcpcs: caseRecord.hcpcs,
-      provider_review_hcpcs: Array.from(new Set([...operationalHcpcs(caseRecord), "E0676"])),
+      provider_review_hcpcs: providerReviewHcpcs(caseRecord),
       e0676_addendum: {
-        included_in_packet: true,
-        required_in_swo: true,
-        billing_release_note: "E0676 requires provider sign-off and payer-specific coverage review before claim release.",
+        included_in_packet: !isMedicareOrMedicaid(caseRecord),
+        required_in_swo: !isMedicareOrMedicaid(caseRecord),
+        billing_release_note: isMedicareOrMedicaid(caseRecord)
+          ? "E0676 is not automatically included for Medicare/Medicaid packets."
+          : "E0676 requires provider sign-off and payer-specific coverage review before claim release.",
       },
       icd: caseRecord.icd,
       place_of_service: "12",
