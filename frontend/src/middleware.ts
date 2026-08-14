@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PUBLIC = ["/login", "/api/auth", "/api/spear/metrics", "/images"];
+const PUBLIC = ["/login", "/api/auth", "/api/spear/metrics", "/api/spear/integrations/stedi/webhook", "/images", "/tesseract"];
 const DASHBOARD_ENTRY_REDIRECTS = [
   "/",
   "/carepath",
