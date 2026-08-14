@@ -78,6 +78,16 @@ function arr(value: unknown): string[] {
   return [];
 }
 
+function effectiveHcpcs(caseRecord: SpearCase) {
+  return [
+    caseRecord.final_hcpcs,
+    caseRecord.operator_approved_hcpcs,
+    caseRecord.trident_recommended_hcpcs,
+    caseRecord.source_hcpcs,
+    caseRecord.hcpcs,
+  ].map(arr).find((items) => items.length) || [];
+}
+
 export function getStageLabel(status: unknown) {
   return STAGE_LABELS[String(status || "")] || "Intake Received";
 }
@@ -128,7 +138,7 @@ function missingFieldBlockers(caseRecord: SpearCase) {
     detail: "The provider registry matched this provider, but the saved NPI is missing.",
     resolution: "Open Settings > Providers and add the verified 10-digit NPI before packet generation.",
   });
-  if (arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length === 0 && arr(caseRecord.trident_recommended_hcpcs).length === 0) blockers.push({
+  if (effectiveHcpcs(caseRecord).length === 0) blockers.push({
     category: "Coding review",
     title: "HCPCS to be assigned by Trident.",
     detail: "Intake did not require source HCPCS. Trident must recommend the configured kit code set.",
@@ -207,12 +217,13 @@ export function getSpearNextAction(
   }
 
   if (status === "trident_review_complete") {
+    const hasCoding = effectiveHcpcs(caseRecord).length > 0;
     return state(status, {
-      nextActionLabel: arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length ? "Generate Provider Packet" : "Review Trident Coding",
-      explanation: arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length ? "Trident has cleared the case. Generate the coding cover, SWO, and addendum." : "Trident recommended a configured kit. Operator coding approval is required before packet generation.",
+      nextActionLabel: hasCoding ? "Generate Provider Packet" : "Review Trident Coding",
+      explanation: hasCoding ? "Trident has cleared the case. Generate the coding cover, SWO, and addendum." : "Trident recommended a configured kit. Operator coding approval is required before packet generation.",
       primaryAction: "generate_provider_packet",
-      primaryActionEnabled: missing.length === 0 && arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length > 0,
-      blockerSummary: missing.length ? "Missing fields still block provider packet generation." : arr(caseRecord.final_hcpcs || caseRecord.operator_approved_hcpcs).length ? "Ready to generate provider packet." : "Coding recommendation needs operator approval.",
+      primaryActionEnabled: missing.length === 0 && hasCoding,
+      blockerSummary: missing.length ? "Missing fields still block provider packet generation." : hasCoding ? "Ready to generate provider packet." : "Coding recommendation needs operator approval.",
       blockers: missing,
       progressIndex: 2,
     });

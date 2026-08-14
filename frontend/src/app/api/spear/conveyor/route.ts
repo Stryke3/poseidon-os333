@@ -14,6 +14,8 @@ import {
 } from "@/lib/poseidon-store";
 import { buildConveyorPacket, packetFilename } from "@/lib/services/packet/conveyor-packets";
 import { isSpearApiAuthFailure, requireSpearApiAuth } from "@/lib/spear-auth";
+import { applyUniversalE0676 } from "@/lib/spear-e0676";
+import { getMasterData, recommendConfiguredKit } from "@/lib/spear-master-data";
 
 export const dynamic = "force-dynamic";
 
@@ -25,10 +27,66 @@ function listValue(value: unknown): unknown[] {
   return [];
 }
 
+function effectiveHcpcs(caseRecord: SpearCase): string[] {
+  return [
+    caseRecord.final_hcpcs,
+    caseRecord.operator_approved_hcpcs,
+    caseRecord.trident_recommended_hcpcs,
+    caseRecord.source_hcpcs,
+    caseRecord.hcpcs,
+  ].map(listValue).find((items) => items.length)?.map(String) || [];
+}
+
+function effectiveIcd(caseRecord: SpearCase): string[] {
+  return [
+    caseRecord.final_icd,
+    caseRecord.operator_approved_icd,
+    caseRecord.trident_recommended_icd,
+    caseRecord.source_icd,
+    caseRecord.icd,
+  ].map(listValue).find((items) => items.length)?.map(String) || [];
+}
+
+async function caseWithEffectiveCoding(caseRecord: SpearCase): Promise<SpearCase> {
+  const operatorOrTridentCodes = [
+    caseRecord.final_hcpcs,
+    caseRecord.operator_approved_hcpcs,
+    caseRecord.trident_recommended_hcpcs,
+  ].map(listValue).find((items) => items.length)?.map(String) || [];
+  let baseCodes = operatorOrTridentCodes.length ? operatorOrTridentCodes : [];
+  let recommendedKitName = String(caseRecord.recommended_kit_name || "");
+  if (!baseCodes.length) {
+    const masterData = await getMasterData();
+    const recommendation = recommendConfiguredKit(caseRecord, masterData);
+    baseCodes = recommendation.hcpcsComponents.map((item) => String(item.hcpcs || item.code || "")).filter(Boolean);
+    recommendedKitName = String(recommendation.kit?.name || recommendedKitName);
+  }
+  if (!baseCodes.length) baseCodes = effectiveHcpcs(caseRecord);
+  const hcpcs = applyUniversalE0676(baseCodes.map((code) => ({ code, hcpcs: code, quantity: 1 })), caseRecord.payer)
+    .map((item) => String(item.hcpcs || item.code || ""))
+    .filter(Boolean);
+  const icd = effectiveIcd(caseRecord);
+  return {
+    ...caseRecord,
+    hcpcs,
+    final_hcpcs: listValue(caseRecord.final_hcpcs).length ? caseRecord.final_hcpcs : hcpcs,
+    operator_approved_hcpcs: listValue(caseRecord.operator_approved_hcpcs).length ? caseRecord.operator_approved_hcpcs : hcpcs,
+    icd: icd.length ? icd : caseRecord.icd,
+    final_icd: listValue(caseRecord.final_icd).length ? caseRecord.final_icd : icd,
+    trident_recommended_hcpcs: listValue(caseRecord.trident_recommended_hcpcs).length ? caseRecord.trident_recommended_hcpcs : hcpcs,
+    recommended_kit_name: recommendedKitName,
+  };
+}
+
+function billingComponents(caseRecord: SpearCase) {
+  return applyUniversalE0676(effectiveHcpcs(caseRecord).map((code) => ({ code: String(code), hcpcs: String(code), quantity: 1 })), caseRecord.payer);
+}
+
 function missingFields(caseRecord: SpearCase) {
   return REQUIRED_FIELDS.filter((field) => {
     const value = caseRecord[field];
-    if (field === "hcpcs" || field === "icd") return listValue(value).length === 0;
+    if (field === "hcpcs") return billingComponents(caseRecord).length === 0;
+    if (field === "icd") return effectiveIcd(caseRecord).length === 0;
     return !String(value || "").trim();
   });
 }
@@ -93,15 +151,25 @@ async function jsonAction(body: Record<string, unknown>) {
   if (action === "generate_provider_packet") {
     const review = await runCompletenessReview(caseRecord);
     if (review.review_status !== "pass") return NextResponse.json({ ok: false, action, review, error: "Missing fields block packet generation" }, { status: 422 });
+    const packetCase = await caseWithEffectiveCoding(caseRecord);
     const artifactInputs = await Promise.all([
-      buildArtifactInput(caseRecord, "coding_cover", "Coding Cover Sheet", "coding_cover"),
-      buildArtifactInput(caseRecord, "provider_swo", "Standard Written Order", "provider_swo", "PENDING PROVIDER SIGNATURE"),
-      buildArtifactInput(caseRecord, "payer_addendum", "Payer Provider Addendum", "payer_addendum"),
+      buildArtifactInput(packetCase, "coding_cover", "Coding Cover Sheet", "coding_cover"),
+      buildArtifactInput(packetCase, "provider_swo", "Standard Written Order", "provider_swo", "PENDING PROVIDER SIGNATURE"),
+      buildArtifactInput(packetCase, "payer_addendum", "Payer Provider Addendum", "payer_addendum"),
     ]);
     const [codingCover, swo, addendum] = await saveArtifacts(artifactInputs);
     await updateCaseAndAppendEvent(caseRecord.id, {
       status: "provider_packet_generated",
       billing_status: "provider_packet_ready",
+      hcpcs: packetCase.hcpcs,
+      final_hcpcs: packetCase.final_hcpcs,
+      operator_approved_hcpcs: packetCase.operator_approved_hcpcs,
+      trident_recommended_hcpcs: packetCase.trident_recommended_hcpcs,
+      recommended_kit_name: packetCase.recommended_kit_name,
+      icd: packetCase.icd,
+      final_icd: packetCase.final_icd,
+      coding_status: "operator_approved",
+      hcpcs_status: "approved",
       artifact_ids: [codingCover.id, swo.id, addendum.id],
     }, "provider_packet_generated", { artifact_ids: [codingCover.id, swo.id, addendum.id] });
     return NextResponse.json({ ok: true, action, artifacts: [codingCover, swo, addendum] });
@@ -164,7 +232,8 @@ async function jsonAction(body: Record<string, unknown>) {
       member_id: caseRecord.member_id,
       provider: caseRecord.provider,
       npi: caseRecord.npi,
-      hcpcs: caseRecord.hcpcs,
+      hcpcs: billingComponents(caseRecord).map((item) => String(item.hcpcs || item.code || "")).filter(Boolean),
+      billing_lines: billingComponents(caseRecord),
       icd: caseRecord.icd,
       place_of_service: "12",
       tebra_submission_status: "staged_not_submitted",

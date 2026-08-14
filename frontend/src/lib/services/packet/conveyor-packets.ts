@@ -48,8 +48,18 @@ function val(value: unknown, fallback = "Missing") {
   return text || fallback;
 }
 
+function effectiveHcpcs(caseRecord: SpearCase): string[] {
+  return [
+    caseRecord.final_hcpcs,
+    caseRecord.operator_approved_hcpcs,
+    caseRecord.trident_recommended_hcpcs,
+    caseRecord.source_hcpcs,
+    caseRecord.hcpcs,
+  ].map(asList).find((items) => items.length) || [];
+}
+
 function lineItems(caseRecord: SpearCase): HcpcsLine[] {
-  return applyUniversalE0676(asList(caseRecord.hcpcs).map((code) => ({ code, hcpcs: code, quantity: 1 })), caseRecord.payer)
+  return applyUniversalE0676(effectiveHcpcs(caseRecord).map((code) => ({ code, hcpcs: code, quantity: 1 })), caseRecord.payer)
     .map((item) => {
       const row = item as Record<string, unknown>;
       const months = Number(row.billing_months || row.rental_months || 0);
@@ -226,7 +236,7 @@ function orderRows(caseRecord: SpearCase): Array<[string, string]> {
     ["Provider NPI", val(caseRecord.npi)],
     ["Order Date", val(caseRecord.order_date)],
     ["Laterality", val(caseRecord.laterality)],
-    ["ICD-10", asList(caseRecord.icd).join(", ") || "Missing"],
+    ["ICD-10", asList(caseRecord.final_icd || caseRecord.operator_approved_icd || caseRecord.trident_recommended_icd || caseRecord.source_icd || caseRecord.icd).join(", ") || "Missing"],
   ];
 }
 
