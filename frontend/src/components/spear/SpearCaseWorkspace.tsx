@@ -57,6 +57,24 @@ function latestByKind(items: Item[], kind: string) {
   return items.filter((item) => item.kind === kind).sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0] || null
 }
 
+function codes(value: unknown): string[] {
+  if (Array.isArray(value)) return Array.from(new Set(value.map(String).map((item) => item.trim().toUpperCase()).filter(Boolean))).sort()
+  if (typeof value === "string") return Array.from(new Set(value.split(/[,\s]+/).map((item) => item.trim().toUpperCase()).filter(Boolean))).sort()
+  return []
+}
+
+function hcpcsGuardrail(c: Item) {
+  const source = codes((c.source_hcpcs as unknown[])?.length ? c.source_hcpcs : c.hcpcs)
+  const final = codes((c.final_hcpcs as unknown[])?.length ? c.final_hcpcs : (c.operator_approved_hcpcs as unknown[])?.length ? c.operator_approved_hcpcs : c.hcpcs)
+  return {
+    source,
+    final,
+    onlySource: source.filter((code) => !final.includes(code)),
+    onlyFinal: final.filter((code) => !source.includes(code)),
+    violation: !source.length || !final.length || source.some((code) => !final.includes(code)) || final.some((code) => !source.includes(code)),
+  }
+}
+
 function eventLabel(type: unknown) {
   const labels: Record<string, string> = {
     case_created: "Case created",
@@ -153,6 +171,86 @@ function UploadPanel({ title, instructions, action, caseId, onDone }: { title: s
       </button>
       {status ? <p style={{ margin: "10px 0 0", fontSize: 12, color: status.includes("failed") ? "#B91C1C" : "#166534" }}>{status}</p> : null}
     </div>
+  )
+}
+
+function ManualAdvancePanel({ caseRecord, caseId, onDone }: { caseRecord: Item; caseId: string; onDone: () => Promise<void> }) {
+  const [swo, setSwo] = useState(false)
+  const [pod, setPod] = useState(false)
+  const [reference, setReference] = useState("")
+  const [note, setNote] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState("")
+  const guard = hcpcsGuardrail(caseRecord)
+  const missing = Array.isArray(caseRecord.missing_fields) ? caseRecord.missing_fields : []
+  const tridentOk = String(caseRecord.trident_status || "") === "pass"
+  const alreadyReady = String(caseRecord.status || "") === "ready_to_bill" && String(caseRecord.billing_status || "") === "ready_to_bill"
+  const canSubmit = swo && pod && reference.trim() && !guard.violation && !missing.length && tridentOk && !busy
+
+  async function submit() {
+    if (!canSubmit) return
+    setBusy(true)
+    setStatus("Advancing to billing...")
+    const res = await fetch(`/api/spear/cases/${encodeURIComponent(caseId)}/manual-advance`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        attest_swo_signed: swo,
+        attest_pod_on_file: pod,
+        evidence_location: "tebra",
+        evidence_reference: reference,
+        note,
+      }),
+    })
+    const payload = await res.json().catch(() => ({}))
+    setBusy(false)
+    if (!res.ok || !payload.ok) {
+      setStatus(payload.error || `Manual advance failed with HTTP ${res.status}`)
+      return
+    }
+    setStatus(payload.idempotent ? "Already ready to bill. Existing audit row preserved." : "Advanced to billing. Manual Tebra attestation audit row recorded.")
+    await onDone()
+  }
+
+  return (
+    <section style={{ border: "1px solid #CBD5E1", borderRadius: 10, padding: 16, background: "#FFFFFF" }}>
+      <h2 style={{ margin: "0 0 6px", fontSize: 16 }}>Billing Attestation</h2>
+      <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748B" }}>Manual advance when the signed SWO and POD are already on file in Tebra.</p>
+      {alreadyReady ? <div style={{ marginBottom: 12, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#166534", borderRadius: 8, padding: 10, fontSize: 13, fontWeight: 700 }}>This case is already ready to bill.</div> : null}
+      {guard.violation ? (
+        <div style={{ marginBottom: 12, border: "1px solid #FCA5A5", background: "#FEF2F2", color: "#991B1B", borderRadius: 8, padding: 12, fontSize: 13 }}>
+          <strong>Manual advance blocked.</strong> Final HCPCS must match source HCPCS before billing attestation.
+          <div style={{ marginTop: 6 }}>Source HCPCS: {guard.source.join(", ") || "none"}</div>
+          <div>Final HCPCS: {guard.final.join(", ") || "none"}</div>
+          <div>Source only: {guard.onlySource.join(", ") || "none"} · Final only: {guard.onlyFinal.join(", ") || "none"}</div>
+        </div>
+      ) : null}
+      {!tridentOk ? <div style={{ marginBottom: 12, border: "1px solid #FCA5A5", background: "#FEF2F2", color: "#991B1B", borderRadius: 8, padding: 12, fontSize: 13 }}>Manual advance blocked. Trident status must be pass.</div> : null}
+      {missing.length ? <div style={{ marginBottom: 12, border: "1px solid #FCA5A5", background: "#FEF2F2", color: "#991B1B", borderRadius: 8, padding: 12, fontSize: 13 }}>Manual advance blocked. Missing fields: {missing.join(", ")}.</div> : null}
+      <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 13, color: "#0F172A", marginBottom: 8 }}>
+        <input type="checkbox" checked={swo} onChange={(event) => setSwo(event.target.checked)} />
+        Signed SWO is on file in Tebra
+      </label>
+      <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 13, color: "#0F172A", marginBottom: 10 }}>
+        <input type="checkbox" checked={pod} onChange={(event) => setPod(event.target.checked)} />
+        Proof of delivery is on file in Tebra
+      </label>
+      <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700, marginBottom: 10 }}>
+        Reference
+        <input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Tebra doc ID / chart note" style={{ border: "1px solid #CBD5E1", borderRadius: 8, padding: "10px 12px", fontSize: 13, color: "#0F172A" }} />
+      </label>
+      <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700, marginBottom: 12 }}>
+        Note
+        <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional operator note" rows={2} style={{ border: "1px solid #CBD5E1", borderRadius: 8, padding: "10px 12px", fontSize: 13, color: "#0F172A" }} />
+      </label>
+      <p style={{ margin: "0 0 12px", fontSize: 13, color: "#334155", lineHeight: 1.5 }}>
+        I attest that the signed SWO and proof of delivery for this order exist in Tebra, that I have personally verified them, and that the items billed match the items prescribed and delivered.
+      </p>
+      <button disabled={!canSubmit} onClick={submit} style={{ border: "none", borderRadius: 8, background: canSubmit ? "#0F172A" : "#CBD5E1", color: "#FFFFFF", padding: "10px 14px", fontWeight: 800, fontSize: 13 }}>
+        {busy ? "Advancing..." : "Advance to Billing"}
+      </button>
+      {status ? <p style={{ margin: "10px 0 0", fontSize: 12, color: status.includes("failed") || status.includes("blocked") ? "#B91C1C" : "#166534" }}>{status}</p> : null}
+    </section>
   )
 }
 
@@ -366,6 +464,8 @@ export function SpearCaseWorkspace({ caseId }: { caseId: string }) {
             onDone={load}
           />
         ) : null}
+
+        <ManualAdvancePanel caseRecord={c} caseId={caseId} onDone={load} />
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
           <FieldCard title="Patient" rows={[["Name", c.patient_name, "Missing"], ["DOB", c.dob, "Missing"], ["MRN", c.mrn], ["Phone", c.phone], ["Email", c.email], ["Address", c.address]]} />

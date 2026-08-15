@@ -99,6 +99,14 @@ export function SpearCases() {
   const [filter, setFilter] = useState(initialFilter)
   const [loading, setLoading] = useState(true)
   const [apiStatus, setApiStatus] = useState("CONNECTING")
+  const [selected, setSelected] = useState<string[]>([])
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [bulkSwo, setBulkSwo] = useState(false)
+  const [bulkPod, setBulkPod] = useState(false)
+  const [bulkReference, setBulkReference] = useState("")
+  const [bulkNote, setBulkNote] = useState("")
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkResult, setBulkResult] = useState("")
 
   const fetchCases = async () => {
     try {
@@ -134,6 +142,50 @@ export function SpearCases() {
   const summary = {
     total: visibleCases.length,
     hiddenSynthetic: cases.filter((c) => isSyntheticCase(c) && filter !== "synthetic").length,
+  }
+
+  const visibleIds = visibleCases.map((c) => String(c.id || c.case_id || "")).filter(Boolean)
+  const selectedVisible = selected.filter((id) => visibleIds.includes(id))
+  const allVisibleSelected = visibleIds.length > 0 && selectedVisible.length === visibleIds.length
+  const bulkCanSubmit = bulkSwo && bulkPod && bulkReference.trim() && selected.length > 0 && !bulkBusy
+
+  function toggleAllVisible() {
+    setSelected((current) => {
+      const withoutVisible = current.filter((id) => !visibleIds.includes(id))
+      return allVisibleSelected ? withoutVisible : [...withoutVisible, ...visibleIds]
+    })
+  }
+
+  function toggleCase(caseId: string) {
+    setSelected((current) => current.includes(caseId) ? current.filter((id) => id !== caseId) : [...current, caseId])
+  }
+
+  async function advanceSelected() {
+    if (!bulkCanSubmit) return
+    setBulkBusy(true)
+    setBulkResult("Advancing selected cases...")
+    const res = await fetch(`${API_BASE}/cases/manual-advance`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        case_ids: selected,
+        attest_swo_signed: bulkSwo,
+        attest_pod_on_file: bulkPod,
+        evidence_location: "tebra",
+        evidence_reference: bulkReference,
+        note: bulkNote,
+      }),
+    })
+    const payload = await res.json().catch(() => ({}))
+    setBulkBusy(false)
+    const results = Array.isArray(payload.results) ? payload.results : []
+    const failed = results.filter((row: Case) => !row.ok)
+    const advanced = results.filter((row: Case) => row.ok)
+    setBulkResult(`${advanced.length} advanced, ${failed.length} failed.${failed.length ? ` Failed: ${failed.map((row: Case) => `${fmt(row.case_id)} (${fmt(row.error)})`).join("; ")}` : ""}`)
+    if (advanced.length) {
+      setSelected((current) => current.filter((id) => !advanced.some((row: Case) => row.case_id === id)))
+      await fetchCases()
+    }
   }
 
   if (loading) {
@@ -184,7 +236,48 @@ export function SpearCases() {
             </Link>
           ))}
         </div>
+        <button
+          disabled={!selected.length}
+          onClick={() => {
+            setBulkOpen(true)
+            setBulkResult("")
+          }}
+          style={{ border: "none", borderRadius: 8, background: selected.length ? "#0F172A" : "#CBD5E1", color: "#FFFFFF", padding: "9px 12px", fontSize: 12, fontWeight: 800 }}
+        >
+          Advance selected ({selected.length})
+        </button>
       </div>
+
+      {bulkOpen ? (
+        <div style={{ margin: "16px 32px 0", border: "1px solid #CBD5E1", borderRadius: 10, background: "#FFFFFF", padding: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, marginBottom: 10 }}>
+            <div>
+              <h2 style={{ margin: "0 0 4px", fontSize: 16, color: "#0F172A" }}>Advance selected to billing</h2>
+              <p style={{ margin: 0, fontSize: 13, color: "#64748B" }}>Applies one Tebra attestation to {selected.length} selected case{selected.length === 1 ? "" : "s"}. The server validates each case individually.</p>
+            </div>
+            <button onClick={() => setBulkOpen(false)} style={{ border: "1px solid #CBD5E1", borderRadius: 8, background: "#FFFFFF", padding: "6px 9px", fontSize: 12 }}>Close</button>
+          </div>
+          <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 13, color: "#0F172A", marginBottom: 8 }}>
+            <input type="checkbox" checked={bulkSwo} onChange={(event) => setBulkSwo(event.target.checked)} />
+            Signed SWO is on file in Tebra
+          </label>
+          <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 13, color: "#0F172A", marginBottom: 10 }}>
+            <input type="checkbox" checked={bulkPod} onChange={(event) => setBulkPod(event.target.checked)} />
+            Proof of delivery is on file in Tebra
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) minmax(220px, 1fr)", gap: 10, marginBottom: 10 }}>
+            <input value={bulkReference} onChange={(event) => setBulkReference(event.target.value)} placeholder="Tebra doc ID / chart note reference" style={{ border: "1px solid #CBD5E1", borderRadius: 8, padding: "10px 12px", fontSize: 13, color: "#0F172A" }} />
+            <input value={bulkNote} onChange={(event) => setBulkNote(event.target.value)} placeholder="Optional operator note" style={{ border: "1px solid #CBD5E1", borderRadius: 8, padding: "10px 12px", fontSize: 13, color: "#0F172A" }} />
+          </div>
+          <p style={{ margin: "0 0 12px", fontSize: 13, color: "#334155", lineHeight: 1.5 }}>
+            I attest that the signed SWO and proof of delivery for this order exist in Tebra, that I have personally verified them, and that the items billed match the items prescribed and delivered.
+          </p>
+          <button disabled={!bulkCanSubmit} onClick={advanceSelected} style={{ border: "none", borderRadius: 8, background: bulkCanSubmit ? "#0F172A" : "#CBD5E1", color: "#FFFFFF", padding: "10px 14px", fontSize: 13, fontWeight: 800 }}>
+            {bulkBusy ? "Advancing..." : "Advance selected"}
+          </button>
+          {bulkResult ? <p style={{ margin: "10px 0 0", fontSize: 12, color: bulkResult.includes("failed") && !bulkResult.includes("0 failed") ? "#B91C1C" : "#166534" }}>{bulkResult}</p> : null}
+        </div>
+      ) : null}
 
       <div style={{ padding: "20px 32px 32px" }}>
         {visibleCases.length === 0 ? (
@@ -196,9 +289,9 @@ export function SpearCases() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ background: "#F8FAFC", borderBottom: "1px solid #E5E7EB" }}>
-                  {["Patient Name", "DOB", "Provider", "Payer", "Product / HCPCS", "Laterality", "Current Stage", "Blocker", "Next Action", "Priority", "Age"].map((h) => (
+                  {["", "Patient Name", "DOB", "Provider", "Payer", "Product / HCPCS", "Laterality", "Current Stage", "Blocker", "Next Action", "Priority", "Age"].map((h) => (
                     <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: "11px", fontWeight: 700, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      {h}
+                      {h ? h : <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} aria-label="Select all visible cases" />}
                     </th>
                   ))}
                 </tr>
@@ -209,6 +302,9 @@ export function SpearCases() {
                   const caseId = String(c.id || c.case_id || "")
                   return (
                     <tr key={caseId} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                      <td style={{ padding: "12px" }}>
+                        <input type="checkbox" checked={selected.includes(caseId)} onChange={() => toggleCase(caseId)} aria-label={`Select ${patientName(c)}`} />
+                      </td>
                       <td style={{ padding: "12px", fontSize: "13px", color: "#0F172A", fontWeight: 600 }}>
                         <Link href={`/spear/cases/${caseId}`} style={{ color: "#0F172A", textDecoration: "none" }}>{patientName(c)}</Link>
                         {isSyntheticCase(c) ? <span style={{ marginLeft: 8, fontSize: 10, color: "#92400E", background: "#FEF3C7", borderRadius: 999, padding: "2px 6px" }}>Synthetic</span> : null}
