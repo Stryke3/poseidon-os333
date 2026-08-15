@@ -1,101 +1,117 @@
 "use client";
-import { useEffect, useState } from "react";
+
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import SpearShellLayout from "@/components/spear/SpearShellLayout";
+import DenialAppealPanel from "./components/DenialAppealPanel";
+import KPICards from "./components/KPICards";
+import PayerHeatmap from "./components/PayerHeatmap";
+import PipelineFlow from "./components/PipelineFlow";
+import RevenueChart from "./components/RevenueChart";
+import WeeklyTimeline from "./components/WeeklyTimeline";
 
-const PIPELINE = [
-  "Intake","OCR","Match","Optimize","Trident","SWO",
-  "Addendum","Sign","Receive","Deploy","Bill","Close"
-];
+type DashboardSnapshot = {
+  snapshotAt: string;
+  kpis: {
+    billedThisMonth: number;
+    expectedThisMonth: number;
+    collectedThisMonth: number;
+    arOutstanding: number;
+    avgDaysToPayment: number;
+    realizationRate: number;
+    cleanClaimRate: number;
+  };
+  pipeline: Record<string, number>;
+  weeklyRevenue: Array<{ week: string; billed: number; expected: number; collected: number; daysToPayment: number }>;
+  payerAging: Array<{ payer: string; bucket: string; amount: number; count: number }>;
+  denialReasons: Array<{ reason: string; count: number; amount: number; pct: number }>;
+  appealStatus: { drafted: number; submitted: number; pending: number; wonAmount: number; lostAmount: number; winRate: number };
+  upcomingDeadlines: Array<{ caseId: string; deadline: string; type: string; amount: number; hoursRemaining: number }>;
+};
 
-const METRICS = [
-  { label: "Needs Action",       key: "needsAction", href: "/spear/cases?filter=needs-action" },
-  { label: "Awaiting Provider",  key: "awaitingProvider", href: "/spear/cases?filter=awaiting-provider" },
-  { label: "Ready to Fulfill",   key: "readyToFulfill", href: "/spear/cases?filter=ready-to-fulfill" },
-  { label: "POD Needed",         key: "podNeeded", href: "/spear/cases?filter=pod-needed" },
-  { label: "Tebra Staged",       key: "tebraStaged", href: "/spear/cases?filter=tebra-staged" },
-  { label: "Ready to Bill",      key: "readyToBill", href: "/spear/cases?filter=ready-to-bill" },
-  { label: "Blocked Cases",      key: "blockedCases", href: "/spear/cases?filter=needs-action" },
-  { label: "High-Risk Flags",    key: "highRiskFlags", href: "/spear/cases?filter=all" },
-];
-
-export default function CommandPage() {
-  const [metrics, setMetrics] = useState<Record<string, number>>({});
+export default function SpearCeoDashboard() {
+  const [data, setData] = useState<DashboardSnapshot | null>(null);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    fetch("/api/spear/metrics")
-      .then(async (r) => {
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(data.error || `${r.status} ${r.statusText}`);
-        setMetrics(data.metrics || {});
-        setError("");
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : "Metrics unavailable"));
+  const loadDashboard = useCallback(async () => {
+    const response = await fetch("/api/spear/dashboard/ceo", { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `${response.status} ${response.statusText}`);
+    setData(payload as DashboardSnapshot);
+    setError("");
   }, []);
+
+  useEffect(() => {
+    loadDashboard().catch((err) => setError(err instanceof Error ? err.message : "Dashboard unavailable"));
+
+    const source = new EventSource("/api/spear/dashboard/ceo/stream");
+    source.addEventListener("message", (event) => {
+      if (!event.data || event.data === "{}") return;
+      try {
+        const update = JSON.parse(event.data);
+        setData((current) => ({ ...(current || update), ...update }));
+      } catch {
+        loadDashboard().catch(() => undefined);
+      }
+    });
+    source.addEventListener("heartbeat", () => {
+      loadDashboard().catch(() => undefined);
+    });
+    source.onerror = () => {
+      loadDashboard().catch(() => undefined);
+    };
+
+    return () => source.close();
+  }, [loadDashboard]);
 
   return (
     <SpearShellLayout>
-      <div style={{ marginBottom: 32 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: "#0F172A", margin: "0 0 4px" }}>Command</h1>
-        <p style={{ color: "#64748B", fontSize: 14, margin: 0 }}>SPEAR workflow overview</p>
-      </div>
-
-      {/* Pipeline */}
-      <div style={{
-        background: "#FFFFFF", border: "1px solid #E2E8F0",
-        borderRadius: 12, padding: "24px 28px", marginBottom: 24,
-      }}>
-        <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.1em",
-          color: "#94A3B8", textTransform: "uppercase", margin: "0 0 20px" }}>
-          Workflow Pipeline
-        </p>
-        <div style={{ display: "flex", alignItems: "center", overflowX: "auto" }}>
-          {PIPELINE.map((stage, i) => (
-            <div key={stage} style={{ display: "flex", alignItems: "center" }}>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 64 }}>
-                <div style={{
-                  width: 32, height: 32, borderRadius: "50%",
-                  background: "#F8FAFC", border: "1.5px solid #CBD5E1",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 12, fontWeight: 600, color: "#475569",
-                }}>
-                  {i + 1}
-                </div>
-                <span style={{ fontSize: 10, color: "#64748B", marginTop: 5, whiteSpace: "nowrap" }}>
-                  {stage}
-                </span>
-              </div>
-              {i < PIPELINE.length - 1 && (
-                <div style={{ width: 20, height: 1, background: "#E2E8F0", flexShrink: 0 }} />
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Metrics */}
-      <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.1em",
-        color: "#94A3B8", textTransform: "uppercase", margin: "0 0 14px" }}>
-        Live Metrics
-      </p>
-      {error ? (
-        <div style={{ marginBottom: 14, border: "1px solid #FDE68A", background: "#FFFBEB", color: "#92400E", borderRadius: 8, padding: "10px 12px", fontSize: 13 }}>
-          Metrics connection warning: {error}
-        </div>
-      ) : null}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
-        {METRICS.map(({ label, key, href }) => (
-          <Link key={key} href={href} style={{
-            background: "#FFFFFF", border: "1px solid #E2E8F0",
-            borderRadius: 10, padding: "20px 22px", textDecoration: "none",
-          }}>
-            <div style={{ fontSize: 30, fontWeight: 700, color: "#0F172A" }}>
-              {metrics[key] ?? metrics[key.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`)] ?? 0}
-            </div>
-            <div style={{ fontSize: 12, color: "#64748B", marginTop: 4 }}>{label}</div>
+      <div className="min-h-screen text-slate-950">
+        <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-blue-700">CEO Reporting</p>
+            <h1 className="mt-2 text-3xl font-bold tracking-normal text-slate-950">SPEAR Revenue Command</h1>
+            <p className="mt-2 text-sm text-slate-500">
+              {data?.snapshotAt ? `Last updated ${new Date(data.snapshotAt).toLocaleString()}` : "Loading live production snapshot"}
+            </p>
+          </div>
+          <Link href="/spear/ops" className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-bold text-white shadow-sm hover:bg-slate-800">
+            Operations View
           </Link>
-        ))}
+        </header>
+
+        {error ? (
+          <div className="mb-5 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            Dashboard connection warning: {error}
+          </div>
+        ) : null}
+
+        {!data ? (
+          <div className="rounded-lg border border-slate-200 bg-white p-8 text-sm text-slate-500 shadow-sm">Loading SPEAR CEO dashboard...</div>
+        ) : (
+          <div className="space-y-6">
+            <KPICards kpis={data.kpis} />
+
+            <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">Claims Pipeline</h2>
+                  <p className="mt-1 text-sm text-slate-500">From intake through payment, denial, and appeal exposure.</p>
+                </div>
+              </div>
+              <PipelineFlow pipeline={data.pipeline} />
+              <div className="mt-6 h-[320px] min-h-[260px]">
+                <RevenueChart weekly={data.weeklyRevenue} />
+              </div>
+            </section>
+
+            <section className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+              <PayerHeatmap data={data.payerAging} />
+              <DenialAppealPanel denials={data.denialReasons} appeals={data.appealStatus} />
+              <WeeklyTimeline deadlines={data.upcomingDeadlines} />
+            </section>
+          </div>
+        )}
       </div>
     </SpearShellLayout>
   );

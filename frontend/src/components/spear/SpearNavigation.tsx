@@ -3,7 +3,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 const ROUTES = [
-  { name: 'Command', path: '/spear' },
+  { name: 'CEO', path: '/spear' },
+  { name: 'Ops', path: '/spear/ops' },
   { name: 'Cases', path: '/spear/cases' },
   { name: 'Intake', path: '/spear/intake' },
   { name: 'Trident', path: '/spear/trident' },
@@ -19,7 +20,7 @@ export default function SpearNavigation() {
           key={route.path}
           href={route.path}
           className={`px-4 py-3 text-xs font-bold tracking-widest uppercase transition-colors ${
-            pathname === route.path 
+            pathname === route.path
               ? 'bg-slate-900 text-white' 
               : 'text-zinc-400 hover:text-slate-900 hover:bg-zinc-50'
           }`}
