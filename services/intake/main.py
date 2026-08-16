@@ -32,7 +32,7 @@ from psycopg.rows import dict_row  # type: ignore[import-untyped]
 # Shared module: Docker has /app/shared; local uses repo/services/shared
 _shared_dir = Path("/app/shared") if Path("/app/shared").exists() else (Path(__file__).resolve().parent.parent / "shared")
 sys.path.insert(0, str(_shared_dir))
-from base import create_app, get_redis, logger, settings
+from base import cache_rpush, create_app, get_redis, logger, settings
 
 # ---------------------------------------------------------------------------
 app = create_app(
@@ -788,8 +788,7 @@ async def ingest_eob(
         )
 
     # Push to ML training queue
-    redis = get_redis(request)
-    await redis.rpush("intake:eob_processed", json.dumps({
+    await cache_rpush(request.app.state, "intake:eob_processed", json.dumps({
         "file": filename,
         "total_claims": result.get("total_claims", 0),
         "total_denied": result.get("total_denied", 0),
@@ -839,8 +838,7 @@ async def ingest_denial_file(
         reader = csv.DictReader(io.StringIO(text))
         rows_processed = sum(1 for _ in reader)
 
-    redis = get_redis(request)
-    await redis.rpush("intake:denial_file_uploaded", json.dumps({
+    await cache_rpush(request.app.state, "intake:denial_file_uploaded", json.dumps({
         "file": filename,
         "path": str(save_path),
         "rows": rows_processed,
@@ -946,8 +944,7 @@ async def poll_email_intake(request: Request, payload: EmailPollRequest):
             "workflow_results": workflow_results,
         })
 
-    redis = get_redis(request)
-    await redis.rpush("intake:email_poll_completed", json.dumps({
+    await cache_rpush(request.app.state, "intake:email_poll_completed", json.dumps({
         "messages": len(processed_messages),
         "attachments": total_attachments,
         "orders_submitted": total_orders,
@@ -1001,7 +998,7 @@ async def data_inventory():
 
 @app.post("/patient-intake")
 async def patient_intake(request: Request, payload: LegacyPatientIntakePayload):
-    """Mommy Care Kit and other intake form submissions."""
+    """Maternity CarePath and other intake form submissions."""
     if not payload.source.strip():
         raise HTTPException(status_code=400, detail="source is required")
     if not payload.payload:
@@ -1013,6 +1010,8 @@ async def patient_intake(request: Request, payload: LegacyPatientIntakePayload):
     received_at = datetime.now(timezone.utc).isoformat()
 
     redis = get_redis(request)
+    if redis is None:
+        raise HTTPException(status_code=503, detail="Redis unavailable; intake idempotency cannot be guaranteed.")
     dedup_key = f"intake:patient_form:{idempotency_key}"
     accepted = await redis.set(dedup_key, intake_id, ex=24 * 60 * 60, nx=True)
     if not accepted:
@@ -1042,7 +1041,7 @@ async def patient_intake(request: Request, payload: LegacyPatientIntakePayload):
         )
     )
 
-    await redis.rpush("intake:patient_form", json.dumps({
+    await cache_rpush(request.app.state, "intake:patient_form", json.dumps({
         "intake_id": intake_id,
         "source": payload.source,
         "received_at": received_at,

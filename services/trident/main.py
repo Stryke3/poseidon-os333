@@ -28,7 +28,7 @@ from sklearn.model_selection import train_test_split
 # Shared module: Docker has /app/shared; local uses repo/services/shared
 _shared_dir = Path("/app/shared") if Path("/app/shared").exists() else (Path(__file__).resolve().parent.parent / "shared")
 sys.path.insert(0, str(_shared_dir))
-from base import create_app, get_redis, logger, settings
+from base import cache_get, cache_rpush, cache_set, create_app, get_redis, logger, settings
 try:
     from data_modeling import HistoricalDataCatalog
 except ImportError:
@@ -435,8 +435,7 @@ async def optimize_billing(req: OptimizeRequest):
 @app.post("/train")
 async def submit_training_record(record: TrainingRecord, request: Request):
     """Accept payment outcome records to improve future predictions."""
-    redis = get_redis(request)
-    await redis.rpush("trident:training_queue", record.model_dump_json())
+    await cache_rpush(request.app.state, "trident:training_queue", record.model_dump_json())
     return {"status": "queued", "order_id": record.order_id}
 
 
@@ -770,6 +769,9 @@ async def _maybe_schedule_learning_refresh(request: Request) -> None:
     if settings.trident_learning_mode not in {"continuous", "full"}:
         return
     redis = get_redis(request)
+    if redis is None:
+        logger.warning("Skipping Trident continuous learning refresh; Redis throttle unavailable.")
+        return
     now = datetime.now(timezone.utc)
     last_started_raw = await redis.get("trident:learning:last_started_at")
     in_flight = await redis.get("trident:learning:in_flight")
@@ -1023,7 +1025,6 @@ async def v1_trident_forecast(request: Request):
 
 @app.get("/api/v1/trident/learning-status")
 async def v1_trident_learning_status(request: Request):
-    redis = get_redis(request)
     db = request.app.state.db_pool
     async with db.connection() as conn:
         snapshot = await _learning_snapshot(conn)
@@ -1034,9 +1035,10 @@ async def v1_trident_learning_status(request: Request):
         "lookback_days": settings.trident_learning_lookback_days,
         "min_training_records": settings.min_training_records,
         "redis_state": {
-            "in_flight": await redis.get("trident:learning:in_flight"),
-            "last_started_at": await redis.get("trident:learning:last_started_at"),
-            "last_success_at": await redis.get("trident:learning:last_success_at"),
+            "available": bool(getattr(request.app.state, "redis_available", False)),
+            "in_flight": await cache_get(request.app.state, "trident:learning:in_flight"),
+            "last_started_at": await cache_get(request.app.state, "trident:learning:last_started_at"),
+            "last_success_at": await cache_get(request.app.state, "trident:learning:last_success_at"),
         },
         "snapshot": snapshot,
     }
@@ -1047,9 +1049,8 @@ async def v1_trident_learning_sync(request: Request):
     db = request.app.state.db_pool
     async with db.connection() as conn:
         result = await _run_learning_sync(conn, "manual_sync")
-    redis = get_redis(request)
-    await redis.set("trident:learning:last_success_at", datetime.now(timezone.utc).isoformat())
-    await redis.set("trident:learning:last_result", json.dumps(_serialize(result)), ex=max(settings.trident_learning_interval_minutes * 240, 600))
+    await cache_set(request.app.state, "trident:learning:last_success_at", datetime.now(timezone.utc).isoformat())
+    await cache_set(request.app.state, "trident:learning:last_result", json.dumps(_serialize(result)), ttl=max(settings.trident_learning_interval_minutes * 240, 600))
     return _serialize(result)
 
 

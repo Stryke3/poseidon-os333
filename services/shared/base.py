@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -14,6 +15,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib.parse import urlparse
 
 import redis.asyncio as aioredis
 from fastapi import FastAPI, HTTPException, Request, status
@@ -56,6 +58,16 @@ def _csv_env(name: str, default: str = "") -> list[str]:
 # Config
 # ---------------------------------------------------------------------------
 
+LOCAL_PROOF_MODE = os.getenv("LOCAL_PROOF_MODE", "").lower() == "true"
+if LOCAL_PROOF_MODE:
+    print("WARNING: LOCAL_PROOF_MODE=true; using local proof placeholder secrets. Real integrations remain disabled.")
+    os.environ.setdefault("INTERNAL_API_KEY", "local-proof-internal-key")
+    os.environ.setdefault("JWT_SECRET", "local-proof-jwt-secret")
+    os.environ.setdefault("MINIO_SECRET_KEY", "local-proof-minio-secret")
+    os.environ.setdefault("POSEIDON_API_KEY", "local-proof-poseidon-key")
+    os.environ.setdefault("POSTGRES_PASSWORD", "local-proof-postgres-password")
+    os.environ.setdefault("REDIS_PASSWORD", "local-proof-redis-password")
+
 class Settings:
     environment: str = os.getenv("ENVIRONMENT", "production")
     app_env: str = environment.lower()
@@ -65,8 +77,8 @@ class Settings:
     jwt_expiry_hours: int = int(os.getenv("JWT_EXPIRY_HOURS", "8"))
 
     # Database
-    database_url: str = os.getenv("DATABASE_URL", "")
-    db_host: str = os.getenv("POSTGRES_HOST", "postgres")
+    database_url: str = os.getenv("POSEIDON_DATABASE_URL", os.getenv("DATABASE_URL", ""))
+    db_host: str = os.getenv("POSTGRES_HOST", "localhost")
     db_port: int = int(os.getenv("POSTGRES_PORT", "5432"))
     db_name: str = os.getenv("POSTGRES_DB", "poseidon_db")
     db_user: str = os.getenv("POSTGRES_USER", "poseidon")
@@ -76,7 +88,7 @@ class Settings:
 
     # Redis
     redis_url_value: str = os.getenv("REDIS_URL", "")
-    redis_host: str = os.getenv("REDIS_HOST", "redis")
+    redis_host: str = os.getenv("REDIS_HOST", "localhost")
     redis_port: int = int(os.getenv("REDIS_PORT", "6379"))
     redis_password: str = os.getenv("REDIS_PASSWORD", "")
 
@@ -85,7 +97,7 @@ class Settings:
     internal_api_key: str = os.getenv("INTERNAL_API_KEY", "")
 
     # MinIO
-    minio_endpoint: str = os.getenv("MINIO_ENDPOINT", "minio:9000")
+    minio_endpoint: str = os.getenv("MINIO_ENDPOINT", "localhost:9000")
     minio_access_key: str = os.getenv("MINIO_ACCESS_KEY", "poseidon")
     minio_secret_key: str = os.getenv("MINIO_SECRET_KEY", "")
     minio_secure: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
@@ -97,11 +109,11 @@ class Settings:
     )
 
     # Service URLs
-    core_url: str = os.getenv("CORE_API_URL", "http://core:8001")
-    trident_url: str = os.getenv("TRIDENT_API_URL", "http://trident:8002")
-    intake_url: str = os.getenv("INTAKE_API_URL", "http://intake:8003")
-    ml_url: str = os.getenv("ML_API_URL", "http://ml:8004")
-    edi_api_url: str = os.getenv("EDI_API_URL", "http://edi:8006").strip()
+    core_url: str = os.getenv("CORE_API_URL", "http://localhost:8001")
+    trident_url: str = os.getenv("TRIDENT_API_URL", "http://localhost:8002")
+    intake_url: str = os.getenv("INTAKE_API_URL", "http://localhost:8003")
+    ml_url: str = os.getenv("ML_API_URL", "http://localhost:8004")
+    edi_api_url: str = os.getenv("EDI_API_URL", "http://localhost:8006").strip()
 
     # Operational
     phi_in_logs: bool = os.getenv("PHI_IN_LOGS", "false").lower() == "true"
@@ -139,6 +151,7 @@ class Settings:
     dropbox_sign_request_url: str = os.getenv("DROPBOX_SIGN_REQUEST_URL", "")
     dropbox_sign_api_key: str = os.getenv("DROPBOX_SIGN_API_KEY", "")
     dropbox_sign_webhook_secret: str = os.getenv("DROPBOX_SIGN_WEBHOOK_SECRET", "")
+    storage_path: str = os.getenv("STORAGE_PATH", "/data")
 
     # Communications / integrations
     smtp_host: str = os.getenv("SMTP_HOST", "")
@@ -152,13 +165,13 @@ class Settings:
     google_calendar_id: str = os.getenv("GOOGLE_CALENDAR_ID", "")
     cors_origins: list[str] = _csv_env(
         "CORS_ALLOW_ORIGINS",
-        "https://dashboard.strykefox.com,http://localhost,http://127.0.0.1",
+        "https://dashboard.strykefox.com,https://www.strykefox.com,https://strykefox.com",
     )
     trusted_hosts: list[str] = _csv_env(
         "TRUSTED_HOSTS",
         "dashboard.strykefox.com,app.strykefox.com,api.strykefox.com,"
         "trident.strykefox.com,intake.strykefox.com,ml.strykefox.com,"
-        "localhost,127.0.0.1,core,trident,intake,ml,edi,availity,poseidon_core,poseidon_trident,"
+        "*.up.railway.app,localhost,127.0.0.1,core,trident,intake,ml,edi,availity,poseidon_core,poseidon_trident,"
         "poseidon_intake,poseidon_ml,poseidon_edi",
     )
     expose_docs: bool = os.getenv("EXPOSE_API_DOCS", "false").lower() == "true"
@@ -177,6 +190,8 @@ class Settings:
     def redis_url(self) -> str:
         if self.redis_url_value:
             return self.redis_url_value
+        if not self.redis_password:
+            return f"redis://{self.redis_host}:{self.redis_port}/0"
         return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/0"
 
     def validate(self) -> None:
@@ -190,9 +205,6 @@ class Settings:
         # Managed providers (e.g. Render) supply full URLs; discrete passwords only needed otherwise.
         if not self.database_url or _is_placeholder(self.database_url):
             hard_required["POSTGRES_PASSWORD"] = self.db_password
-        if not self.redis_url_value or _is_placeholder(self.redis_url_value):
-            hard_required["REDIS_PASSWORD"] = self.redis_password
-
         hard_invalid = [name for name, value in hard_required.items() if _is_placeholder(value)]
         if hard_invalid and self.is_production:
             joined = ", ".join(sorted(hard_invalid))
@@ -239,18 +251,49 @@ settings.validate()
 class AppState:
     db_pool: AsyncConnectionPool | None = None
     redis: aioredis.Redis | None = None
+    redis_available: bool = False
 
 
-async def _check_dependencies(request: Request) -> dict[str, str]:
+def _redis_host_for_log(redis_url: str) -> str:
+    try:
+        parsed = urlparse(redis_url)
+        return parsed.hostname or settings.redis_host or "unknown"
+    except Exception:
+        return settings.redis_host or "unknown"
+
+
+async def _connect_redis_with_timeout(timeout: float = 5) -> aioredis.Redis | None:
+    async def connect_and_ping() -> aioredis.Redis:
+        client = aioredis.from_url(
+            settings.redis_url,
+            encoding="utf-8",
+            decode_responses=True,
+        )
+        await client.ping()
+        return client
+
+    try:
+        return await asyncio.wait_for(connect_and_ping(), timeout=timeout)
+    except Exception as exc:
+        logger.warning(
+            "Redis unavailable; starting in degraded cache mode. host=%s error=%s",
+            _redis_host_for_log(settings.redis_url),
+            exc,
+        )
+        return None
+
+
+async def _check_dependencies(request: Request, include_minio: bool = True) -> dict[str, str]:
     db_pool = getattr(request.app.state, "db_pool", None)
     redis = getattr(request.app.state, "redis", None)
+    redis_available = bool(getattr(request.app.state, "redis_available", False))
 
-    db_status = "ok"
-    redis_status = "ok"
+    db_status = "up"
+    redis_status = "up" if redis is not None and redis_available else "down"
     minio_status = "ok"
 
     if db_pool is None:
-        db_status = "not_configured"
+        db_status = "down"
     else:
         try:
             async with db_pool.connection() as conn:
@@ -259,28 +302,31 @@ async def _check_dependencies(request: Request) -> dict[str, str]:
                     await cur.fetchone()
         except Exception as exc:
             logger.exception("Database readiness check failed: %s", exc)
-            db_status = "error"
+            db_status = "down"
 
-    if redis is None:
-        redis_status = "not_configured"
-    else:
+    if redis is not None and redis_available:
         try:
-            await redis.ping()
+            await asyncio.wait_for(redis.ping(), timeout=2)
         except Exception as exc:
-            logger.exception("Redis readiness check failed: %s", exc)
-            redis_status = "error"
+            logger.warning(
+                "Redis readiness check failed; reporting degraded cache mode. host=%s error=%s",
+                _redis_host_for_log(settings.redis_url),
+                exc,
+            )
+            redis_status = "down"
 
-    minio_scheme = "https" if settings.minio_secure else "http"
-    minio_url = f"{minio_scheme}://{settings.minio_endpoint}/minio/health/live"
-    try:
-        with urllib_request.urlopen(minio_url, timeout=5) as response:
-            if response.status >= 400:
-                minio_status = "error"
-    except (urllib_error.URLError, TimeoutError, ValueError) as exc:
-        logger.exception("MinIO readiness check failed for %s: %s", minio_url, exc)
-        minio_status = "error"
+    if include_minio:
+        minio_scheme = "https" if settings.minio_secure else "http"
+        minio_url = f"{minio_scheme}://{settings.minio_endpoint}/minio/health/live"
+        try:
+            with urllib_request.urlopen(minio_url, timeout=5) as response:
+                if response.status >= 400:
+                    minio_status = "error"
+        except (urllib_error.URLError, TimeoutError, ValueError) as exc:
+            logger.exception("MinIO readiness check failed for %s: %s", minio_url, exc)
+            minio_status = "error"
 
-    return {"database": db_status, "redis": redis_status, "minio": minio_status}
+    return {"postgres": db_status, "redis": redis_status, "minio": minio_status}
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +337,15 @@ async def _check_dependencies(request: Request) -> dict[str, str]:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Boot: connect DB + Redis. Shutdown: close connections."""
     state = AppState()
+
+    if LOCAL_PROOF_MODE:
+        logger.warning("LOCAL_PROOF_MODE=true; skipping PostgreSQL and Redis startup connections.")
+        app.state.db_pool = None
+        app.state.redis = None
+        app.state.redis_available = False
+        yield
+        logger.warning("LOCAL_PROOF_MODE=true; no external connections to close.")
+        return
 
     # DB pool
     state.db_pool = AsyncConnectionPool(
@@ -303,23 +358,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await state.db_pool.open()
     logger.info("PostgreSQL pool open")
 
-    # Redis
-    state.redis = aioredis.from_url(
-        settings.redis_url,
-        encoding="utf-8",
-        decode_responses=True,
-    )
-    await state.redis.ping()
-    logger.info("Redis connected")
+    # Redis is cache-only. A dead cache must never prevent API startup.
+    state.redis = await _connect_redis_with_timeout(timeout=5)
+    state.redis_available = state.redis is not None
+    if state.redis_available:
+        logger.info("Redis connected")
 
     app.state.db_pool = state.db_pool
     app.state.redis = state.redis
+    app.state.redis_available = state.redis_available
 
     yield
 
     # Teardown
     await state.db_pool.close()
-    await state.redis.aclose()
+    if state.redis is not None:
+        await state.redis.aclose()
     logger.info("Connections closed")
 
 
@@ -399,12 +453,18 @@ def create_app(
         )
 
     @app.get("/health", include_in_schema=False)
-    async def health():
-        return {
-            "status": "ok",
-            "service": title,
-            "environment": settings.environment,
-        }
+    async def health(request: Request):
+        checks = await _check_dependencies(request, include_minio=False)
+        postgres_up = checks["postgres"] == "up"
+        redis_up = checks["redis"] == "up"
+        return JSONResponse(
+            status_code=status.HTTP_200_OK if postgres_up else status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "ok" if postgres_up and redis_up else "degraded",
+                "postgres": checks["postgres"],
+                "redis": checks["redis"],
+            },
+        )
 
     @app.get("/live", include_in_schema=False)
     async def live():
@@ -413,11 +473,11 @@ def create_app(
     @app.get("/ready", include_in_schema=False)
     async def ready(request: Request):
         checks = await _check_dependencies(request)
-        is_ready = all(value == "ok" for value in checks.values())
+        is_ready = checks["postgres"] == "up"
         return JSONResponse(
             status_code=status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
-                "status": "ready" if is_ready else "degraded",
+                "status": "ready" if is_ready and checks["redis"] == "up" else "degraded",
                 "service": title,
                 "checks": checks,
             },
@@ -439,5 +499,59 @@ async def get_db(request: Request) -> AsyncGenerator[Any, None]:
 # Redis helper
 # ---------------------------------------------------------------------------
 
-def get_redis(request: Request) -> aioredis.Redis:
+def get_redis(request: Request) -> aioredis.Redis | None:
     return request.app.state.redis
+
+
+async def cache_get(state: Any, key: str) -> str | None:
+    redis = getattr(state, "redis", None)
+    if redis is None:
+        return None
+    try:
+        return await redis.get(key)
+    except Exception as exc:
+        logger.warning("Redis cache get skipped after error. key=%s error=%s", key, exc)
+        return None
+
+
+async def cache_set(state: Any, key: str, value: str, ttl: int | None = None) -> None:
+    redis = getattr(state, "redis", None)
+    if redis is None:
+        return
+    try:
+        if ttl is None:
+            await redis.set(key, value)
+        else:
+            await redis.set(key, value, ex=ttl)
+    except Exception as exc:
+        logger.warning("Redis cache set skipped after error. key=%s error=%s", key, exc)
+
+
+async def cache_delete(state: Any, *keys: str) -> None:
+    redis = getattr(state, "redis", None)
+    if redis is None or not keys:
+        return
+    try:
+        await redis.delete(*keys)
+    except Exception as exc:
+        logger.warning("Redis cache delete skipped after error. keys=%s error=%s", ",".join(keys), exc)
+
+
+async def cache_publish(state: Any, channel: str, message: str) -> None:
+    redis = getattr(state, "redis", None)
+    if redis is None:
+        return
+    try:
+        await redis.publish(channel, message)
+    except Exception as exc:
+        logger.warning("Redis cache publish skipped after error. channel=%s error=%s", channel, exc)
+
+
+async def cache_rpush(state: Any, key: str, value: str) -> None:
+    redis = getattr(state, "redis", None)
+    if redis is None:
+        return
+    try:
+        await redis.rpush(key, value)
+    except Exception as exc:
+        logger.warning("Redis cache queue push skipped after error. key=%s error=%s", key, exc)

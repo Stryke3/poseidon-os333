@@ -33,9 +33,13 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
 # Shared module: Docker has /app/shared; local/linter uses repo/services/shared
+_core_dir = Path(__file__).resolve().parent
+_services_dir = _core_dir.parent
+sys.path.insert(0, str(_services_dir))
+sys.path.insert(0, str(_core_dir))
 _shared_dir = Path("/app/shared") if Path("/app/shared").exists() else (Path(__file__).resolve().parent.parent / "shared")
 sys.path.insert(0, str(_shared_dir))
-from base import create_app, get_db, get_redis, logger, settings
+from base import cache_publish, create_app, get_db, get_redis, logger, settings
 from pod_guidance import (
     CMS_CHECKLIST_BODY,
     GUIDANCE_DISCLAIMER,
@@ -69,6 +73,17 @@ app = create_app(
     version="2.0.0",
     description="A CRM meets EMR: patient/order lifecycle, document generation, KPIs, full patient record",
 )
+try:
+    from .conveyor_api import router as conveyor_router
+except Exception:
+    try:
+        from conveyor_api import router as conveyor_router
+    except Exception:
+        conveyor_router = None
+
+if conveyor_router is not None:
+    app.include_router(conveyor_router)
+
 security = HTTPBearer()
 
 POSEIDON_EXPECTED_SCHEMA_VERSION = 14
@@ -3462,38 +3477,42 @@ async def process_intake(
                 fax_id,
             )
 
-    await redis.publish(
-        "notifications.created",
-        json.dumps(
-            {
-                "fax_id": fax_id,
-                "patient_id": context.get("patient_id"),
-                "order_id": context.get("order_id"),
-                "type": "fax_intake_incomplete" if intake_incomplete else "fax_review_required",
-                "processing_state": "intake_incomplete" if intake_incomplete else None,
-                "intake_status": "intake_incomplete"
-                if intake_incomplete
-                else ("case_created" if order_created_new else "processed"),
-            }
-        ),
-    )
-    await redis.publish(
-        "fax.intake.received",
-        json.dumps(
-            {
-                "fax_id": fax_id,
-                "org_id": org_id,
-                "sinch_fax_id": payload.sinch_fax_id,
-                "file_url": payload.file_url,
-                "patient_id": context.get("patient_id"),
-                "order_id": context.get("order_id"),
-                "processing_state": "intake_incomplete" if intake_incomplete else None,
-                "intake_status": "intake_incomplete"
-                if intake_incomplete
-                else ("case_created" if order_created_new else "processed"),
-            }
-        ),
-    )
+    if redis is not None:
+        try:
+            await redis.publish(
+                "notifications.created",
+                json.dumps(
+                    {
+                        "fax_id": fax_id,
+                        "patient_id": context.get("patient_id"),
+                        "order_id": context.get("order_id"),
+                        "type": "fax_intake_incomplete" if intake_incomplete else "fax_review_required",
+                        "processing_state": "intake_incomplete" if intake_incomplete else None,
+                        "intake_status": "intake_incomplete"
+                        if intake_incomplete
+                        else ("case_created" if order_created_new else "processed"),
+                    }
+                ),
+            )
+            await redis.publish(
+                "fax.intake.received",
+                json.dumps(
+                    {
+                        "fax_id": fax_id,
+                        "org_id": org_id,
+                        "sinch_fax_id": payload.sinch_fax_id,
+                        "file_url": payload.file_url,
+                        "patient_id": context.get("patient_id"),
+                        "order_id": context.get("order_id"),
+                        "processing_state": "intake_incomplete" if intake_incomplete else None,
+                        "intake_status": "intake_incomplete"
+                        if intake_incomplete
+                        else ("case_created" if order_created_new else "processed"),
+                    }
+                ),
+            )
+        except Exception as exc:
+            logger.warning("Redis fax intake fan-out skipped after error: %s", exc)
 
 
 @app.post("/fax/inbound", status_code=201)
@@ -3579,6 +3598,8 @@ async def create_patient(
     data_key = f"patient:create:{org_id}:{idem}" if idem else ""
     lock_key = f"patient:create:lock:{org_id}:{idem}" if idem else ""
     redis = get_redis(request) if idem else None
+    if idem and redis is None:
+        raise HTTPException(status_code=503, detail="Redis unavailable; patient create idempotency cannot be guaranteed.")
 
     if idem and redis:
         try:
@@ -3609,8 +3630,8 @@ async def create_patient(
         try:
             got_lock = await redis.set(lock_key, "1", nx=True, ex=45)
         except Exception as exc:
-            got_lock = True
             logger.warning("Patient create idempotency lock unavailable: %s", exc)
+            raise HTTPException(status_code=503, detail="Redis unavailable; patient create idempotency cannot be guaranteed.") from exc
         if not got_lock:
             for _ in range(40):
                 await asyncio.sleep(0.05)
@@ -4503,8 +4524,7 @@ async def _score_order_with_trident(request: Request, org_id: str, order_id: str
     candidate_bases: list[str] = []
     for base in [
         settings.trident_url,
-        "http://poseidon_trident:8002",
-        "http://trident:8002",
+        "http://localhost:8002",
     ]:
         normalized = (base or "").strip().rstrip("/")
         if normalized and normalized not in candidate_bases:
@@ -4781,7 +4801,7 @@ async def intake_coding_recommendations(
 
     trident_rows: list[dict[str, Any]] = []
     candidate_bases: list[str] = []
-    for base in [settings.trident_url, "http://poseidon_trident:8002", "http://trident:8002"]:
+    for base in [settings.trident_url, "http://localhost:8002"]:
         normalized = _normalize_text(base).rstrip("/")
         if normalized and normalized not in candidate_bases:
             candidate_bases.append(normalized)
@@ -4912,6 +4932,8 @@ async def create_order(
     data_key = f"order:create:{org_id}:{idem}" if idem else ""
     lock_key = f"order:create:lock:{org_id}:{idem}" if idem else ""
     redis = get_redis(request) if idem else None
+    if idem and redis is None:
+        raise HTTPException(status_code=503, detail="Redis unavailable; order create idempotency cannot be guaranteed.")
 
     if idem and redis:
         try:
@@ -4943,8 +4965,8 @@ async def create_order(
         try:
             got_lock = await redis.set(lock_key, "1", nx=True, ex=45)
         except Exception as exc:
-            got_lock = True
             logger.warning("Order create idempotency lock unavailable: %s", exc)
+            raise HTTPException(status_code=503, detail="Redis unavailable; order create idempotency cannot be guaranteed.") from exc
         if not got_lock:
             for _ in range(40):
                 await asyncio.sleep(0.05)
@@ -5043,8 +5065,8 @@ async def create_order(
                 },
                 order_id=order_id,
             )
-            rpub = get_redis(request)
-            await rpub.publish(
+            await cache_publish(
+                request.app.state,
                 "orders.created",
                 json.dumps(
                     {
@@ -5091,7 +5113,6 @@ async def import_orders(
         }
 
     db = request.app.state.db_pool
-    redis = get_redis(request)
     results: list[dict[str, Any]] = []
     patients_created = 0
     orders_created = 0
@@ -5283,7 +5304,7 @@ async def import_orders(
                     conn, user["org_id"], user["sub"], "create", "orders",
                     resource_id=order_id, ip_address=_client_ip(request),
                 )
-                await redis.publish("orders.created", json.dumps({
+                await cache_publish(request.app.state, "orders.created", json.dumps({
                     "order_id": order_id,
                     "org_id": user["org_id"],
                     "hcpcs_codes": hcpcs_codes,
@@ -5596,7 +5617,6 @@ async def advance_order_from_intake(
     user: dict = Depends(require_permissions("run_eligibility")),
 ):
     db = request.app.state.db_pool
-    redis = get_redis(request)
     async with db.connection() as conn:
         context = await _fetch_order_context(conn, user["org_id"], order_id)
         if not context:
@@ -5639,7 +5659,7 @@ async def advance_order_from_intake(
             )
             response["next_step"] = "owner_review"
 
-    await redis.publish("notifications.created", json.dumps({"order_id": order_id, "next_step": response["next_step"]}))
+    await cache_publish(request.app.state, "notifications.created", json.dumps({"order_id": order_id, "next_step": response["next_step"]}))
     return response
 
 
@@ -5665,8 +5685,6 @@ async def request_swo(
 @app.post("/webhooks/dropbox-sign/swo")
 async def dropbox_sign_swo_webhook(payload: SwoWebhookPayload, request: Request):
     db = request.app.state.db_pool
-    redis = get_redis(request)
-
     # If a secret is configured, require it as a lightweight shared-secret guard.
     expected_secret = settings.dropbox_sign_webhook_secret
     if expected_secret and request.headers.get("X-Dropbox-Sign-Secret") != expected_secret:
@@ -5740,7 +5758,7 @@ async def dropbox_sign_swo_webhook(payload: SwoWebhookPayload, request: Request)
             order_id=payload.order_id,
         )
 
-    await redis.publish("notifications.created", json.dumps({"order_id": payload.order_id, "type": "order_ready_to_place"}))
+    await cache_publish(request.app.state, "notifications.created", json.dumps({"order_id": payload.order_id, "type": "order_ready_to_place"}))
     return {"status": "processed", "order_id": payload.order_id, "assigned_to_user_id": account_manager_id}
 
 
@@ -5857,7 +5875,6 @@ async def create_communication_message(
     user: dict = Depends(require_permissions("communicate")),
 ):
     db = request.app.state.db_pool
-    redis = get_redis(request)
     message_id = str(uuid.uuid4())
     clean_message = _normalize_text(payload.message)
     if not clean_message:
@@ -5893,7 +5910,7 @@ async def create_communication_message(
             order_id=payload.order_id,
         )
 
-    await redis.publish("communications.messages.created", json.dumps({
+    await cache_publish(request.app.state, "communications.messages.created", json.dumps({
         "message_id": message_id,
         "channel": payload.channel,
         "order_id": payload.order_id,
@@ -5932,7 +5949,6 @@ async def update_order_fulfillment(
     user: dict = Depends(require_permissions("manage_fulfillment")),
 ):
     db = request.app.state.db_pool
-    redis = get_redis(request)
     async with db.connection() as conn:
         context = await _fetch_order_context(conn, user["org_id"], order_id)
         if not context:
@@ -5989,14 +6005,13 @@ async def update_order_fulfillment(
             order_id=order_id,
         )
 
-    await redis.publish("notifications.created", json.dumps({"order_id": order_id, "type": "order_placed"}))
+    await cache_publish(request.app.state, "notifications.created", json.dumps({"order_id": order_id, "type": "order_placed"}))
     return {"status": "placed", "order_id": order_id, "tracking_number": payload.tracking_number}
 
 
 @app.post("/webhooks/tracking")
 async def tracking_webhook(payload: TrackingWebhookPayload, request: Request):
     db = request.app.state.db_pool
-    redis = get_redis(request)
     async with db.connection() as conn:
         order = await fetch_one(
             conn,
@@ -6048,7 +6063,7 @@ async def tracking_webhook(payload: TrackingWebhookPayload, request: Request):
             await _schedule_pod_after_delivery(conn, str(order["org_id"]), payload.order_id)
             await _mark_billing_ready(conn, str(order["org_id"]), payload.order_id, "tracking_delivered")
 
-    await redis.publish("workflow.tracking.updated", json.dumps({"order_id": payload.order_id, "tracking_status": payload.tracking_status}))
+    await cache_publish(request.app.state, "workflow.tracking.updated", json.dumps({"order_id": payload.order_id, "tracking_status": payload.tracking_status}))
     return {"status": "processed", "order_id": payload.order_id, "tracking_status": payload.tracking_status}
 
 
@@ -6060,7 +6075,6 @@ async def mark_pod_received(
     user: dict = Depends(require_permissions("manage_fulfillment")),
 ):
     db = request.app.state.db_pool
-    redis = get_redis(request)
     async with db.connection() as conn:
         context = await _fetch_order_context(conn, user["org_id"], order_id)
         if not context:
@@ -6091,7 +6105,7 @@ async def mark_pod_received(
         )
         await _mark_billing_ready(conn, user["org_id"], order_id, "pod_received")
 
-    await redis.publish("notifications.created", json.dumps({"order_id": order_id, "type": "billing_ready"}))
+    await cache_publish(request.app.state, "notifications.created", json.dumps({"order_id": order_id, "type": "billing_ready"}))
     return {"status": "billing_ready", "order_id": order_id}
 
 
@@ -6132,7 +6146,6 @@ async def approve_billing_review(
     user: dict = Depends(require_permissions("submit_claims")),
 ):
     db = request.app.state.db_pool
-    redis = get_redis(request)
     async with db.connection() as conn:
         context = await _fetch_order_context(conn, user["org_id"], order_id)
         if not context:
@@ -6171,7 +6184,7 @@ async def approve_billing_review(
             order_id=order_id,
         )
 
-    await redis.publish("notifications.created", json.dumps({"order_id": order_id, "type": "billing_scrubbed"}))
+    await cache_publish(request.app.state, "notifications.created", json.dumps({"order_id": order_id, "type": "billing_scrubbed"}))
     return {"order_id": order_id, "billing_status": next_status}
 
 
@@ -6323,16 +6336,15 @@ async def record_denial(
             billed_amount=payload.denied_amount,
             created_by=user["sub"],
         )
-        # Push to ML training queue
-        redis = get_redis(request)
-        await redis.publish("denials.recorded", json.dumps({
+        # Best-effort learning fan-out; Postgres is the durable source of truth.
+        await cache_publish(request.app.state, "denials.recorded", json.dumps({
             "denial_id": denial_id,
             "order_id": payload.order_id,
             "carc_code": payload.carc_code,
             "denial_category": payload.denial_category.value,
             "denied_amount": payload.denied_amount,
         }))
-        await redis.publish("trident.learning_events", json.dumps({
+        await cache_publish(request.app.state, "trident.learning_events", json.dumps({
             "event_type": "denial_recorded",
             "order_id": payload.order_id,
             "org_id": user["org_id"],
@@ -6441,13 +6453,12 @@ async def record_outcome(
             conn, user["org_id"], user["sub"], "create", "payment_outcomes",
             resource_id=outcome_id, ip_address=_client_ip(request),
         )
-        redis = get_redis(request)
-        await redis.publish("outcomes.recorded", json.dumps({
+        await cache_publish(request.app.state, "outcomes.recorded", json.dumps({
             "outcome_id": outcome_id,
             "order_id": payload.order_id,
             "paid_amount": payload.paid_amount,
         }))
-        await redis.publish("trident.learning_events", json.dumps({
+        await cache_publish(request.app.state, "trident.learning_events", json.dumps({
             "event_type": "payment_recorded",
             "order_id": payload.order_id,
             "org_id": user["org_id"],
@@ -7077,8 +7088,8 @@ async def submit_claim_for_order(
                     "summary": summary,
                 },
             )
-        redis = get_redis(request)
-        await redis.publish(
+        await cache_publish(
+            request.app.state,
             "trident.learning_events",
             json.dumps({
                 "event_type": "claim_submitted",
@@ -7190,8 +7201,7 @@ async def billing_submit_claim(
                     "summary": summary,
                 },
             )
-        redis = get_redis(request)
-        await redis.publish("trident.learning_events", json.dumps({
+        await cache_publish(request.app.state, "trident.learning_events", json.dumps({
             "event_type": "claim_submitted",
             "order_id": payload.order_id,
             "org_id": user["org_id"],
@@ -7233,8 +7243,11 @@ CANONICAL_STATUS_FLOW: dict[str, set[str]] = {
     "pending_auth": {"auth_approved", "auth_denied", "documents_pending"},
     "auth_approved": {"documents_pending", "ready_to_submit"},
     "auth_denied": {"appeal_pending", "cancelled"},
-    "documents_pending": {"physician_signature", "ready_to_submit", "pending_auth"},
-    "physician_signature": {"documents_pending", "ready_to_submit"},
+    "documents_pending": {"physician_signature", "ready_to_submit", "pending_auth", "packet_compiled"},
+    "physician_signature": {"documents_pending", "ready_to_submit", "packet_compiled"},
+    "packet_compiled": {"awaiting_signature", "documents_pending"},
+    "awaiting_signature": {"physician_signed", "packet_compiled"},
+    "physician_signed": {"ready_to_submit", "documents_pending"},
     "ready_to_submit": {"submitted", "cancelled"},
     "submitted": {"pending_payment", "partial_payment", "denied"},
     "pending_payment": {"partial_payment", "paid", "denied"},
@@ -7808,6 +7821,381 @@ async def _store_document(
         "storage_key": storage_key,
         "status": status_value,
         "metadata": metadata or {},
+    }
+
+
+SPEAR_PACKET_ARTIFACTS: tuple[tuple[str, str], ...] = (
+    ("trident_super_package", "trident_super_package.json"),
+    ("coding_cover_sheet", "coding_cover_sheet.pdf"),
+    ("swo", "swo.pdf"),
+    ("addendum", "addendum.pdf"),
+)
+SPEAR_VOLUME_BUCKET = "railway-volume"
+SPEAR_SIGNATURE_WEBHOOK_URL = "https://api.strykefox.com/api/v1/spear/signature-webhook"
+
+
+def _storage_root() -> Path:
+    return Path(settings.storage_path).expanduser()
+
+
+def _spear_order_dir(order_id: str) -> Path:
+    return _storage_root() / order_id
+
+
+def _render_trident_cover_page(order_id: str, trident_payload: bytes) -> bytes:
+    try:
+        parsed: Any = json.loads(trident_payload.decode("utf-8"))
+        rendered = json.dumps(parsed, indent=2, sort_keys=True, default=str)
+    except Exception:
+        rendered = trident_payload.decode("utf-8", errors="replace")
+
+    packet = io.BytesIO()
+    page = canvas.Canvas(packet, pagesize=letter)
+    width, height = letter
+    page.setFont("Helvetica-Bold", 16)
+    page.drawString(54, height - 54, "SPEAR Complete Packet")
+    page.setFont("Helvetica", 10)
+    page.drawString(54, height - 76, f"Order ID: {order_id}")
+    page.drawString(54, height - 92, "Source: trident_super_package.json")
+    page.setFont("Courier", 7)
+
+    y = height - 122
+    for raw_line in rendered.splitlines():
+        page.drawString(54, y, raw_line[:112])
+        y -= 9
+        if y < 45:
+            page.showPage()
+            page.setFont("Courier", 7)
+            y = height - 54
+    page.save()
+    return packet.getvalue()
+
+
+async def _read_order_document_bytes(row: dict[str, Any]) -> bytes:
+    metadata = row.get("metadata") or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            metadata = {}
+
+    candidates: list[Path] = []
+    local_path = metadata.get("local_path") if isinstance(metadata, dict) else None
+    if local_path:
+        candidates.append(Path(str(local_path)))
+
+    bucket = str(row.get("storage_bucket") or "")
+    storage_key = str(row.get("storage_key") or "")
+    if bucket in {SPEAR_VOLUME_BUCKET, "filesystem", "local"} and storage_key:
+        key_path = Path(storage_key)
+        candidates.append(key_path if key_path.is_absolute() else _storage_root() / key_path)
+
+    for path in candidates:
+        if path.exists():
+            return path.read_bytes()
+
+    if not storage_key:
+        raise HTTPException(status_code=409, detail=f"Document {row.get('doc_type')} has no storage key")
+
+    client = _minio_client()
+    try:
+        obj = client.get_object(bucket or settings.minio_bucket, storage_key)
+        try:
+            return obj.read()
+        finally:
+            obj.close()
+            obj.release_conn()
+    except S3Error as exc:
+        raise HTTPException(status_code=503, detail=f"Unable to read document {row.get('doc_type')}") from exc
+
+
+async def _find_packet_artifact(conn, org_id: str, order_id: str, doc_type: str, file_name: str) -> tuple[dict[str, Any], bytes]:
+    row = await fetch_one(
+        conn,
+        """
+        SELECT d.*
+        FROM order_documents d
+        JOIN orders o ON o.id = d.order_id
+        WHERE d.order_id = $1 AND d.org_id = $2 AND o.org_id = $2 AND d.doc_type = $3
+        ORDER BY d.created_at DESC
+        LIMIT 1
+        """,
+        order_id,
+        org_id,
+        doc_type,
+    )
+    if row:
+        return dict(row), await _read_order_document_bytes(dict(row))
+
+    local_path = _spear_order_dir(order_id) / file_name
+    if local_path.exists():
+        return (
+            {
+                "doc_type": doc_type,
+                "file_name": file_name,
+                "storage_bucket": SPEAR_VOLUME_BUCKET,
+                "storage_key": f"{order_id}/{file_name}",
+                "metadata": {"local_path": str(local_path)},
+            },
+            local_path.read_bytes(),
+        )
+    raise HTTPException(status_code=409, detail=f"Missing required packet artifact: {file_name}")
+
+
+async def _upsert_complete_packet_document(
+    conn,
+    org_id: str,
+    order_id: str,
+    packet_path: Path,
+    content: bytes,
+) -> dict[str, Any]:
+    file_name = f"{order_id}_complete_packet.pdf"
+    existing = await fetch_one(
+        conn,
+        """
+        SELECT id FROM order_documents
+        WHERE order_id = $1 AND org_id = $2 AND doc_type = 'complete_packet'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        order_id,
+        org_id,
+    )
+    metadata = {"local_path": str(packet_path), "compiled_by": "spear_phase2"}
+    if existing:
+        await exec_write(
+            conn,
+            """
+            UPDATE order_documents
+            SET file_name = $1,
+                mime_type = 'application/pdf',
+                file_size_bytes = $2,
+                storage_bucket = $3,
+                storage_key = $4,
+                status = 'generated',
+                metadata = $5,
+                updated_at = NOW()
+            WHERE id = $6
+            """,
+            file_name,
+            len(content),
+            SPEAR_VOLUME_BUCKET,
+            f"{order_id}/complete_packet.pdf",
+            json.dumps(metadata),
+            existing["id"],
+        )
+        document_id = str(existing["id"])
+    else:
+        document_id = str(uuid.uuid4())
+        await exec_write(
+            conn,
+            """
+            INSERT INTO order_documents (
+                id, order_id, org_id, doc_type, file_name, mime_type, file_size_bytes,
+                storage_bucket, storage_key, status, metadata
+            )
+            VALUES ($1,$2,$3,'complete_packet',$4,'application/pdf',$5,$6,$7,'generated',$8)
+            """,
+            document_id,
+            order_id,
+            org_id,
+            file_name,
+            len(content),
+            SPEAR_VOLUME_BUCKET,
+            f"{order_id}/complete_packet.pdf",
+            json.dumps(metadata),
+        )
+    return {"id": document_id, "file_name": file_name, "path": str(packet_path)}
+
+
+async def _compile_complete_packet(conn, org_id: str, order_id: str) -> dict[str, Any]:
+    order = await fetch_one(conn, "SELECT id FROM orders WHERE id = $1 AND org_id = $2", order_id, org_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    artifacts: dict[str, bytes] = {}
+    for doc_type, file_name in SPEAR_PACKET_ARTIFACTS:
+        _, content = await _find_packet_artifact(conn, org_id, order_id, doc_type, file_name)
+        artifacts[doc_type] = content
+
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="pypdf is required to compile complete packets") from exc
+
+    writer = PdfWriter()
+    ordered_pdf_parts = [
+        _render_trident_cover_page(order_id, artifacts["trident_super_package"]),
+        artifacts["coding_cover_sheet"],
+        artifacts["swo"],
+        artifacts["addendum"],
+    ]
+    for pdf_bytes in ordered_pdf_parts:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        for pdf_page in reader.pages:
+            writer.add_page(pdf_page)
+
+    output = io.BytesIO()
+    writer.write(output)
+    packet_bytes = output.getvalue()
+    order_dir = _spear_order_dir(order_id)
+    order_dir.mkdir(parents=True, exist_ok=True)
+    packet_path = order_dir / "complete_packet.pdf"
+    packet_path.write_bytes(packet_bytes)
+
+    doc = await _upsert_complete_packet_document(conn, org_id, order_id, packet_path, packet_bytes)
+    await exec_write(
+        conn,
+        "UPDATE orders SET status = 'packet_compiled', updated_at = NOW() WHERE id = $1 AND org_id = $2",
+        order_id,
+        org_id,
+    )
+    await _record_workflow_event(
+        conn,
+        org_id,
+        "packet.compiled",
+        {"order_id": order_id, "document_id": doc["id"], "path": str(packet_path)},
+        order_id=order_id,
+    )
+    return {"order_id": order_id, "document_id": doc["id"], "path": str(packet_path), "status": "packet_compiled"}
+
+
+async def _send_complete_packet_for_signature(conn, org_id: str, order_id: str) -> dict[str, Any]:
+    row = await fetch_one(
+        conn,
+        """
+        SELECT o.id,
+               o.org_id,
+               o.status,
+               COALESCE(o.physician_email, o.intake_payload->>'physician_email') AS physician_email,
+               COALESCE(
+                   o.physician_name,
+                   o.intake_payload->>'physician_name',
+                   NULLIF(btrim(concat_ws(' ', ph.first_name, ph.last_name)), '')
+               ) AS physician_name
+        FROM orders o
+        LEFT JOIN physicians ph ON ph.id = o.physician_id OR ph.npi = o.referring_physician_npi
+        WHERE o.id = $1 AND o.org_id = $2
+        """,
+        order_id,
+        org_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    signer_email = _normalize_text(row.get("physician_email"))
+    signer_name = _normalize_text(row.get("physician_name")) or "Physician"
+    if not signer_email:
+        raise HTTPException(status_code=409, detail="Order is missing physician_email")
+
+    packet_doc = await fetch_one(
+        conn,
+        """
+        SELECT *
+        FROM order_documents
+        WHERE order_id = $1 AND org_id = $2 AND doc_type = 'complete_packet'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        order_id,
+        org_id,
+    )
+    if not packet_doc:
+        raise HTTPException(status_code=409, detail="Complete packet has not been compiled")
+    packet_bytes = await _read_order_document_bytes(dict(packet_doc))
+
+    subject = f"Signature Required - Patient Order {order_id}"
+    message = "Please review and sign the attached patient order packet."
+
+    if os.getenv("LOCAL_PROOF_MODE", "").lower() == "true":
+        signature_request_id = f"mock_sigreq_{order_id}"
+        signature_id = f"mock_sig_{order_id}"
+    else:
+        if not settings.dropbox_sign_api_key:
+            raise HTTPException(status_code=503, detail="DROPBOX_SIGN_API_KEY is not configured")
+        data = {
+            "title": f"Patient Order {order_id}",
+            "subject": subject,
+            "message": message,
+            "signers[0][email_address]": signer_email,
+            "signers[0][name]": signer_name,
+            "signers[0][order]": "0",
+            "metadata[order_id]": order_id,
+            "metadata[webhook_url]": SPEAR_SIGNATURE_WEBHOOK_URL,
+            "test_mode": "0",
+        }
+        files = {
+            "files[0]": (
+                f"{order_id}_complete_packet.pdf",
+                packet_bytes,
+                "application/pdf",
+            )
+        }
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                "https://api.hellosign.com/v3/signature_request/send",
+                data=data,
+                files=files,
+                auth=(settings.dropbox_sign_api_key, ""),
+            )
+        if response.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Dropbox Sign request failed: {response.status_code}")
+        response_json = response.json()
+        signature_request = response_json.get("signature_request") or {}
+        signatures = signature_request.get("signatures") or []
+        signature_request_id = str(signature_request.get("signature_request_id") or "")
+        signature_id = str((signatures[0] or {}).get("signature_id") if signatures else "")
+        if not signature_request_id:
+            raise HTTPException(status_code=502, detail="Dropbox Sign response missing signature_request_id")
+
+    await exec_write(
+        conn,
+        """
+        UPDATE orders
+        SET status = 'awaiting_signature',
+            signature_id = $1,
+            physician_email = COALESCE(physician_email, $2),
+            physician_name = COALESCE(physician_name, $3),
+            updated_at = NOW()
+        WHERE id = $4 AND org_id = $5
+        """,
+        signature_id or signature_request_id,
+        signer_email,
+        signer_name,
+        order_id,
+        org_id,
+    )
+    await exec_write(
+        conn,
+        """
+        UPDATE order_documents
+        SET status = 'awaiting_signature',
+            esign_request_id = $1,
+            updated_at = NOW()
+        WHERE id = $2
+        """,
+        signature_request_id,
+        packet_doc["id"],
+    )
+    await _record_workflow_event(
+        conn,
+        org_id,
+        "dropbox_sign.requested",
+        {
+            "order_id": order_id,
+            "signature_request_id": signature_request_id,
+            "signature_id": signature_id or signature_request_id,
+            "physician_email": signer_email,
+            "webhook_url": SPEAR_SIGNATURE_WEBHOOK_URL,
+        },
+        order_id=order_id,
+    )
+    return {
+        "order_id": order_id,
+        "status": "awaiting_signature",
+        "signature_request_id": signature_request_id,
+        "signature_id": signature_id or signature_request_id,
+        "mocked": os.getenv("LOCAL_PROOF_MODE", "").lower() == "true",
     }
 
 
@@ -8877,6 +9265,30 @@ async def v1_generate_order_document(
     return _serialize(doc)
 
 
+@app.post("/api/v1/orders/{order_id}/compile-complete-packet")
+async def v1_compile_complete_packet(
+    order_id: str,
+    request: Request,
+    user: dict = Depends(require_permissions("manage_documents")),
+):
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        packet = await _compile_complete_packet(conn, str(user["org_id"]), order_id)
+    return packet
+
+
+@app.post("/api/v1/orders/{order_id}/send-signature")
+async def v1_send_complete_packet_signature(
+    order_id: str,
+    request: Request,
+    user: dict = Depends(require_permissions("request_signatures")),
+):
+    db = request.app.state.db_pool
+    async with db.connection() as conn:
+        signature = await _send_complete_packet_for_signature(conn, str(user["org_id"]), order_id)
+    return signature
+
+
 @app.post("/api/v1/admin/materialize-order-packages")
 async def v1_materialize_order_packages(
     request: Request,
@@ -9223,12 +9635,50 @@ async def v1_rep_performance(request: Request, user: dict = Depends(require_perm
     return {"reps": [_serialize(dict(row)) for row in rows]}
 
 
+@app.post("/api/v1/spear/signature-webhook")
 @app.post("/api/v1/webhooks/dropbox-sign")
-async def v1_dropbox_sign_webhook(payload: dict[str, Any], request: Request):
-    order_id = payload.get("order_id")
+async def v1_dropbox_sign_webhook(request: Request):
+    expected_secret = settings.dropbox_sign_webhook_secret
+    if expected_secret and request.headers.get("X-Dropbox-Sign-Secret") != expected_secret:
+        raise HTTPException(status_code=401, detail="Invalid webhook secret")
+
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:
+        form = await request.form()
+        raw_payload = form.get("json") or form.get("payload")
+        if raw_payload:
+            payload = json.loads(str(raw_payload))
+        else:
+            payload = dict(form)
+
+    signature_request = payload.get("signature_request") if isinstance(payload.get("signature_request"), dict) else {}
+    event = payload.get("event") if isinstance(payload.get("event"), dict) else {}
+    metadata = signature_request.get("metadata") if isinstance(signature_request.get("metadata"), dict) else {}
+    signatures = signature_request.get("signatures") if isinstance(signature_request.get("signatures"), list) else []
+    first_signature = signatures[0] if signatures and isinstance(signatures[0], dict) else {}
+
+    order_id = payload.get("order_id") or metadata.get("order_id")
     if not order_id:
         raise HTTPException(status_code=400, detail="Missing order_id")
-    signed_at = payload.get("signed_at") or datetime.now(timezone.utc).isoformat()
+    event_type = str(event.get("event_type") or payload.get("event_type") or "")
+    signature_request_id = (
+        payload.get("signature_request_id")
+        or signature_request.get("signature_request_id")
+        or payload.get("request_id")
+    )
+    signature_id = payload.get("signature_id") or first_signature.get("signature_id") or signature_request_id
+    signed_at = (
+        payload.get("signed_at")
+        or first_signature.get("signed_at")
+        or event.get("event_time")
+        or datetime.now(timezone.utc).isoformat()
+    )
+    completion_events = {"signature_request_all_signed", "signature_request_signed", "signature_request_downloadable"}
+    if event_type and event_type not in completion_events and not payload.get("signed_at") and not first_signature.get("signed_at"):
+        return {"status": "ignored", "order_id": order_id, "event_type": event_type}
+    if isinstance(signed_at, (int, float)):
+        signed_at = datetime.fromtimestamp(float(signed_at), tz=timezone.utc).isoformat()
     db = request.app.state.db_pool
     async with db.connection() as conn:
         order = await fetch_one(conn, "SELECT id, org_id FROM orders WHERE id = $1", order_id)
@@ -9238,14 +9688,43 @@ async def v1_dropbox_sign_webhook(payload: dict[str, Any], request: Request):
             conn,
             """
             UPDATE orders
-            SET status = 'documents_pending',
-                swo_status = 'signed',
+            SET status = 'physician_signed',
+                signature_id = COALESCE($2, signature_id),
+                signed_at = $3,
                 updated_at = NOW()
             WHERE id = $1
             """,
             order_id,
+            signature_id,
+            signed_at,
         )
-        await _record_workflow_event(conn, str(order["org_id"]), "dropbox_sign.completed", {"order_id": order_id, "signed_at": signed_at}, order_id=order_id)
+        await exec_write(
+            conn,
+            """
+            UPDATE order_documents
+            SET status = 'signed',
+                signed_at = $1,
+                esign_request_id = COALESCE($2, esign_request_id),
+                updated_at = NOW()
+            WHERE order_id = $3 AND doc_type = 'complete_packet'
+            """,
+            signed_at,
+            signature_request_id,
+            order_id,
+        )
+        await _record_workflow_event(
+            conn,
+            str(order["org_id"]),
+            "dropbox_sign.completed",
+            {
+                "order_id": order_id,
+                "signature_request_id": signature_request_id,
+                "signature_id": signature_id,
+                "signed_at": signed_at,
+                "event_type": event_type,
+            },
+            order_id=order_id,
+        )
     return {"status": "processed", "order_id": order_id}
 
 
@@ -9316,6 +9795,8 @@ def _skip_core_schema_gate(path: str) -> bool:
 @app.middleware("http")
 async def enforce_core_schema_version(request: Request, call_next):
     global _core_schema_verified, _core_schema_gate_lock
+    if os.getenv("LOCAL_PROOF_MODE", "").lower() == "true":
+        return await call_next(request)
     if _skip_core_schema_gate(request.url.path):
         return await call_next(request)
     if _core_schema_gate_lock is None:
