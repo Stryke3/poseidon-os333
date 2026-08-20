@@ -1,5 +1,5 @@
 # =============================================================================
-# TRIDENT Intelligence Engine — Port 8002
+# TRIDENT Intelligence Engine â€” Port 8002
 # Denial prediction, medical necessity scoring, HCPCS optimization
 # =============================================================================
 
@@ -54,7 +54,7 @@ app = create_app(
 )
 
 MODELS_DIR = Path("/app/models")
-MODELS_DIR.mkdir(exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
 HISTORICAL_DATA_DIR = Path(__file__).resolve().parent / "Historical_Model_Data"
 TRIDENT_MODEL_PATH = MODELS_DIR / "trident_denial_model.pkl"
 
@@ -94,7 +94,7 @@ def _serialize(value: Any) -> Any:
     return value
 
 # ---------------------------------------------------------------------------
-# Payer Rules — 19 major payers
+# Payer Rules â€” 19 major payers
 # ---------------------------------------------------------------------------
 
 PAYER_RULES: dict[str, dict] = {
@@ -175,7 +175,7 @@ PAYER_RULES: dict[str, dict] = {
     "CHAMP_VA": {"name": "ChampVA", "timely_filing_days": 365, "requires_cmn": False, "requires_prior_auth": [], "statutory_exclusions": [], "modifier_required": [], "baseline_denial_rate": 0.16},
 }
 
-# ICD-10 → Medical necessity weight mapping (key diagnosis groups)
+# ICD-10 â†’ Medical necessity weight mapping (key diagnosis groups)
 DIAGNOSIS_WEIGHTS: dict[str, float] = {
     # Bracing and joint instability
     "M17.11": 0.91, "M17.12": 0.91, "M17.0": 0.89,
@@ -249,7 +249,7 @@ class TridentEngine:
                 flags.append({
                     "severity": "critical",
                     "code": code,
-                    "message": f"{code} is a statutory exclusion for {payer['name']} — submit will deny",
+                    "message": f"{code} is a statutory exclusion for {payer['name']} â€” submit will deny",
                     "action": "BLOCK",
                 })
                 risk_score = min(risk_score + 0.35, 0.99)
@@ -291,7 +291,7 @@ class TridentEngine:
             flags.append({
                 "severity": "medium",
                 "code": "MED_NEC",
-                "message": f"Low medical necessity score ({med_nec_score:.0%}) — documentation may be insufficient",
+                "message": f"Low medical necessity score ({med_nec_score:.0%}) â€” documentation may be insufficient",
                 "action": "STRENGTHEN_DOCUMENTATION",
             })
             risk_score = min(risk_score + 0.15, 0.99)
@@ -355,12 +355,12 @@ class TridentEngine:
     def _recommendation(self, score: float, flags: list) -> str:
         critical = [f for f in flags if f["severity"] == "critical"]
         if critical:
-            return "DO_NOT_SUBMIT — resolve critical flags before submission"
+            return "DO_NOT_SUBMIT â€” resolve critical flags before submission"
         if score >= 0.70:
-            return "HOLD — high denial risk, address flags before submitting"
+            return "HOLD â€” high denial risk, address flags before submitting"
         if score >= 0.45:
-            return "REVIEW — moderate risk, verify documentation"
-        return "SUBMIT — low denial risk, proceed with submission"
+            return "REVIEW â€” moderate risk, verify documentation"
+        return "SUBMIT â€” low denial risk, proceed with submission"
 
     def _infer_denial_type(self, flags: list[dict], med_nec_score: float) -> str:
         joined = " ".join(f"{flag.get('code', '')} {flag.get('message', '')}".lower() for flag in flags)
@@ -470,7 +470,9 @@ async def get_diagnosis_weights():
 
 @app.get("/model/status")
 async def model_status():
-    model_file = MODELS_DIR / "denial_predictor.pkl"
+    # Must point at the artifact _train_trident_model actually writes
+    # (was "denial_predictor.pkl", so model_exists was always false).
+    model_file = TRIDENT_MODEL_PATH
     return {
         "model_exists": model_file.exists(),
         "model_path": str(model_file),
@@ -765,10 +767,15 @@ async def _run_learning_sync(conn, trigger_type: str = "sync") -> dict[str, Any]
     }
 
 
-async def _maybe_schedule_learning_refresh(request: Request) -> None:
+async def _maybe_run_learning_refresh(app) -> None:
+    """Run a continuous-learning refresh if the interval has elapsed.
+
+    Redis keys act as a cross-worker throttle/lock so multiple uvicorn
+    workers (or overlapping triggers) never run concurrent refreshes.
+    """
     if settings.trident_learning_mode not in {"continuous", "full"}:
         return
-    redis = get_redis(request)
+    redis = getattr(app.state, "redis", None)
     if redis is None:
         logger.warning("Skipping Trident continuous learning refresh; Redis throttle unavailable.")
         return
@@ -790,7 +797,7 @@ async def _maybe_schedule_learning_refresh(request: Request) -> None:
 
     async def _runner() -> None:
         try:
-            db = request.app.state.db_pool
+            db = app.state.db_pool
             async with db.connection() as conn:
                 result = await _run_learning_sync(conn, "continuous_refresh")
             await redis.set("trident:learning:last_success_at", datetime.now(timezone.utc).isoformat())
@@ -801,6 +808,36 @@ async def _maybe_schedule_learning_refresh(request: Request) -> None:
             await redis.delete("trident:learning:in_flight")
 
     asyncio.create_task(_runner())
+
+
+async def _maybe_schedule_learning_refresh(request: Request) -> None:
+    # Kept for request-triggered refreshes (e.g. scoring traffic); the real
+    # guarantee now comes from the background loop below.
+    await _maybe_run_learning_refresh(request.app)
+
+
+async def _continuous_learning_loop(app) -> None:
+    """True scheduler for continuous learning.
+
+    Previously refreshes only piggybacked on scoring requests, so with zero
+    traffic the 15-minute retrain silently never fired. This loop runs under
+    the app lifespan and checks every 60s; the Redis throttle inside
+    _maybe_run_learning_refresh enforces the configured interval and keeps
+    multiple workers from double-running.
+    """
+    await asyncio.sleep(15)  # let connections settle after startup
+    while True:
+        try:
+            await _maybe_run_learning_refresh(app)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Trident continuous learning loop iteration failed")
+        await asyncio.sleep(60)
+
+
+# Registered here (import time) so shared.base's lifespan starts it on boot.
+app.service_background_tasks = [_continuous_learning_loop]
 
 
 async def _lookup_learned_rate(conn, payer_id: str, hcpcs_code: str) -> dict[str, Any] | None:
