@@ -1,5 +1,5 @@
 # =============================================================================
-# POSEIDON — Shared Service Base
+# POSEIDON â€” Shared Service Base
 # services/shared/base.py
 # Imported by all microservices for consistent config, DB, Redis, logging
 # =============================================================================
@@ -119,7 +119,7 @@ class Settings:
     phi_in_logs: bool = os.getenv("PHI_IN_LOGS", "false").lower() == "true"
     denial_threshold: float = float(os.getenv("DENIAL_THRESHOLD", "0.65"))
     write_off_threshold: float = float(os.getenv("WRITE_OFF_DOLLAR_THRESHOLD", "50.0"))
-    # Fax/OCR: if parsed confidence is below this (0–1), do not auto-create patient; intake_incomplete + review queue.
+    # Fax/OCR: if parsed confidence is below this (0â€“1), do not auto-create patient; intake_incomplete + review queue.
     intake_ocr_confidence_threshold: float = float(os.getenv("INTAKE_OCR_CONFIDENCE_THRESHOLD", "0.55"))
     # Billing: require orders.billing_ready_at before 837 submit-from-order / raw submit with order_id (set false only for break-glass).
     billing_claim_require_billing_ready: bool = os.getenv("BILLING_CLAIM_REQUIRE_BILLING_READY", "true").lower() == "true"
@@ -245,7 +245,7 @@ settings.validate()
 
 
 # ---------------------------------------------------------------------------
-# State container — attached to app.state
+# State container â€” attached to app.state
 # ---------------------------------------------------------------------------
 
 class AppState:
@@ -354,6 +354,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         max_size=settings.db_pool_size,
         kwargs={"autocommit": True},
         open=False,
+        # Railway (and most cloud proxies) silently drop idle TCP sessions.
+        # Without these settings the pool hands out dead connections after an
+        # idle period and every endpoint 500s until a manual redeploy.
+        check=AsyncConnectionPool.check_connection,  # validate on checkout
+        max_idle=300,        # recycle connections idle > 5 min
+        max_lifetime=1800,   # hard-recycle connections older than 30 min
+        reconnect_timeout=120,
     )
     await state.db_pool.open()
     logger.info("PostgreSQL pool open")
@@ -368,9 +375,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.redis = state.redis
     app.state.redis_available = state.redis_available
 
+    # Per-service background tasks (e.g. Trident's continuous learning loop).
+    # Services register coroutine functions taking `app` on
+    # `app.service_background_tasks` at import time; they are started here so
+    # they run under the app's lifespan and get cancelled cleanly on shutdown.
+    bg_tasks: list[asyncio.Task] = []
+    for hook in getattr(app, "service_background_tasks", []):
+        bg_tasks.append(asyncio.create_task(hook(app)))
+    if bg_tasks:
+        logger.info("Started %d service background task(s)", len(bg_tasks))
+
     yield
 
     # Teardown
+    for task in bg_tasks:
+        task.cancel()
+    if bg_tasks:
+        await asyncio.gather(*bg_tasks, return_exceptions=True)
     await state.db_pool.close()
     if state.redis is not None:
         await state.redis.aclose()
@@ -431,7 +452,7 @@ def create_app(
         response.headers["X-Response-Time-Ms"] = f"{duration_ms:.1f}"
         return response
 
-    # Global exception handler — no stack traces to client
+    # Global exception handler â€” no stack traces to client
     @app.exception_handler(Exception)
     async def global_error_handler(request: Request, exc: Exception):
         logger.exception("Unhandled exception: %s", exc)
