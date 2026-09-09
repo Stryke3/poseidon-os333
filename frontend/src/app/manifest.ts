@@ -1,0 +1,2 @@
+import type { MetadataRoute } from "next";
+export default function manifest(): MetadataRoute.Manifest { return { name: "SPEAR", short_name: "SPEAR", description: "SPEAR mobile executive command layer", start_url: "/spear/mobile", scope: "/spear/", display: "standalone", background_color: "#07101d", theme_color: "#07101d", icons: [{ src: "/images/spear-logo.png", sizes: "any", type: "image/png", purpose: "any" }] }; }
