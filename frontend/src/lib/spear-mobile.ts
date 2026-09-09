@@ -124,7 +124,7 @@ export function buildMobileData(records: SpearCase[], now = new Date()) {
     .map((key) => {
       const rows = items.filter((item) => item.expectedCollectibleAmount !== null && forecastBucket(item.expectedPaymentDate, now) === key);
       return { key, expectedCash: rows.reduce((sum, item) => sum + (item.expectedCollectibleAmount || 0), 0), claims: rows.length,
-        majorPayers: [...new Set(rows.map((item) => item.payer).filter(Boolean))].slice(0, 3),
+        majorPayers: Array.from(new Set(rows.map((item) => item.payer).filter(Boolean))).slice(0, 3),
         confidence: rows.length && rows.every((item) => item.forecastConfidence === "HIGH") ? "HIGH" : rows.some((item) => item.forecastConfidence !== "UNKNOWN") ? "MIXED" : "UNKNOWN" };
     });
   const submitted = items.reduce((sum, item) => sum + item.submittedAmount, 0);
