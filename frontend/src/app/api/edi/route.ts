@@ -25,7 +25,7 @@ function ediInternalApiKeyHeaders(): Record<string, string> {
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
-  if (!session?.user?.accessToken) {
+  if (!session?.user?.id || !session.user.role) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -40,7 +40,9 @@ export async function GET(req: NextRequest) {
   try {
     const res = await fetch(`${EDI_API_URL}${path}${query}`, {
       headers: {
-        Authorization: `Bearer ${session.user.accessToken}`,
+        ...(session.user.accessToken
+          ? { Authorization: `Bearer ${session.user.accessToken}` }
+          : {}),
         "Content-Type": "application/json",
         ...ediInternalApiKeyHeaders(),
         ...correlationHeaders(req.headers),
@@ -68,7 +70,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
-  if (!session?.user?.accessToken) {
+  if (!session?.user?.id || !session.user.role) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -80,7 +82,9 @@ export async function POST(req: NextRequest) {
     const res = await fetch(`${EDI_API_URL}${path}`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${session.user.accessToken}`,
+        ...(session.user.accessToken
+          ? { Authorization: `Bearer ${session.user.accessToken}` }
+          : {}),
         "Content-Type": "application/json",
         ...ediInternalApiKeyHeaders(),
         ...correlationHeaders(req.headers),

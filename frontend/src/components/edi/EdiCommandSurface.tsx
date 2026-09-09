@@ -102,6 +102,7 @@ export default function EdiCommandSurface() {
   const [stats, setStats] = useState<RemittanceStats | null>(null)
   const [submissions, setSubmissions] = useState<ClaimSubmission[]>([])
   const [submissionsTotal, setSubmissionsTotal] = useState(0)
+  const [claimsError, setClaimsError] = useState<string | null>(null)
   const [batches, setBatches] = useState<RemittanceBatch[]>([])
   const [batchesTotal, setBatchesTotal] = useState(0)
   const [denials, setDenials] = useState<DenialItem[]>([])
@@ -123,11 +124,15 @@ export default function EdiCommandSurface() {
     async function load() {
       setLoading(true)
       setError(null)
+      setClaimsError(null)
       try {
         const [h, s, sub, bat, den] = await Promise.all([
           getEdiHealth().catch(() => null),
           getRemittanceStats(30).catch(() => null),
-          getClaimSubmissions(100).catch(() => ({ total: 0, submissions: [] })),
+          getClaimSubmissions(100).catch((reason) => {
+            setClaimsError(reason instanceof Error ? reason.message : "Claims are unavailable")
+            return { total: 0, submissions: [] }
+          }),
           getRemittanceBatches(50).catch(() => ({ total: 0, batches: [] })),
           getDenialWorklist(100).catch(() => ({
             total: 0,
@@ -506,7 +511,14 @@ export default function EdiCommandSurface() {
                       </tr>
                     </thead>
                     <tbody>
-                      {submissions.length === 0 && (
+                      {claimsError && (
+                        <tr>
+                          <td colSpan={6} className="px-5 py-12 text-center text-red-400">
+                            Claims could not be loaded: {claimsError}
+                          </td>
+                        </tr>
+                      )}
+                      {!claimsError && submissions.length === 0 && (
                         <tr>
                           <td colSpan={6} className="px-5 py-12 text-center text-zinc-600">
                             No submissions yet
