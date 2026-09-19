@@ -176,6 +176,41 @@ PAYER_RULES: dict[str, dict] = {
 }
 
 # ICD-10 â†’ Medical necessity weight mapping (key diagnosis groups)
+
+HPN_CHAP_PAYER_ALIASES: set[str] = {
+    "HPN_CHAP",
+    "HPN_NV_CHAP",
+    "HPN_MEDICAID_CHAP",
+    "HEALTH_PLAN_OF_NEVADA_CHAP",
+    "HEALTH_PLAN_OF_NEVADA_MEDICAID_CHAP",
+}
+
+PAYER_RULES["HPN_CHAP"] = {
+    **PAYER_RULES["MEDICAID"],
+    "name": "Health Plan of Nevada Medicaid / CHAP",
+    "timely_filing_days": 180,
+    "requires_cmn": False,
+    "requires_prior_auth": sorted(set(PAYER_RULES["MEDICAID"].get("requires_prior_auth", []) + ["E0676"])),
+}
+
+HPN_CHAP_E0676_RULE: dict[str, object] = {
+    "hcpcs": "E0676",
+    "rental_modifier": "RR",
+    "rental_period": "MONTHLY",
+    "units_per_monthly_claim_line": 1,
+    "max_rental_months": 10,
+    "same_dos_units_max": 1,
+    "requires_rental_documentation": True,
+    "requires_prior_auth_for_rent_to_purchase": True,
+    "requires_manufacturer_invoice": True,
+    "pricing_method": "MANUAL_PRICE_IF_ZERO_OR_UNASSIGNED",
+    "pricing_formula": "LOWEST_OF_MSRP_MINUS_25_PERCENT_ACQUISITION_COST_PLUS_20_PERCENT_ACTUAL_CHARGE",
+    "fixed_payment_rate": None,
+    "block_ten_units_same_dos": True,
+    "source_reviewed_date": "2026-09-19",
+}
+
+
 DIAGNOSIS_WEIGHTS: dict[str, float] = {
     # Bracing and joint instability
     "M17.11": 0.91, "M17.12": 0.91, "M17.0": 0.89,
@@ -210,6 +245,11 @@ class ScoreRequest(BaseModel):
     has_prior_auth: bool = False
     has_cmn: bool = False
     modifier_codes: list[str] = []
+    units_by_hcpcs: dict[str, int] = {}
+    rental_documented: bool = False
+    manufacturer_invoice_amounts: dict[str, float] = {}
+    manufacturer_msrp_by_hcpcs: dict[str, float] = {}
+    charge_by_hcpcs: dict[str, float] = {}
 
 
 class OptimizeRequest(BaseModel):
@@ -239,9 +279,78 @@ class TridentEngine:
     """Rule-based + ML hybrid denial prediction engine."""
 
     def score_claim(self, req: ScoreRequest) -> dict:
-        payer = PAYER_RULES.get(req.payer_id, PAYER_RULES.get("BCBS"))
+        payer_slug = req.payer_id.strip().upper().replace("-", "_").replace("/", "_").replace(" ", "_")
+        while "__" in payer_slug:
+            payer_slug = payer_slug.replace("__", "_")
+        payer_key = "HPN_CHAP" if payer_slug in HPN_CHAP_PAYER_ALIASES else req.payer_id
+        payer = PAYER_RULES.get(payer_key, PAYER_RULES.get(req.payer_id, PAYER_RULES.get("BCBS")))
         flags: list[dict] = []
+        billing_controls: list[dict] = []
         risk_score = payer.get("baseline_denial_rate", 0.30)
+
+        # HPN Medicaid / CHAP E0676 hard control.
+        hcpcs_upper = {code.upper() for code in req.hcpcs_codes}
+        modifiers_upper = {mod.upper() for mod in req.modifier_codes}
+        if payer_key == "HPN_CHAP" and "E0676" in hcpcs_upper:
+            billing_controls.append(dict(HPN_CHAP_E0676_RULE))
+            e0676_units = next((units for code, units in req.units_by_hcpcs.items() if code.upper() == "E0676"), None)
+            invoice_cost = next((amount for code, amount in req.manufacturer_invoice_amounts.items() if code.upper() == "E0676"), None)
+            msrp = next((amount for code, amount in req.manufacturer_msrp_by_hcpcs.items() if code.upper() == "E0676"), None)
+            actual_charge = next((amount for code, amount in req.charge_by_hcpcs.items() if code.upper() == "E0676"), None)
+
+            pricing_candidates: dict[str, float] = {}
+            if msrp is not None and msrp >= 0:
+                pricing_candidates["msrp_minus_25_percent"] = round(msrp * 0.75, 2)
+            if invoice_cost is not None and invoice_cost >= 0:
+                pricing_candidates["acquisition_cost_plus_20_percent"] = round(invoice_cost * 1.20, 2)
+            if actual_charge is not None and actual_charge >= 0:
+                pricing_candidates["actual_charge"] = round(actual_charge, 2)
+            if pricing_candidates:
+                billing_controls[-1]["manual_price_candidates"] = pricing_candidates
+                billing_controls[-1]["manual_price_lowest_known"] = min(pricing_candidates.values())
+
+            if "RR" in modifiers_upper:
+                if not req.rental_documented:
+                    flags.append({
+                        "severity": "critical",
+                        "code": "HPN_CHAP_E0676_RR_DOCUMENTATION",
+                        "message": "E0676-RR requires documented actual rental/continued possession; do not reclassify a purchase solely to obtain payment.",
+                        "action": "BLOCK",
+                    })
+                    risk_score = min(risk_score + 0.35, 0.99)
+                if e0676_units is None:
+                    flags.append({
+                        "severity": "high",
+                        "code": "HPN_CHAP_E0676_RR_UNITS",
+                        "message": "E0676-RR must be billed as one monthly rental claim line; units must be explicitly set to 1.",
+                        "action": "VERIFY_MONTHLY_UNIT",
+                    })
+                    risk_score = min(risk_score + 0.20, 0.99)
+                elif e0676_units != 1:
+                    flags.append({
+                        "severity": "critical",
+                        "code": "HPN_CHAP_E0676_RR_UNITS",
+                        "message": "Blocked: Nevada Medicaid RR is monthly. Do not bill 10 units on one DOS; bill one unit per supported monthly rental interval, up to 10 months.",
+                        "action": "BLOCK",
+                    })
+                    risk_score = min(risk_score + 0.40, 0.99)
+            else:
+                flags.append({
+                    "severity": "high",
+                    "code": "HPN_CHAP_E0676_CLASSIFICATION",
+                    "message": "HPN CHAP E0676 requires purchase-vs-rental classification before release. Use RR only when the item was actually furnished as a rental and documentation supports the rental period.",
+                    "action": "VERIFY_RENTAL_CLASSIFICATION",
+                })
+                risk_score = min(risk_score + 0.20, 0.99)
+
+            if invoice_cost is None:
+                flags.append({
+                    "severity": "high",
+                    "code": "HPN_CHAP_DME_INVOICE",
+                    "message": "HPN Medicaid DME claim requires the manufacturer's invoice; attach the patient/item-applicable invoice before release.",
+                    "action": "ATTACH_MANUFACTURER_INVOICE",
+                })
+                risk_score = min(risk_score + 0.15, 0.99)
 
         # --- Statutory exclusion check ---
         for code in req.hcpcs_codes:
@@ -327,6 +436,7 @@ class TridentEngine:
             "recommendation": recommendation,
             "inferred_denial_type": inferred_denial_type,
             "appeals_guidance": appeals_guidance,
+            "billing_controls": billing_controls,
             "scored_at": datetime.now(timezone.utc).isoformat(),
         }
 
