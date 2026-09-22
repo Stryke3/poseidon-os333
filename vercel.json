@@ -1,3 +1,8 @@
 {
-  "rootDirectory": "frontend"
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {
+    "deploymentEnabled": {
+      "redis-degraded-mode-20260816": false
+    }
+  }
 }
