@@ -3,5 +3,11 @@
   "buildCommand": "npm run build",
   "outputDirectory": ".next",
   "installCommand": "npm install --legacy-peer-deps",
-  "devCommand": "npm run dev"
+  "devCommand": "npm run dev",
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {
+    "deploymentEnabled": {
+      "redis-degraded-mode-20260816": false
+    }
+  }
 }
