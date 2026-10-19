@@ -1,0 +1,40 @@
+name: StrykeFox business channels
+on:
+  push:
+    branches: ["feature/zoho-dropbox-routing-20261019"]
+  pull_request:
+    branches: [main, redis-degraded-mode-20260816]
+    paths:
+      - "services/shared/business_mail.py"
+      - "services/shared/dropbox_archive.py"
+      - "services/shared/mommy_care_workflow.py"
+      - "services/shared/zoho_mail_outbound.py"
+      - "services/shared/zoho_sheet.py"
+      - "services/core/conveyor_api.py"
+      - "services/core/requirements.txt"
+      - "services/intake/**"
+      - "scripts/validate_production_env.sh"
+      - ".github/workflows/business-channels.yml"
+
+jobs:
+  intake-channel-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r services/core/requirements.txt
+      - run: python services/intake/test_business_channels.py -v
+      - run: python services/intake/test_mck_automation.py -v
+      - run: python services/intake/test_intake_delivery.py -v
+      - run: >-
+          python -m py_compile
+          services/shared/business_mail.py
+          services/shared/dropbox_archive.py
+          services/shared/mommy_care_workflow.py
+          services/shared/zoho_mail_outbound.py
+          services/shared/zoho_sheet.py
+          services/intake/main.py
+          services/core/conveyor_api.py
+      - run: bash -n scripts/validate_production_env.sh
