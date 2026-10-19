@@ -27,6 +27,7 @@ jobs:
       - run: pip install -r services/core/requirements.txt
       - run: python services/intake/test_business_channels.py -v
       - run: python services/intake/test_mck_automation.py -v
+      - run: python services/intake/test_intake_delivery.py -v
       - run: >-
           python -m py_compile
           services/shared/business_mail.py

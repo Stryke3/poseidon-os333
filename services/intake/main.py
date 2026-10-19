@@ -831,12 +831,15 @@ async def poll_email_intake(request: Request, payload: EmailPollRequest):
 
     successfully_processed_ids: list[str] = []
     failed_messages = 0
+    review_messages = 0
 
     for message in messages:
         message_orders: list[dict[str, Any]] = []
         processed_attachments: list[dict[str, Any]] = []
         message_status = "processed"
         message_failure: str | None = None
+        import_result = None
+        workflow_results: list[dict[str, Any]] = []
 
         try:
             for index, (filename, content) in enumerate(message["attachments"]):
@@ -851,30 +854,43 @@ async def poll_email_intake(request: Request, payload: EmailPollRequest):
                     "orders_detected": len(parsed_orders),
                 })
 
-            import_result = None
-            workflow_results: list[dict[str, Any]] = []
-            if message_orders:
+            if not message_orders:
+                message_status = "needs_review"
+                message_failure = "No supported intake records detected; message remains unread."
+            else:
                 import_result = await _submit_orders_to_core(message_orders)
-                total_orders += len(message_orders)
-                for item in import_result.get("results", []):
+                items = import_result.get("results", [])
+                total_orders += sum(item.get("status") == "created" for item in items)
+                # A 201 response may still contain failed or ambiguous rows.
+                # Duplicates also need review: their workflow state is not known.
+                if (len(items) != len(message_orders)
+                        or any(item.get("status") != "created" or not item.get("order_id")
+                               for item in items)
+                        or {item.get("index") for item in items} != set(range(len(message_orders)))):
+                    message_status = "needs_review"
+                    message_failure = "Core did not confirm every intake row; review the import result."
+                for item in items:
                     if item.get("status") == "created" and item.get("order_id"):
                         try:
                             workflow_results.append(
                                 await _advance_core_order_workflow(str(item["order_id"]))
                             )
                         except HTTPException as exc:
+                            message_status = "needs_review"
+                            message_failure = "An order was saved but workflow advancement was not confirmed."
                             workflow_results.append({
                                 "order_id": item["order_id"],
                                 "status": "workflow_error",
                                 "detail": exc.detail,
                             })
-            successfully_processed_ids.append(message["imap_id"])
+            if message_status == "processed":
+                successfully_processed_ids.append(message["imap_id"])
+            else:
+                review_messages += 1
         except Exception as exc:
             failed_messages += 1
             message_status = "failed"
-            message_failure = str(exc)[:300]
-            import_result = None
-            workflow_results = []
+            message_failure = f"Intake failed ({type(exc).__name__}); message remains unread."
 
         processed_messages.append({
             "imap_id": message["imap_id"],
@@ -894,6 +910,7 @@ async def poll_email_intake(request: Request, payload: EmailPollRequest):
         "attachments": total_attachments,
         "orders_submitted": total_orders,
         "failed_messages": failed_messages,
+        "review_messages": review_messages,
         "mailbox": payload.mailbox,
     }))
 
@@ -904,12 +921,13 @@ async def poll_email_intake(request: Request, payload: EmailPollRequest):
         )
 
     return {
-        "status": "processed",
+        "status": "needs_review" if failed_messages or review_messages else "processed",
         "mailbox": payload.mailbox,
         "messages_checked": len(messages),
         "attachments_processed": total_attachments,
         "orders_submitted": total_orders,
         "failed_messages": failed_messages,
+        "review_messages": review_messages,
         "messages": processed_messages,
     }
 
@@ -2057,3 +2075,4 @@ async def v1_process_acknowledgment(payload: dict[str, Any], request: Request):
     if not updated:
         raise HTTPException(status_code=404, detail="Claim submission not found")
     return {"status": "processed", "claim_submission_id": submission_id}
+

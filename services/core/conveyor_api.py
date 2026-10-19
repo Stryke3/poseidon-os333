@@ -76,7 +76,7 @@ def _bind(query: str, params: tuple[Any, ...]) -> tuple[str, tuple[Any, ...]]:
         ordered.append(params[index])
         return "%s"
 
-    return re.sub(r"\$(\d+)", replace, query), tuple(ordered)
+    return re.sub(r"\$(\d+)", replace, query.replace("%", "%%")), tuple(ordered)
 
 
 async def _one(conn, query: str, *params: Any) -> dict[str, Any] | None:
@@ -688,6 +688,8 @@ async def _send_welcome(
     record_id: str,
     order_id: str | None,
 ) -> dict[str, Any]:
+    if not order_id:
+        return {"status": "blocked", "reason": "SPEAR record is not confirmed"}
     if not payload.email:
         return {"status": "blocked", "missing": ["Email"]}
 
@@ -705,6 +707,10 @@ async def _send_welcome(
             ):
                 return {"status": "already_sent"}
 
+            for event_type in ("mck.welcome.dispatching", "mck.welcome.uncertain"):
+                if await _source_event_exists(conn, org_id, event_type, payload.source_reference):
+                    return {"status": "uncertain", "reason": "Reconcile the previous send in Zoho"}
+
             subject, body = build_welcome_email(
                 first_name=payload.first_name,
                 insurance_name=payload.insurance_plan,
@@ -717,16 +723,28 @@ async def _send_welcome(
                     (payload.address_line1, payload.city, payload.state, payload.zip_code)
                 ),
             )
+            sender = ZohoMailSender(client, ZohoConfig.from_env())
+            event_data = {"source_reference": payload.source_reference, "record_id": record_id}
+            # Persist before network I/O so a crash or timeout cannot trigger a resend.
+            await _event(conn, org_id, "mck.welcome.dispatching", event_data, order_id)
+            await conn.commit()
             try:
-                message_id = await ZohoMailSender(
-                    client, ZohoConfig.from_env()
-                ).send_message(
+                message_id = await sender.send_message(
                     to_addresses=[payload.email],
                     subject=subject,
                     content=body,
                     mail_format="plaintext",
                 )
-            except ZohoMailSendUncertain as exc:
+                if not message_id:
+                    raise ZohoMailSendUncertain("Welcome send returned no message ID")
+                await _event(
+                    conn, org_id, "mck.welcome.sent",
+                    {**event_data, "message_id": message_id}, order_id,
+                )
+                await conn.commit()
+                return {"status": "confirmed", "message_id": message_id}
+            except Exception as exc:
+                await conn.rollback()
                 await _event(
                     conn,
                     org_id,
@@ -738,23 +756,10 @@ async def _send_welcome(
                     },
                     order_id,
                 )
-                return {"status": "uncertain", "error": str(exc)[:200]}
-            except Exception as exc:
-                return {"status": "failed", "error": str(exc)[:200]}
-
-            await _event(
-                conn,
-                org_id,
-                "mck.welcome.sent",
-                {
-                    "source_reference": payload.source_reference,
-                    "record_id": record_id,
-                    "message_id": message_id,
-                },
-                order_id,
-            )
-            return {"status": "confirmed", "message_id": message_id}
+                await conn.commit()
+                return {"status": "uncertain", "reason": "Welcome delivery requires reconciliation"}
         finally:
+            await conn.rollback()
             await _one(
                 conn,
                 "SELECT pg_advisory_unlock(hashtext($1)) unlocked",
