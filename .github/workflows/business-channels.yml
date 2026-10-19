@@ -11,6 +11,7 @@ on:
       - "services/shared/zoho_mail_outbound.py"
       - "services/shared/zoho_sheet.py"
       - "services/core/conveyor_api.py"
+      - "services/core/requirements.txt"
       - "services/intake/**"
       - "scripts/validate_production_env.sh"
       - ".github/workflows/business-channels.yml"
@@ -23,7 +24,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install httpx==0.28.0
+      - run: pip install -r services/core/requirements.txt
       - run: python services/intake/test_business_channels.py -v
       - run: python services/intake/test_mck_automation.py -v
       - run: >-
