@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -10,8 +11,12 @@ from urllib.parse import parse_qs
 import httpx
 
 
-SHARED = Path(__file__).resolve().parents[1] / "shared"
+SERVICES = Path(__file__).resolve().parents[1]
+SHARED = SERVICES / "shared"
+CORE = SERVICES / "core"
 sys.path.insert(0, str(SHARED))
+sys.path.insert(0, str(CORE))
+os.environ.setdefault("LOCAL_PROOF_MODE", "true")
 
 from mommy_care_workflow import (  # noqa: E402
     build_paid_notification,
@@ -23,6 +28,13 @@ from mommy_care_workflow import (  # noqa: E402
 from zoho_mail_outbound import ZohoMailSender  # noqa: E402
 from business_mail import ZohoConfig  # noqa: E402
 from zoho_sheet import ZohoSheet, ZohoSheetConfig  # noqa: E402
+from conveyor_api import (  # noqa: E402
+    MckIntakePayload,
+    _bind,
+    _candidate_has_conflict,
+    _candidate_matches_identifier,
+    _recipients,
+)
 
 
 class WorkflowHelperTests(unittest.TestCase):
@@ -67,6 +79,15 @@ class WorkflowHelperTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_recipients("external@example.com", internal_only=True)
 
+    def test_paid_recipients_must_be_explicitly_configured(self):
+        prior = os.environ.pop("MCK_PAID_NOTIFICATION_RECIPIENTS", None)
+        try:
+            with self.assertRaisesRegex(ValueError, "not configured"):
+                _recipients()
+        finally:
+            if prior is not None:
+                os.environ["MCK_PAID_NOTIFICATION_RECIPIENTS"] = prior
+
     def test_welcome_email_requests_missing_fields(self):
         subject, body = build_welcome_email(
             first_name="Maya",
@@ -81,6 +102,35 @@ class WorkflowHelperTests(unittest.TestCase):
         self.assertIn("OB/GYN", body)
         self.assertIn("4–6 weeks", body)
         self.assertIn("Heather", body)
+
+    def test_numbered_sql_bind_preserves_repeated_and_out_of_order_parameters(self):
+        statement, params = _bind(
+            "VALUES ($1::uuid,$2,$5::date,$5::date,$3,$4)",
+            ("id", "org", "first", "last", "1990-01-01"),
+        )
+        self.assertEqual(
+            statement,
+            "VALUES (%s::uuid,%s,%s::date,%s::date,%s,%s)",
+        )
+        self.assertEqual(
+            params,
+            ("id", "org", "1990-01-01", "1990-01-01", "first", "last"),
+        )
+
+    def test_identity_matching_uses_phone_or_email_and_blocks_conflicts(self):
+        payload = MckIntakePayload(
+            source_reference="synthetic:1",
+            first_name="Jane",
+            last_name="Doe",
+            date_of_birth="1990-01-01",
+            phone="(702) 555-0100",
+            email="JANE@EXAMPLE.COM",
+        )
+        same = {"phone": "7025550100", "email": "jane@example.com"}
+        different = {"phone": "7025559999", "email": "other@example.com"}
+        self.assertTrue(_candidate_matches_identifier(same, payload))
+        self.assertFalse(_candidate_has_conflict(same, payload))
+        self.assertTrue(_candidate_has_conflict(different, payload))
 
 
 class ZohoTransportTests(unittest.TestCase):
