@@ -15,6 +15,10 @@ class ZohoSheetError(RuntimeError):
         self.status_code = status_code
 
 
+class ZohoSheetWriteUncertain(ZohoSheetError):
+    """A write may have reached Zoho; reconcile before another append."""
+
+
 @dataclass(frozen=True, repr=False)
 class ZohoSheetConfig:
     client_id: str
@@ -60,7 +64,9 @@ class ZohoSheetConfig:
             raise ZohoSheetError("MCK_ZOHO_SHEET_HEADER_ROW must be an integer.", 503) from exc
         if header_row < 1:
             raise ZohoSheetError("MCK_ZOHO_SHEET_HEADER_ROW must be positive.", 503)
-        region = source.get("ZOHO_REGION", "com").strip() or "com"
+        region = source.get("ZOHO_REGION", "com").strip().lower() or "com"
+        if region not in {"com", "eu", "in", "com.au", "jp", "ca", "sa", "com.cn"}:
+            raise ZohoSheetError("Unsupported Zoho Sheet data center.", 503)
         return cls(
             client_id=client_id,
             client_secret=client_secret,
@@ -130,6 +136,7 @@ class ZohoSheet:
                 body[key] = str(value).lower()
             else:
                 body[key] = value
+        mutating = method in {"worksheet.records.add", "worksheet.records.update"}
         try:
             response = await self.client.post(
                 f"{self.config.sheet_origin}/api/v2/{self.config.resource_id}",
@@ -138,9 +145,15 @@ class ZohoSheet:
             )
             payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            raise ZohoSheetError("Zoho Sheet request could not be confirmed.") from exc
+            error = ZohoSheetWriteUncertain if mutating else ZohoSheetError
+            raise error("Zoho Sheet request could not be confirmed.") from exc
         if response.is_error or not isinstance(payload, dict):
-            raise ZohoSheetError("Zoho Sheet request failed.")
+            ambiguous = mutating and (
+                response.status_code >= 500 or response.status_code == 408
+                or not isinstance(payload, dict)
+            )
+            error = ZohoSheetWriteUncertain if ambiguous else ZohoSheetError
+            raise error("Zoho Sheet request failed.")
         if payload.get("status") == "failure" or payload.get("error_code"):
             code = payload.get("error_code")
             raise ZohoSheetError(f"Zoho Sheet rejected {method} (error {code}).")
@@ -165,15 +178,21 @@ class ZohoSheet:
             header_row=self.config.header_row,
             criteria=self._criteria(criteria_column, criteria_value),
             records_start_index=1,
-            count=1,
+            count=2,
             render_option="formatted",
         )
         records = payload.get("records")
         if records is None and isinstance(payload.get("data"), list):
             records = payload["data"]
-        if not isinstance(records, list) or not records:
+        if not isinstance(records, list):
+            raise ZohoSheetError("Zoho Sheet returned no verifiable record list.")
+        if len(records) > 1:
+            raise ZohoSheetError("Duplicate tracker Record ID requires reconciliation.", 409)
+        if not records:
             return None
-        return records[0] if isinstance(records[0], dict) else None
+        if not isinstance(records[0], dict) or str(records[0].get(criteria_column, "")) != criteria_value:
+            raise ZohoSheetError("Zoho Sheet returned an unexpected record.")
+        return records[0]
 
     async def upsert_record(
         self,
@@ -181,6 +200,8 @@ class ZohoSheet:
         worksheet_name: str,
         record_id: str,
         values: Mapping[str, Any],
+        allow_create: bool = True,
+        initialize_only: tuple[str, ...] = (),
     ) -> str:
         record = {key: value for key, value in values.items() if value is not None}
         record["Record ID"] = record_id
@@ -190,6 +211,15 @@ class ZohoSheet:
             criteria_value=record_id,
         )
         if existing is not None:
+            # Replays may fill missing intake fields; they must not erase workflow progress.
+            record = {
+                key: value for key, value in record.items()
+                if value != "" and not (
+                    key in initialize_only and existing.get(key) not in (None, "")
+                )
+            }
+            if str(existing.get("SPEAR Intake", "")).lower() == "true" and record.get("SPEAR Intake") is False:
+                record.pop("SPEAR Intake")
             payload = await self._call(
                 "worksheet.records.update",
                 worksheet_name=worksheet_name,
@@ -199,14 +229,30 @@ class ZohoSheet:
                 data=json.dumps(record, separators=(",", ":"), default=str),
             )
             affected = payload.get("no_of_affected_rows")
-            if affected is not None and int(affected) < 1:
-                raise ZohoSheetError("Zoho Sheet update did not affect the expected row.")
+            if affected is None:
+                raise ZohoSheetWriteUncertain("Zoho Sheet update returned no row acknowledgment.")
+            try:
+                count = int(affected)
+            except (TypeError, ValueError) as exc:
+                raise ZohoSheetWriteUncertain("Zoho Sheet update acknowledgment was invalid.") from exc
+            if count != 1:
+                raise ZohoSheetWriteUncertain("Zoho Sheet update did not confirm exactly one row.", 409)
             return "updated"
 
-        await self._call(
+        if not allow_create:
+            raise ZohoSheetError(
+                "Previously attempted tracker row is not visible; reconcile or retry its lookup.", 409
+            )
+        payload = await self._call(
             "worksheet.records.add",
             worksheet_name=worksheet_name,
             header_row=self.config.header_row,
             json_data=json.dumps([record], separators=(",", ":"), default=str),
         )
+        try:
+            start, end = int(payload["start_row"]), int(payload["end_row"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ZohoSheetWriteUncertain("Zoho Sheet append returned no row acknowledgment.") from exc
+        if start <= self.config.header_row or end != start:
+            raise ZohoSheetWriteUncertain("Zoho Sheet append did not confirm exactly one new row.")
         return "created"

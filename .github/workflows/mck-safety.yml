@@ -1,14 +1,29 @@
 name: MCK safety regression proof
 on:
   push:
-    branches: ["fix/mck-runtime-safety-20261019"]
+    branches: ["fix/mck-runtime-safety-20261019", "redis-degraded-mode-20260816"]
+    paths:
+      - "services/core/conveyor_api.py"
+      - "services/shared/business_mail.py"
+      - "services/shared/zoho_mail_outbound.py"
+      - "services/shared/zoho_sheet.py"
+      - "services/shared/mommy_care_workflow.py"
+      - "services/intake/**"
+      - ".github/workflows/mck-safety.yml"
+  pull_request:
+    branches: ["redis-degraded-mode-20260816"]
+    paths:
+      - "services/core/conveyor_api.py"
+      - "services/shared/business_mail.py"
+      - "services/shared/zoho_mail_outbound.py"
+      - "services/shared/zoho_sheet.py"
+      - "services/shared/mommy_care_workflow.py"
+      - "services/intake/**"
+      - ".github/workflows/mck-safety.yml"
 permissions:
   contents: read
 jobs:
-  reviewed-build:
-    if: github.repository == 'Stryke3/poseidon-os333' && github.ref == 'refs/heads/fix/mck-runtime-safety-20261019'
-    permissions:
-      contents: write
+  safety-contracts:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -32,35 +47,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python scripts/mck_safety_patch.py
       - run: pip install -r services/core/requirements.txt
       - run: python services/intake/test_business_channels.py -v
       - run: python services/intake/test_mck_automation.py -v
       - run: python services/intake/test_mck_safety_regressions.py -v
       - run: python -m py_compile services/core/conveyor_api.py services/shared/zoho_sheet.py services/shared/business_mail.py services/intake/main.py
       - run: git diff --check
-      - name: Store tested source blobs without changing any branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python - <<'PY'
-          import hashlib, json, os, pathlib, urllib.request
-          assert os.environ['GITHUB_REPOSITORY'] == 'Stryke3/poseidon-os333'
-          paths = ['services/core/conveyor_api.py', 'services/shared/zoho_sheet.py',
-                   'services/shared/business_mail.py', 'services/intake/main.py']
-          results = {}
-          for path in paths:
-              raw = pathlib.Path(path).read_bytes()
-              expected = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
-              request = urllib.request.Request(
-                  'https://api.github.com/repos/Stryke3/poseidon-os333/git/blobs',
-                  data=json.dumps({'content':raw.decode(), 'encoding':'utf-8'}).encode(),
-                  headers={'Authorization':'Bearer ' + os.environ['GH_TOKEN'],
-                           'Accept':'application/vnd.github+json', 'Content-Type':'application/json'},
-                  method='POST')
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  received = json.load(response)['sha']
-              assert received == expected, 'Blob integrity check failed'
-              results[path] = received
-          print('MCK_REVIEWED_BLOBS=' + json.dumps(results, sort_keys=True))
-          PY

@@ -822,8 +822,6 @@ async def ingest_appeal(
 async def poll_email_intake(request: Request, payload: EmailPollRequest):
     """Poll the intake mailbox, download attachments, create patients/orders in Core, and assign work."""
     messages = await _fetch_email_messages(payload.mailbox, payload.search, payload.max_messages)
-    # Every attachment is durable and verified before any order import or read-state update.
-    await _archive_email_messages(messages)
 
     processed_messages = []
     total_orders = 0
@@ -842,6 +840,9 @@ async def poll_email_intake(request: Request, payload: EmailPollRequest):
         workflow_results: list[dict[str, Any]] = []
 
         try:
+            # A failed archive blocks this message only. Its records are never imported.
+            # Other messages continue, and only fully processed messages are marked read.
+            await _archive_email_messages([message])
             for index, (filename, content) in enumerate(message["attachments"]):
                 total_attachments += 1
                 stored = message["attachment_archives"][index]

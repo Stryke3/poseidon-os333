@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from datetime import date, datetime, timezone
 import hmac
+import hashlib
 import json
 import os
 import re
@@ -18,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 from psycopg.rows import dict_row
 
 from base import logger, settings
-from business_mail import ZohoConfig
+from business_mail import BusinessMailError, ZohoConfig
 from mommy_care_workflow import (
     build_paid_notification,
     build_welcome_email,
@@ -26,7 +27,7 @@ from mommy_care_workflow import (
     stable_record_id,
 )
 from zoho_mail_outbound import ZohoMailSendUncertain, ZohoMailSender
-from zoho_sheet import ZohoSheet, ZohoSheetConfig
+from zoho_sheet import ZohoSheet, ZohoSheetConfig, ZohoSheetError, ZohoSheetWriteUncertain
 
 
 router = APIRouter(tags=["Mommy Care Kit Automation"])
@@ -115,7 +116,7 @@ class MckIntakePayload(BaseModel):
     address_line1: str | None = None
     address_line2: str | None = None
     city: str | None = None
-    state: str | None = "NV"
+    state: str | None = None
     zip_code: str | None = None
     insurance_plan: str | None = None
     payer_id: str | None = None
@@ -332,6 +333,10 @@ async def _resolve_patient(conn, payload: MckIntakePayload, org_id: str) -> dict
         return None
     exact = [candidate for candidate in candidates if _candidate_matches_identifier(candidate, payload)]
     if len(exact) == 1:
+        if _candidate_has_conflict(exact[0], payload):
+            raise IdentityConflict(
+                "The submitted phone or email conflicts with the existing SPEAR patient"
+            )
         return exact[0]
     if len(exact) > 1:
         raise IdentityConflict("More than one SPEAR patient matches the submitted identity")
@@ -661,110 +666,196 @@ async def _sheet_project(
     record_id: str,
     spear: dict[str, Any] | None,
     outstanding: str,
+    *,
+    db,
+    org_id: str,
 ) -> dict[str, str]:
     config = ZohoSheetConfig.from_env()
     sheet = ZohoSheet(client, config)
     patient, cover = _sheet_rows(payload, record_id, spear, outstanding)
-    return {
-        "patient_details": await sheet.upsert_record(
-            worksheet_name=config.patient_details_sheet,
-            record_id=record_id,
-            values=patient,
-        ),
-        "heather_cover": await sheet.upsert_record(
-            worksheet_name=config.heather_cover_sheet,
-            record_id=record_id,
-            values=cover,
-        ),
-    }
+    initialize_only = (
+        "Intake Date", "Current Stage", "Notes", "Doctor Notes Received",
+        "SWO Status (cover)", "Signed SWO Returned", "Heather Follow-up",
+        "Outstanding / Follow-up", "SPEAR Review / Outstanding", "Owner",
+    )
+    results: dict[str, str] = {}
+    for leg, worksheet, values in (
+        ("patient_details", config.patient_details_sheet, patient),
+        ("heather_cover", config.heather_cover_sheet, cover),
+    ):
+        key = hashlib.sha256(json.dumps(
+            [org_id, config.resource_id, worksheet, record_id], separators=(",", ":")
+        ).encode()).hexdigest()
+        fingerprint = hashlib.sha256(json.dumps(
+            values, sort_keys=True, default=str, separators=(",", ":")
+        ).encode()).hexdigest()
+        lock_name = f"mck-sheet:{key}"
+        event_types = [f"mck.sheet.projection.{suffix}" for suffix in
+                       ("dispatching", "confirmed", "uncertain", "retryable")]
+        async with db.connection() as conn:
+            lock = await _one(conn, "SELECT pg_try_advisory_lock(hashtext($1)) locked", lock_name)
+            if not lock or not lock.get("locked"):
+                raise ZohoSheetError("Tracker projection already in progress.", 409)
+            try:
+                prior = await _one(
+                    conn,
+                    "SELECT event_type,payload FROM workflow_events WHERE org_id=$1::uuid "
+                    "AND event_type=ANY($2) AND payload->>'projection_key'=$3 "
+                    "ORDER BY created_at DESC,id DESC LIMIT 1",
+                    org_id, event_types, key,
+                )
+                prior_data = (prior or {}).get("payload") or {}
+                if isinstance(prior_data, str):
+                    prior_data = json.loads(prior_data)
+                prior_type = str((prior or {}).get("event_type") or "")
+                if (prior_type.endswith(".confirmed")
+                        and prior_data.get("fingerprint") == fingerprint):
+                    results[leg] = "already_projected"
+                    continue
+                # Carry this fact across retryable lookup failures. A delayed index must
+                # never convert a previously confirmed/ambiguous append into a new append.
+                may_exist = bool(prior_data.get("may_exist")) or prior_type.endswith(
+                    (".dispatching", ".confirmed", ".uncertain")
+                )
+                event_data = {
+                    "projection_key": key, "fingerprint": fingerprint,
+                    "record_id": record_id, "source_reference": payload.source_reference,
+                    "worksheet": worksheet, "resource_id": config.resource_id,
+                    "attempt_id": str(uuid.uuid4()), "may_exist": True,
+                }
+                order_id = str((spear or {}).get("order_id") or "") or None
+                await _event(conn, org_id, "mck.sheet.projection.dispatching", event_data, order_id)
+                await conn.commit()
+                try:
+                    result = await sheet.upsert_record(
+                        worksheet_name=worksheet, record_id=record_id, values=values,
+                        allow_create=not may_exist, initialize_only=initialize_only,
+                    )
+                except ZohoSheetWriteUncertain:
+                    await conn.rollback()
+                    await _event(conn, org_id, "mck.sheet.projection.uncertain", event_data, order_id)
+                    await conn.commit()
+                    raise
+                except ZohoSheetError:
+                    await conn.rollback()
+                    await _event(conn, org_id, "mck.sheet.projection.retryable",
+                                 {**event_data, "may_exist": may_exist}, order_id)
+                    await conn.commit()
+                    raise
+                except Exception as exc:
+                    await conn.rollback()
+                    await _event(conn, org_id, "mck.sheet.projection.uncertain", event_data, order_id)
+                    await conn.commit()
+                    raise ZohoSheetWriteUncertain("Tracker write requires reconciliation.") from exc
+                # Commit each worksheet separately before starting the next one.
+                await _event(conn, org_id, "mck.sheet.projection.confirmed",
+                             {**event_data, "result": result}, order_id)
+                await conn.commit()
+                results[leg] = result
+            finally:
+                await conn.rollback()
+                await _one(conn, "SELECT pg_advisory_unlock(hashtext($1)) unlocked", lock_name)
+                await conn.commit()
+    return results
+
+
+async def _latest_mail_state(conn, org_id: str, prefix: str, *, source: str | None = None,
+                             order_id: str | None = None) -> str:
+    types = [f"{prefix}.{suffix}" for suffix in ("sent", "dispatching", "uncertain", "retryable")]
+    if source is not None:
+        selector, value = "payload->>'source_reference'=$3", source
+    else:
+        selector, value = "order_id=$3::uuid", order_id
+    row = await _one(
+        conn,
+        "SELECT event_type FROM workflow_events WHERE org_id=$1::uuid "
+        "AND event_type=ANY($2) AND " + selector +
+        " ORDER BY created_at DESC,CASE WHEN event_type LIKE '%.sent' THEN 4 "
+        "WHEN event_type LIKE '%.retryable' THEN 3 WHEN event_type LIKE '%.uncertain' "
+        "THEN 2 ELSE 1 END DESC,id DESC LIMIT 1",
+        org_id, types, value,
+    )
+    return str((row or {}).get("event_type") or "").rsplit(".", 1)[-1]
+
+
+async def _deliver_mail(conn, *, org_id: str, order_id: str, prefix: str,
+                        event_data: dict[str, Any], sender, recipients: list[str],
+                        subject: str, body: str) -> dict[str, Any]:
+    data = {**event_data, "attempt_id": str(uuid.uuid4())}
+    await _event(conn, org_id, f"{prefix}.dispatching", data, order_id)
+    await conn.commit()
+    try:
+        message_id = await sender.send_message(
+            to_addresses=recipients, subject=subject, content=body, mail_format="plaintext"
+        )
+        if not message_id:
+            raise ZohoMailSendUncertain("Mail transport returned no message ID")
+    except ZohoMailSendUncertain as exc:
+        suffix, status, reason = "uncertain", "uncertain", type(exc).__name__
+    except BusinessMailError as exc:
+        # The transport authenticates BEFORE attempting /messages. Only this known
+        # pre-send failure may become retryable. Preserve every prior attempt event.
+        suffix, status, reason = "retryable", "failed", type(exc).__name__
+    except Exception as exc:
+        suffix, status, reason = "uncertain", "uncertain", type(exc).__name__
+    else:
+        try:
+            await _event(conn, org_id, f"{prefix}.sent", {**data, "message_id": message_id}, order_id)
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            # The committed dispatching receipt prevents a duplicate after a lost DB acknowledgment.
+            return {"status": "uncertain", "reason": "Reconcile accepted mail receipt"}
+        return {"status": "confirmed", "message_id": message_id}
+    await conn.rollback()
+    await _event(conn, org_id, f"{prefix}.{suffix}", {**data, "reason": reason}, order_id)
+    await conn.commit()
+    return {"status": status, "reason": (
+        "Mail was not attempted; retry is permitted" if suffix == "retryable"
+        else "Mail delivery requires reconciliation"
+    )}
+
 
 
 async def _send_welcome(
-    db,
-    client: httpx.AsyncClient,
-    payload: MckIntakePayload,
-    *,
-    org_id: str,
-    record_id: str,
-    order_id: str | None,
+    db, client: httpx.AsyncClient, payload: MckIntakePayload, *,
+    org_id: str, record_id: str, order_id: str | None,
 ) -> dict[str, Any]:
     if not order_id:
         return {"status": "blocked", "reason": "SPEAR record is not confirmed"}
     if not payload.email:
         return {"status": "blocked", "missing": ["Email"]}
-
+    lock_name = f"mck-welcome:{org_id}:{payload.source_reference}"
     async with db.connection() as conn:
-        lock = await _one(
-            conn,
-            "SELECT pg_try_advisory_lock(hashtext($1)) locked",
-            f"mck-welcome:{org_id}:{payload.source_reference}",
-        )
+        lock = await _one(conn, "SELECT pg_try_advisory_lock(hashtext($1)) locked", lock_name)
         if not lock or not lock.get("locked"):
             return {"status": "in_progress"}
         try:
-            if await _source_event_exists(
-                conn, org_id, "mck.welcome.sent", payload.source_reference
-            ):
+            state = await _latest_mail_state(conn, org_id, "mck.welcome", source=payload.source_reference)
+            if state == "sent":
                 return {"status": "already_sent"}
-
-            for event_type in ("mck.welcome.dispatching", "mck.welcome.uncertain"):
-                if await _source_event_exists(conn, org_id, event_type, payload.source_reference):
-                    return {"status": "uncertain", "reason": "Reconcile the previous send in Zoho"}
-
+            if state in {"dispatching", "uncertain"}:
+                return {"status": "uncertain", "reason": "Reconcile the previous send in Zoho"}
             subject, body = build_welcome_email(
-                first_name=payload.first_name,
-                insurance_name=payload.insurance_plan,
+                first_name=payload.first_name, insurance_name=payload.insurance_plan,
                 provider_summary=_provider(payload) if payload.provider_name else None,
-                needs_dob=not bool(payload.date_of_birth),
-                needs_provider=not bool(payload.provider_name),
-                needs_insurance=not bool(payload.member_id),
-                needs_id=True,
-                needs_address=not all(
-                    (payload.address_line1, payload.city, payload.state, payload.zip_code)
-                ),
+                needs_dob=not bool(payload.date_of_birth), needs_provider=not bool(payload.provider_name),
+                needs_insurance=not bool(payload.member_id), needs_id=True,
+                needs_address=not all((payload.address_line1, payload.city, payload.state, payload.zip_code)),
             )
-            sender = ZohoMailSender(client, ZohoConfig.from_env())
-            event_data = {"source_reference": payload.source_reference, "record_id": record_id}
-            # Persist before network I/O so a crash or timeout cannot trigger a resend.
-            await _event(conn, org_id, "mck.welcome.dispatching", event_data, order_id)
-            await conn.commit()
             try:
-                message_id = await sender.send_message(
-                    to_addresses=[payload.email],
-                    subject=subject,
-                    content=body,
-                    mail_format="plaintext",
-                )
-                if not message_id:
-                    raise ZohoMailSendUncertain("Welcome send returned no message ID")
-                await _event(
-                    conn, org_id, "mck.welcome.sent",
-                    {**event_data, "message_id": message_id}, order_id,
-                )
-                await conn.commit()
-                return {"status": "confirmed", "message_id": message_id}
-            except Exception as exc:
-                await conn.rollback()
-                await _event(
-                    conn,
-                    org_id,
-                    "mck.welcome.uncertain",
-                    {
-                        "source_reference": payload.source_reference,
-                        "record_id": record_id,
-                        "reason": type(exc).__name__,
-                    },
-                    order_id,
-                )
-                await conn.commit()
-                return {"status": "uncertain", "reason": "Welcome delivery requires reconciliation"}
+                sender = ZohoMailSender(client, ZohoConfig.from_env())
+            except BusinessMailError:
+                return {"status": "failed", "reason": "Zoho mail configuration is incomplete"}
+            return await _deliver_mail(
+                conn, org_id=org_id, order_id=order_id, prefix="mck.welcome",
+                event_data={"source_reference": payload.source_reference, "record_id": record_id},
+                sender=sender, recipients=[payload.email], subject=subject, body=body,
+            )
         finally:
             await conn.rollback()
-            await _one(
-                conn,
-                "SELECT pg_advisory_unlock(hashtext($1)) unlocked",
-                f"mck-welcome:{org_id}:{payload.source_reference}",
-            )
+            await _one(conn, "SELECT pg_advisory_unlock(hashtext($1)) unlocked", lock_name)
+            await conn.commit()
 
 
 @router.post("/api/v1/mck/intake")
@@ -825,11 +916,15 @@ async def mck_intake(payload: MckIntakePayload, request: Request):
                 stable_record_id(payload.source_reference),
                 type(exc).__name__,
             )
-            results["spear"] = {"status": "failed", "error": str(exc)[:200]}
+            results["spear"] = {"status": "failed", "reason": "SPEAR intake requires review"}
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            projected = await _sheet_project(client, payload, record_id, spear, outstanding)
+            if results["spear"].get("reason") and results["spear"]["status"] == "blocked":
+                raise ZohoSheetError("Patient identity requires reconciliation before projection.", 409)
+            projected = await _sheet_project(
+                client, payload, record_id, spear, outstanding, db=db, org_id=org_id
+            )
             results["sheet"] = {"status": "confirmed", **projected}
             async with db.connection() as conn:
                 await _event(
@@ -843,8 +938,10 @@ async def mck_intake(payload: MckIntakePayload, request: Request):
                     },
                     str((spear or {}).get("order_id") or "") or None,
                 )
-        except Exception as exc:
-            results["sheet"] = {"status": "failed", "error": str(exc)[:200]}
+        except ZohoSheetWriteUncertain:
+            results["sheet"] = {"status": "uncertain", "reason": "Reconcile tracker write before retry"}
+        except Exception:
+            results["sheet"] = {"status": "failed", "reason": "Tracker projection requires review"}
 
         results["welcome"] = await _send_welcome(
             db,
@@ -885,157 +982,89 @@ def _address(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _send_paid(app, row: dict[str, Any]) -> str:
-    order_id = str(row["id"])
-    org_id = str(row["org_id"])
+    order_id, org_id = str(row["id"]), str(row["org_id"])
+    if org_id != _org_id():
+        return "blocked"
     db = app.state.db_pool
+    lock_name = f"mck-paid:{order_id}"
     async with db.connection() as conn:
-        lock = await _one(
-            conn,
-            "SELECT pg_try_advisory_lock(hashtext($1)) locked",
-            f"mck-paid:{order_id}",
-        )
+        lock = await _one(conn, "SELECT pg_try_advisory_lock(hashtext($1)) locked", lock_name)
         if not lock or not lock.get("locked"):
             return "locked"
         try:
-            if await _order_event(
-                conn,
-                order_id,
-                (
-                    "mck.payment_notification.sent",
-                    "mck.payment_notification.uncertain",
-                    "mck.payment_notification.dispatching",
-                ),
-            ):
+            state = await _latest_mail_state(conn, org_id, "mck.payment_notification", order_id=order_id)
+            if state in {"sent", "uncertain", "dispatching"}:
                 return "already_handled"
+            current = await _one(conn,
+                "SELECT status,paid_amount FROM orders WHERE id=$1::uuid AND org_id=$2::uuid",
+                order_id, org_id)
+            if not current or current["status"] != "paid" or (current.get("paid_amount") or 0) <= 0:
+                return "blocked"
             try:
                 subject, body = build_paid_notification(
-                    f"{row.get('first_name') or ''} {row.get('last_name') or ''}",
-                    _address(row),
-                )
-            except ValueError as exc:
-                if not await _order_event(
-                    conn, order_id, ("mck.payment_notification.blocked",)
-                ):
-                    await _event(
-                        conn,
-                        org_id,
-                        "mck.payment_notification.blocked",
-                        {"reason": str(exc)[:120]},
-                        order_id,
-                    )
-                return "blocked"
-
-            try:
+                    f"{row.get('first_name') or ''} {row.get('last_name') or ''}", _address(row))
                 recipients = _recipients()
-            except ValueError as exc:
-                if not await _order_event(
-                    conn, order_id, ("mck.payment_notification.blocked",)
-                ):
-                    await _event(
-                        conn,
-                        org_id,
-                        "mck.payment_notification.blocked",
-                        {"reason": str(exc)[:120]},
-                        order_id,
-                    )
+                config = ZohoConfig.from_env()
+            except (ValueError, BusinessMailError):
+                await _event(conn, org_id, "mck.payment_notification.blocked",
+                             {"reason": "Verify address, recipients and Zoho configuration"}, order_id)
+                await conn.commit()
                 return "blocked"
-
-            await _event(
-                conn,
-                org_id,
-                "mck.payment_notification.dispatching",
-                {
-                    "recipient_count": len(recipients),
-                    "paid_at": str(row.get("paid_at") or row.get("payment_date") or ""),
-                },
-                order_id,
-            )
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    message_id = await ZohoMailSender(
-                        client, ZohoConfig.from_env()
-                    ).send_message(
-                        to_addresses=recipients,
-                        subject=subject,
-                        content=body,
-                        mail_format="plaintext",
-                    )
-                await _event(
-                    conn,
-                    org_id,
-                    "mck.payment_notification.sent",
-                    {
-                        "message_id": message_id,
-                        "recipient_count": len(recipients),
-                        "paid_at": str(row.get("paid_at") or row.get("payment_date") or ""),
-                    },
-                    order_id,
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                result = await _deliver_mail(
+                    conn, org_id=org_id, order_id=order_id, prefix="mck.payment_notification",
+                    event_data={"recipient_count": len(recipients),
+                                "paid_at": str(row.get("paid_at") or row.get("payment_date") or "")},
+                    sender=ZohoMailSender(client, config), recipients=recipients,
+                    subject=subject, body=body,
                 )
-                return "sent"
-            except Exception as exc:
-                await _event(
-                    conn,
-                    org_id,
-                    "mck.payment_notification.uncertain",
-                    {"reason": type(exc).__name__},
-                    order_id,
-                )
-                logger.warning(
-                    "mck_paid_notification_uncertain order_id=%s error=%s",
-                    order_id,
-                    type(exc).__name__,
-                )
-                return "uncertain"
+            return "sent" if result["status"] == "confirmed" else result["status"]
         finally:
-            await _one(
-                conn,
-                "SELECT pg_advisory_unlock(hashtext($1)) unlocked",
-                f"mck-paid:{order_id}",
-            )
+            await conn.rollback()
+            await _one(conn, "SELECT pg_advisory_unlock(hashtext($1)) unlocked", lock_name)
+            await conn.commit()
 
 
 async def dispatch_paid_notifications(app, *, limit: int = 25) -> dict[str, int]:
+    counts = {"checked": 0, "sent": 0, "blocked": 0, "failed": 0,
+              "uncertain": 0, "already_handled": 0, "locked": 0}
+    if os.getenv("MCK_PAID_NOTIFICATION_ENABLED", "false").lower() != "true":
+        return {**counts, "disabled": 1}
+    org_id = _org_id()
     db = app.state.db_pool
     if db is None:
         raise RuntimeError("SPEAR database is unavailable")
     async with db.connection() as conn:
-        rows = await _all(
-            conn,
-            """
+        rows = await _all(conn, """
             SELECT o.id,o.org_id,o.paid_amount,o.payment_date,o.paid_at,
                    p.first_name,p.last_name,p.address_line1,p.address_line2,
                    p.city,p.state,p.zip_code,p.address
-            FROM orders o
-            JOIN patients p ON p.id=o.patient_id
-            WHERE o.status='paid' AND COALESCE(o.paid_amount,0)>0
-              AND (
-                    lower(COALESCE(o.product_category,'')) LIKE '%mommy%'
-                 OR lower(COALESCE(o.product_category,'')) LIKE '%maternity%'
-                 OR lower(COALESCE(o.source,'')) LIKE '%mommy%'
-                 OR COALESCE(o.intake_payload->>'mck_record_id','')<>''
-              )
-              AND NOT EXISTS (
-                  SELECT 1 FROM workflow_events w
-                  WHERE w.order_id=o.id
-                    AND w.event_type IN (
-                        'mck.payment_notification.sent',
-                        'mck.payment_notification.uncertain',
-                        'mck.payment_notification.dispatching'
-                    )
-              )
-            ORDER BY COALESCE(o.paid_at,o.payment_date::timestamptz,o.updated_at) ASC
-            LIMIT $1
-            """,
-            limit,
-        )
-    counts = {
-        "checked": len(rows),
-        "sent": 0,
-        "blocked": 0,
-        "uncertain": 0,
-        "already_handled": 0,
-        "locked": 0,
-    }
+            FROM orders o JOIN patients p ON p.id=o.patient_id AND p.org_id=o.org_id
+            WHERE o.org_id=$1::uuid AND o.status='paid' AND COALESCE(o.paid_amount,0)>0
+              AND (lower(COALESCE(o.product_category,'')) LIKE '%mommy%'
+                OR lower(COALESCE(o.product_category,'')) LIKE '%maternity%'
+                OR lower(COALESCE(o.source,'')) LIKE '%mommy%'
+                OR COALESCE(o.intake_payload->>'mck_record_id','')<>'')
+              AND COALESCE((
+                  SELECT w.event_type FROM workflow_events w
+                  WHERE w.order_id=o.id AND w.org_id=o.org_id
+                    AND w.event_type IN ('mck.payment_notification.sent',
+                        'mck.payment_notification.uncertain', 'mck.payment_notification.dispatching',
+                        'mck.payment_notification.retryable')
+                  ORDER BY w.created_at DESC,
+                    CASE WHEN w.event_type LIKE '%.sent' THEN 4
+                         WHEN w.event_type LIKE '%.retryable' THEN 3
+                         WHEN w.event_type LIKE '%.uncertain' THEN 2 ELSE 1 END DESC,w.id DESC LIMIT 1
+              ),'') NOT IN ('mck.payment_notification.sent',
+                           'mck.payment_notification.uncertain','mck.payment_notification.dispatching')
+            ORDER BY COALESCE((SELECT max(w.created_at) FROM workflow_events w
+                    WHERE w.order_id=o.id AND w.event_type IN
+                    ('mck.payment_notification.blocked','mck.payment_notification.retryable')),
+                    'epoch'::timestamptz),
+                     COALESCE(o.paid_at,o.payment_date::timestamptz,o.updated_at),o.id
+            LIMIT $2
+            """, org_id, limit)
+    counts["checked"] = len(rows)
     for row in rows:
         result = await _send_paid(app, row)
         counts[result] = counts.get(result, 0) + 1

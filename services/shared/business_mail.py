@@ -54,7 +54,15 @@ class ZohoConfig:
 
     @property
     def mail_origin(self) -> str:
+        if self.region == "ca":
+            return "https://mail.zohocloud.ca"
         return f"https://mail.zoho.{self.region}"
+
+    @property
+    def accounts_origin(self) -> str:
+        if self.region == "ca":
+            return "https://accounts.zohocloud.ca"
+        return f"https://accounts.zoho.{self.region}"
 
 
 class ZohoMail:
@@ -78,7 +86,7 @@ class ZohoMail:
 
     async def authenticate(self):
         try:
-            response = await self.client.post(f"https://accounts.zoho.{self.config.region}/oauth/v2/token",
+            response = await self.client.post(f"{self.config.accounts_origin}/oauth/v2/token",
                 data={"client_id": self.config.client_id, "client_secret": self.config.client_secret,
                       "refresh_token": self.config.refresh_token, "grant_type": "refresh_token"})
             payload = response.json()
