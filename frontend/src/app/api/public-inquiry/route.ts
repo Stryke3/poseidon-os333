@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import nodemailer from "nodemailer"
+import { businessMailConfigured, sendBusinessMail } from "@/lib/services/zoho-mail"
 import { getRequiredEnv } from "@/lib/runtime-config"
 
 const WINDOW_MS = 10 * 60 * 1000
@@ -151,34 +151,14 @@ export async function POST(req: NextRequest) {
     }
 
     const recipient = getRequiredEnv("PUBLIC_INQUIRY_TO")
-    const gmailUser = process.env.GMAIL_INTAKE_USER || process.env.EMAIL_INTAKE_USERNAME || ""
-    const clientId = process.env.GMAIL_OAUTH_CLIENT_ID || ""
-    const clientSecret = process.env.GMAIL_OAUTH_CLIENT_SECRET || ""
-    const refreshToken = process.env.GMAIL_OAUTH_REFRESH_TOKEN || ""
-
-    if (!gmailUser || !clientId || !clientSecret || !refreshToken) {
-      return NextResponse.json(
-        { error: "Public inquiry email is not configured." },
-        { status: 500 },
-      )
+    if (!businessMailConfigured()) {
+      return NextResponse.json({ error: "Public inquiry email is not configured." }, { status: 503 })
     }
 
     const prettyType = formatInquiryType(inquiryType)
     const subject = `[Website] ${prettyType} from ${name}`
 
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        type: "OAuth2",
-        user: gmailUser,
-        clientId,
-        clientSecret,
-        refreshToken,
-      },
-    })
-
-    await transporter.sendMail({
-      from: `"StrykeFox Website" <${gmailUser}>`,
+    await sendBusinessMail({
       to: recipient,
       replyTo: email,
       subject,

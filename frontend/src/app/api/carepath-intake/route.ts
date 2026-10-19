@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import nodemailer from "nodemailer"
+import { businessMailConfigured, sendBusinessMail } from "@/lib/services/zoho-mail"
 import { randomUUID } from "crypto"
 
 // ── Rate limiting ────────────────────────────────────────────────────────────
@@ -206,6 +206,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "HCPCS/CPT codes appear malformed. Use comma-separated codes (e.g. E0181, L1833)." }, { status: 400 })
   }
 
+  if (!businessMailConfigured()) {
+    return NextResponse.json({ error: "Referral delivery is unavailable. Please contact StrykeFox." }, { status: 503 })
+  }
+
   const referenceId = `CP-${Date.now().toString(36).toUpperCase()}-${randomUUID().slice(0, 6).toUpperCase()}`
   const packet = buildTebraPacket(fields, referenceId)
 
@@ -230,24 +234,8 @@ export async function POST(req: NextRequest) {
 
   // ── Email ─────────────────────────────────────────────────────────────────
   const recipient = process.env.PUBLIC_INQUIRY_TO || "patients@strykefox.com"
-  const gmailUser = process.env.GMAIL_INTAKE_USER || process.env.EMAIL_INTAKE_USERNAME || ""
-  const clientId = process.env.GMAIL_OAUTH_CLIENT_ID || ""
-  const clientSecret = process.env.GMAIL_OAUTH_CLIENT_SECRET || ""
-  const refreshToken = process.env.GMAIL_OAUTH_REFRESH_TOKEN || ""
-
-  if (!gmailUser || !clientId || !clientSecret || !refreshToken) {
-    // Log the packet even if email is not configured (dev / CI environments)
-    console.log("[carepath-intake] Email not configured. Packet:", JSON.stringify(packet, null, 2))
-    return NextResponse.json({ status: "ok", referenceId })
-  }
-
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: { type: "OAuth2", user: gmailUser, clientId, clientSecret, refreshToken },
-  })
-
-  await transporter.sendMail({
-    from: `"CarePath Intake" <${gmailUser}>`,
+  try {
+    await sendBusinessMail({
     to: recipient,
     replyTo: fields.refEmail || undefined,
     subject: `[CarePath] ${fields.pathway.toUpperCase()} Referral — ${fields.patFirst} ${fields.patLast} | Ref #${referenceId}`,
@@ -259,7 +247,10 @@ export async function POST(req: NextRequest) {
         contentType: "application/json",
       },
     ],
-  })
+    })
+  } catch {
+    return NextResponse.json({ error: "Referral delivery could not be confirmed. Contact StrykeFox with this reference before resubmitting.", referenceId }, { status: 502 })
+  }
 
   return NextResponse.json({ status: "ok", referenceId })
 }

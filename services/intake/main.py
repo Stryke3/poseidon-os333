@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import csv
-import base64
 import io
 import json
 import os
@@ -33,6 +32,8 @@ from psycopg.rows import dict_row  # type: ignore[import-untyped]
 _shared_dir = Path("/app/shared") if Path("/app/shared").exists() else (Path(__file__).resolve().parent.parent / "shared")
 sys.path.insert(0, str(_shared_dir))
 from base import cache_rpush, create_app, get_redis, logger, settings
+from business_mail import BusinessMailError, ZohoConfig, ZohoMail
+from dropbox_archive import DropboxArchive, DropboxConfig
 
 # ---------------------------------------------------------------------------
 app = create_app(
@@ -635,6 +636,8 @@ async def _advance_core_order_workflow(order_id: str) -> dict[str, Any]:
 def _iter_email_attachments(message) -> list[tuple[str, bytes]]:
     attachments: list[tuple[str, bytes]] = []
     for part in message.walk():
+        if part.get_content_disposition() == "inline":
+            continue
         filename = part.get_filename()
         if not filename:
             continue
@@ -645,114 +648,57 @@ def _iter_email_attachments(message) -> list[tuple[str, bytes]]:
     return attachments
 
 
-async def _gmail_access_token() -> tuple[str, str]:
-    client_id = os.getenv("GMAIL_OAUTH_CLIENT_ID", "").strip()
-    client_secret = os.getenv("GMAIL_OAUTH_CLIENT_SECRET", "").strip()
-    refresh_token = os.getenv("GMAIL_OAUTH_REFRESH_TOKEN", "").strip()
-    gmail_user = os.getenv("GMAIL_INTAKE_USER", "").strip() or os.getenv("EMAIL_INTAKE_USERNAME", "").strip()
-    token_url = os.getenv("GMAIL_TOKEN_URL", "https://oauth2.googleapis.com/token").strip()
-
-    if not client_id or not client_secret or not refresh_token or not gmail_user:
-        raise HTTPException(
-            status_code=500,
-            detail="Missing Gmail OAuth configuration. Expected GMAIL_OAUTH_CLIENT_ID, GMAIL_OAUTH_CLIENT_SECRET, GMAIL_OAUTH_REFRESH_TOKEN, and GMAIL_INTAKE_USER.",
-        )
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            token_url,
-            data={
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token",
-            },
-            headers={"Accept": "application/json"},
-        )
-
-    if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"Gmail OAuth token request failed: {response.status_code}")
-
-    payload = response.json()
-    access_token = payload.get("access_token")
-    if not access_token:
-        raise HTTPException(status_code=502, detail="Gmail OAuth token response missing access_token.")
-
-    return gmail_user, access_token
-
-
-def _gmail_query(search: str) -> str:
-    normalized = (search or "").strip()
-    if not normalized or normalized.upper() == "UNSEEN":
-        return "is:unread"
-    return normalized
-
-
 async def _fetch_email_messages(mailbox: str, search: str, max_messages: int) -> list[dict[str, Any]]:
-    gmail_user, access_token = await _gmail_access_token()
-    query = _gmail_query(search)
-    list_url = f"https://gmail.googleapis.com/gmail/v1/users/{gmail_user}/messages"
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(
-            list_url,
-            params={"q": query, "maxResults": max_messages},
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-
-        if response.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"Gmail list messages failed: {response.status_code}")
-
-        payload = response.json()
-        message_refs = payload.get("messages") or []
-        messages: list[dict[str, Any]] = []
-
-        for item in message_refs:
-            gmail_id = str(item.get("id") or "")
-            if not gmail_id:
-                continue
-
-            message_response = await client.get(
-                f"{list_url}/{gmail_id}",
-                params={"format": "raw"},
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            if message_response.status_code >= 400:
-                continue
-
-            message_payload = message_response.json()
-            raw_value = message_payload.get("raw")
-            if not raw_value:
-                continue
-
-            raw_bytes = base64.urlsafe_b64decode(raw_value + "=" * (-len(raw_value) % 4))
-            message = message_from_bytes(raw_bytes, policy=policy.default)
-            messages.append({
-                "imap_id": gmail_id,
-                "gmail_id": gmail_id,
-                "mailbox": mailbox,
-                "message_id": _decode_mime_header(message.get("Message-ID")),
-                "subject": _decode_mime_header(message.get("Subject")),
-                "from": _decode_mime_header(message.get("From")),
-                "date": _decode_mime_header(message.get("Date")),
-                "attachments": _iter_email_attachments(message),
-            })
-
-        return messages
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+            records = await ZohoMail(client, ZohoConfig.from_env()).fetch_messages(mailbox, search, max_messages)
+    except BusinessMailError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    messages = []
+    for record in records:
+        message = message_from_bytes(record["raw"], policy=policy.default)
+        messages.append({
+            # Retain the existing API key for callers; the value is a Zoho message ID.
+            "imap_id": record["provider_id"],
+            "zoho_id": record["provider_id"],
+            "mail_provider": "zoho",
+            "mail_account_id": record["account_id"],
+            "mail_folder_id": record["folder_id"],
+            "mailbox": mailbox,
+            "message_id": _decode_mime_header(message.get("Message-ID")),
+            "subject": _decode_mime_header(message.get("Subject")),
+            "from": _decode_mime_header(message.get("From")),
+            "date": _decode_mime_header(message.get("Date")),
+            "attachments": _iter_email_attachments(message),
+        })
+    return messages
 
 
 async def _mark_email_messages_seen(mailbox: str, message_ids: list[str]) -> None:
-    if not message_ids:
-        return
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+            await ZohoMail(client, ZohoConfig.from_env()).mark_seen(mailbox, message_ids)
+    except BusinessMailError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
-    gmail_user, access_token = await _gmail_access_token()
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for message_id in message_ids:
-            await client.post(
-                f"https://gmail.googleapis.com/gmail/v1/users/{gmail_user}/messages/{message_id}/modify",
-                json={"removeLabelIds": ["UNREAD"]},
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
+
+async def _archive_email_messages(messages: list[dict[str, Any]]) -> None:
+    if not any(message["attachments"] for message in messages):
+        return
+    try:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=False) as client:
+            archive = DropboxArchive(client, DropboxConfig.from_env())
+            await archive.authenticate()
+            for message in messages:
+                source = os.getenv("EMAIL_INTAKE_USERNAME", "").strip().lower() + ":" + (
+                    message["message_id"] or f"zoho:{message['mail_account_id']}:{message['zoho_id']}"
+                )
+                message["attachment_archives"] = [
+                    await archive.save_attachment(source, filename, content)
+                    for filename, content in message["attachments"]
+                ]
+    except BusinessMailError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -876,6 +822,8 @@ async def ingest_appeal(
 async def poll_email_intake(request: Request, payload: EmailPollRequest):
     """Poll the intake mailbox, download attachments, create patients/orders in Core, and assign work."""
     messages = await _fetch_email_messages(payload.mailbox, payload.search, payload.max_messages)
+    # Every attachment is durable and verified before any order import or read-state update.
+    await _archive_email_messages(messages)
 
     processed_messages = []
     total_orders = 0
@@ -891,20 +839,17 @@ async def poll_email_intake(request: Request, payload: EmailPollRequest):
         message_failure: str | None = None
 
         try:
-            for filename, content in message["attachments"]:
+            for index, (filename, content) in enumerate(message["attachments"]):
                 total_attachments += 1
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                save_path = PROCESSED_DIR / f"{timestamp}_{filename}"
-                save_path.write_bytes(content)
-
+                stored = message["attachment_archives"][index]
                 parsed_orders = _parse_attachment(filename, content, message)
-                if parsed_orders:
-                    message_orders.extend(parsed_orders)
-                    processed_attachments.append({
-                        "filename": filename,
-                        "saved_to": str(save_path),
-                        "orders_detected": len(parsed_orders),
-                    })
+                message_orders.extend(parsed_orders)
+                processed_attachments.append({
+                    "filename": filename,
+                    "saved_to": stored["path"],
+                    "dropbox": stored,
+                    "orders_detected": len(parsed_orders),
+                })
 
             import_result = None
             workflow_results: list[dict[str, Any]] = []
