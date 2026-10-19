@@ -51,5 +51,6 @@ jobs:
       - run: python services/intake/test_business_channels.py -v
       - run: python services/intake/test_mck_automation.py -v
       - run: python services/intake/test_mck_safety_regressions.py -v
+      - run: python services/intake/test_mck_paid_dispatch.py -v
       - run: python -m py_compile services/core/conveyor_api.py services/shared/zoho_sheet.py services/shared/business_mail.py services/intake/main.py
       - run: git diff --check
