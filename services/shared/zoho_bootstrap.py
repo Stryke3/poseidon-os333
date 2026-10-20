@@ -158,6 +158,18 @@ def mail_read(client: httpx.Client, config: Config, access: str, path: str) -> l
     return data["data"]
 
 
+def is_root_inbox(folder: dict[str, Any]) -> bool:
+    """Zoho uses folderType=Inbox for custom folders too; require root evidence."""
+    if str(folder.get("folderType") or "").strip().casefold() != "inbox":
+        return False
+    path = str(folder.get("path") or "").strip().rstrip("/").casefold()
+    name = str(folder.get("folderName") or "").strip().casefold()
+    if path:
+        return path == "/inbox" and name in {"", "inbox"}
+    # Older metadata may omit path; a unique, explicitly named Inbox is required.
+    return name == "inbox"
+
+
 def discover_mail(client: httpx.Client, config: Config, access: str) -> tuple[str, str]:
     accounts = mail_read(client, config, access, "/api/accounts")
     matches = []
@@ -174,7 +186,7 @@ def discover_mail(client: httpx.Client, config: Config, access: str) -> tuple[st
     if not account_id.isdecimal():
         raise SetupError("mail_account_id_invalid")
     folders = mail_read(client, config, access, f"/api/accounts/{account_id}/folders")
-    inbox = [f for f in folders if str(f.get("folderType") or "").lower() == "inbox"]
+    inbox = [f for f in folders if is_root_inbox(f)]
     if len(inbox) != 1:
         raise SetupError("inbox_not_uniquely_verified")
     folder_id = str(inbox[0].get("folderId") or "")
