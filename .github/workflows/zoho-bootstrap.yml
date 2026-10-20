@@ -1,0 +1,49 @@
+name: Zoho credential bootstrap contracts
+on:
+  push:
+    branches: [feature/zoho-credential-bootstrap-20261019]
+  pull_request:
+    branches: [redis-degraded-mode-20260816]
+    paths:
+      - services/shared/zoho_bootstrap.py
+      - services/intake/test_zoho_bootstrap*.py
+      - .github/workflows/zoho-bootstrap.yml
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-only
+          POSTGRES_DB: bootstrap_tests
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r services/core/requirements.txt
+      - name: Existing MCK and new credential contracts
+        run: |
+          set -euo pipefail
+          python services/intake/test_business_channels.py -v
+          python services/intake/test_mck_automation.py -v
+          python services/intake/test_intake_delivery.py -v
+          python services/intake/test_mck_reliability.py -v
+          python services/intake/test_zoho_bootstrap.py -v
+          python -m py_compile services/shared/zoho_bootstrap.py
+      - name: Disposable database persistence and locking
+        env:
+          BOOTSTRAP_TEST_DSN: postgresql://postgres:synthetic-ci-only@127.0.0.1:5432/bootstrap_tests
+        run: python services/intake/test_zoho_bootstrap_db.py -v
