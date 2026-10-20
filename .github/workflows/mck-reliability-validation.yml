@@ -10,6 +10,7 @@ on:
       - 'services/shared/business_mail.py'
       - 'services/shared/zoho_mail_outbound.py'
       - 'services/shared/zoho_sheet.py'
+      - '.github/workflows/mck-reliability-validation.yml'
 permissions:
   contents: read
 jobs:
@@ -23,10 +24,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Prepare corrected source in temporary workspace only
-        run: python scripts/apply_mck_reliability_fixes.py
+      - name: Verify committed repair matches tested source semantics
+        run: |
+          python - <<'PY'
+          import ast, hashlib
+          from pathlib import Path
+          expected = {
+            'services/core/conveyor_api.py': '20f82d279316d3329599048f5a6356a1ffd0e3fc0968428e34dec4189d32e39b',
+            'services/intake/main.py': '9d81efea013aab95da9c7768dfafcfc90528a3712301f57779bd7268dad5761d',
+          }
+          for path, reference in expected.items():
+              digest = hashlib.sha256(ast.dump(ast.parse(Path(path).read_text()), include_attributes=False).encode()).hexdigest()
+              print(path, digest)
+              assert digest == reference, 'Committed source differs from verified repair: ' + path
+          PY
       - run: pip install -r services/core/requirements.txt
-      - name: Validate synthetic contracts
+      - name: Validate synthetic contracts against committed application code
         shell: bash
         run: |
           set -euo pipefail
@@ -38,7 +51,7 @@ jobs:
           bash -n scripts/validate_production_env.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: verified-mck-reliability-source
+          name: verified-mck-committed-source
           path: |
             services/core/conveyor_api.py
             services/intake/main.py
