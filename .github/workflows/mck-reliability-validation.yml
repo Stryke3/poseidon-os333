@@ -1,0 +1,65 @@
+name: MCK reliability validation
+on:
+  push:
+    branches: ["fix/mck-live-reliability-20261019"]
+  pull_request:
+    branches: [redis-degraded-mode-20260816]
+    paths:
+      - 'services/core/conveyor_api.py'
+      - 'services/intake/**'
+      - 'services/shared/business_mail.py'
+      - 'services/shared/zoho_mail_outbound.py'
+      - 'services/shared/zoho_sheet.py'
+      - '.github/workflows/mck-reliability-validation.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify committed repair matches tested source semantics
+        run: |
+          python - <<'PY'
+          import ast, hashlib
+          from pathlib import Path
+          # Python 3.11 fingerprints of the already-tested artifact's AST.
+          # Python 3.13 ast.dump omits empty fields, producing different hashes.
+          expected = {
+            'services/core/conveyor_api.py': '71f52231329434f0dee3e70eb682aeef42f9da3d1c6ec5e6cb4a6bc0b93e3af6',
+            'services/intake/main.py': 'cc1c4a44053fd4b619333e36e59e76bde3e0091cef3f7301652567e3fae4b7ab',
+          }
+          for path, reference in expected.items():
+              digest = hashlib.sha256(ast.dump(ast.parse(Path(path).read_text()), include_attributes=False).encode()).hexdigest()
+              print(path, digest)
+              assert digest == reference, 'Committed source differs from verified repair: ' + path
+          PY
+      - run: pip install -r services/core/requirements.txt
+      - name: Validate synthetic contracts against committed application code
+        shell: bash
+        run: |
+          set -euo pipefail
+          python services/intake/test_business_channels.py -v
+          python services/intake/test_mck_automation.py -v
+          python services/intake/test_intake_delivery.py -v
+          python services/intake/test_mck_reliability.py -v
+          python -m py_compile services/core/conveyor_api.py services/intake/main.py services/shared/business_mail.py services/shared/zoho_mail_outbound.py services/shared/zoho_sheet.py
+          bash -n scripts/validate_production_env.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-mck-committed-source
+          path: |
+            services/core/conveyor_api.py
+            services/intake/main.py
+            services/intake/test_intake_delivery.py
+            services/intake/test_mck_reliability.py
+            services/shared/business_mail.py
+            services/shared/zoho_mail_outbound.py
+            services/shared/zoho_sheet.py
+          retention-days: 2

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import json
 import os
 from typing import Any, Mapping
+from collections.abc import Awaitable, Callable
 
 import httpx
 
@@ -61,6 +62,8 @@ class ZohoSheetConfig:
         if header_row < 1:
             raise ZohoSheetError("MCK_ZOHO_SHEET_HEADER_ROW must be positive.", 503)
         region = source.get("ZOHO_REGION", "com").strip() or "com"
+        if region not in {"com", "eu", "in", "com.au", "jp", "ca", "sa", "com.cn"}:
+            raise ZohoSheetError("Unsupported Zoho data center.", 503)
         return cls(
             client_id=client_id,
             client_secret=client_secret,
@@ -165,15 +168,21 @@ class ZohoSheet:
             header_row=self.config.header_row,
             criteria=self._criteria(criteria_column, criteria_value),
             records_start_index=1,
-            count=1,
+            count=2,
             render_option="formatted",
         )
         records = payload.get("records")
         if records is None and isinstance(payload.get("data"), list):
             records = payload["data"]
-        if not isinstance(records, list) or not records:
+        if not isinstance(records, list):
+            raise ZohoSheetError("Zoho Sheet lookup returned an invalid record list.")
+        if len(records) > 1:
+            raise ZohoSheetError("Duplicate tracker Record ID requires reconciliation.", 409)
+        if not records:
             return None
-        return records[0] if isinstance(records[0], dict) else None
+        if not isinstance(records[0], dict):
+            raise ZohoSheetError("Zoho Sheet returned an invalid record.")
+        return records[0]
 
     async def upsert_record(
         self,
@@ -181,6 +190,7 @@ class ZohoSheet:
         worksheet_name: str,
         record_id: str,
         values: Mapping[str, Any],
+        before_write: Callable[[], Awaitable[None]] | None = None,
     ) -> str:
         record = {key: value for key, value in values.items() if value is not None}
         record["Record ID"] = record_id
@@ -190,6 +200,15 @@ class ZohoSheet:
             criteria_value=record_id,
         )
         if existing is not None:
+            # Preserve staff-maintained workflow and evidence fields on replay.
+            protected = {"Intake Date", "Current Stage", "Owner", "Notes",
+                         "Doctor Notes Received", "SWO Status (cover)",
+                         "Signed SWO Returned", "Heather Follow-up",
+                         "Outstanding / Follow-up", "SPEAR Review / Outstanding"}
+            record = {key: value for key, value in record.items()
+                      if key not in protected and (value != "" or not existing.get(key))}
+            if before_write is not None:
+                await before_write()
             payload = await self._call(
                 "worksheet.records.update",
                 worksheet_name=worksheet_name,
@@ -203,10 +222,14 @@ class ZohoSheet:
                 raise ZohoSheetError("Zoho Sheet update did not affect the expected row.")
             return "updated"
 
-        await self._call(
+        if before_write is not None:
+            await before_write()
+        payload = await self._call(
             "worksheet.records.add",
             worksheet_name=worksheet_name,
             header_row=self.config.header_row,
             json_data=json.dumps([record], separators=(",", ":"), default=str),
         )
+        if payload.get("status") != "success" or payload.get("start_row") is None:
+            raise ZohoSheetError("Zoho Sheet creation did not return a confirmed row identity.")
         return "created"
