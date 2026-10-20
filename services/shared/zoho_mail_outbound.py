@@ -5,7 +5,7 @@ ambiguous response in Zoho before attempting another send.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
 import httpx
@@ -51,6 +51,7 @@ class ZohoMailSender(ZohoMail):
         content: str,
         cc_addresses: Iterable[str] = (),
         mail_format: str = "plaintext",
+        before_send: Callable[[], Awaitable[None]] | None = None,
     ) -> str:
         recipients = [str(address).strip().lower() for address in to_addresses if str(address).strip()]
         cc = [str(address).strip().lower() for address in cc_addresses if str(address).strip()]
@@ -62,6 +63,10 @@ class ZohoMailSender(ZohoMail):
             raise BusinessMailError("mail_format must be plaintext or html.", 400)
 
         await self.authenticate()
+        # Authentication failures are definitely pre-send. Persist a dispatch
+        # marker only after authentication and immediately before the POST.
+        if before_send is not None:
+            await before_send()
         try:
             data = await self._request(
                 "POST",
