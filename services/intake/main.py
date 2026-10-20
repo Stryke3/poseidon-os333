@@ -219,7 +219,7 @@ def _normalize_date(value: str | None) -> str:
     raw = (value or '').strip()
     if not raw:
         return '1970-01-01'
-    for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m-%d-%Y', '%m/%d/%y', '%m-%d/%y', '%b %d, %Y', '%b %d %Y', '%B %d, %Y', '%B %d %Y'):
+    for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m-%d-%Y', '%m/%d/%y', '%m-%d-%y', '%b %d, %Y', '%b %d %Y', '%B %d, %Y', '%B %d %Y'):
         try:
             return datetime.strptime(raw, fmt).date().isoformat()
         except ValueError:
