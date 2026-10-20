@@ -29,9 +29,11 @@ jobs:
           python - <<'PY'
           import ast, hashlib
           from pathlib import Path
+          # Python 3.11 fingerprints of the already-tested artifact's AST.
+          # Python 3.13 ast.dump omits empty fields, producing different hashes.
           expected = {
-            'services/core/conveyor_api.py': '20f82d279316d3329599048f5a6356a1ffd0e3fc0968428e34dec4189d32e39b',
-            'services/intake/main.py': '9d81efea013aab95da9c7768dfafcfc90528a3712301f57779bd7268dad5761d',
+            'services/core/conveyor_api.py': '71f52231329434f0dee3e70eb682aeef42f9da3d1c6ec5e6cb4a6bc0b93e3af6',
+            'services/intake/main.py': 'cc1c4a44053fd4b619333e36e59e76bde3e0091cef3f7301652567e3fae4b7ab',
           }
           for path, reference in expected.items():
               digest = hashlib.sha256(ast.dump(ast.parse(Path(path).read_text()), include_attributes=False).encode()).hexdigest()
