@@ -1,0 +1,50 @@
+name: MCK reliability validation
+on:
+  push:
+    branches: ["fix/mck-live-reliability-20261019"]
+  pull_request:
+    branches: [redis-degraded-mode-20260816]
+    paths:
+      - 'services/core/conveyor_api.py'
+      - 'services/intake/**'
+      - 'services/shared/business_mail.py'
+      - 'services/shared/zoho_mail_outbound.py'
+      - 'services/shared/zoho_sheet.py'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Prepare corrected source in temporary workspace only
+        run: python scripts/apply_mck_reliability_fixes.py
+      - run: pip install -r services/core/requirements.txt
+      - name: Validate synthetic contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python services/intake/test_business_channels.py -v
+          python services/intake/test_mck_automation.py -v
+          python services/intake/test_intake_delivery.py -v
+          python services/intake/test_mck_reliability.py -v
+          python -m py_compile services/core/conveyor_api.py services/intake/main.py services/shared/business_mail.py services/shared/zoho_mail_outbound.py services/shared/zoho_sheet.py
+          bash -n scripts/validate_production_env.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-mck-reliability-source
+          path: |
+            services/core/conveyor_api.py
+            services/intake/main.py
+            services/intake/test_intake_delivery.py
+            services/intake/test_mck_reliability.py
+            services/shared/business_mail.py
+            services/shared/zoho_mail_outbound.py
+            services/shared/zoho_sheet.py
+          retention-days: 2
