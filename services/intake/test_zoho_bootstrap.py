@@ -60,8 +60,9 @@ class BootstrapTests(unittest.TestCase):
                 {'accountId':'9999999999999999999', 'primaryEmailAddress':self.mailbox}]})
         if request.url.path.endswith('/folders'):
             return httpx.Response(200, json={'status': {'code':200}, 'data':[
-                {'folderId':'8888888888888888888', 'folderType':'Inbox'},
-                {'folderId':'12', 'folderType':'Sent'}]})
+                {'folderId':'8888888888888888888', 'folderType':'Inbox', 'folderName':'Inbox', 'path':'/Inbox'},
+                {'folderId':'12', 'folderType':'Sent', 'folderName':'Sent', 'path':'/Sent'},
+                {'folderId':'13', 'folderType':'Inbox', 'folderName':'Forms', 'path':'/Forms'}]})
         if request.url.path == '/api/v2/synthetic-workbook':
             self.assertEqual(parse_qs(request.content.decode()), {'method':['worksheet.list']})
             return httpx.Response(200, json={'status':'success','method':'worksheet.list',
@@ -175,5 +176,43 @@ class BootstrapTests(unittest.TestCase):
         self.grant()
         self.assertEqual(self.run_setup()['status'],'refresh_token_not_returned')
         self.assertIsNone(self.vault.row['encrypted_token'])
+    def folder_response(self, folders):
+        self.override=lambda r: httpx.Response(200,json={'status':{'code':200},'data':folders}) if r.url.path.endswith('/folders') else None
+    def test_custom_inbox_type_and_nested_inbox_do_not_replace_root(self):
+        self.folder_response([
+            {'folderId':'11','folderType':'Inbox','folderName':'Custom','path':'/Custom'},
+            {'folderId':'12','folderType':'Inbox','folderName':'Inbox','path':'/Imported/Inbox'},
+            {'folderId':'13','folderType':'Inbox','folderName':'Inbox','path':'/Inbox'},
+        ])
+        self.grant()
+        self.assertEqual(self.run_setup()['status'],'mail_and_sheet_verified')
+        self.assertEqual(self.env['ZOHO_MAIL_FOLDER_ID'],'13')
+    def test_two_root_inboxes_fail_closed(self):
+        self.folder_response([
+            {'folderId':'11','folderType':'Inbox','folderName':'Inbox','path':'/Inbox'},
+            {'folderId':'12','folderType':'Inbox','folderName':'Inbox','path':'/Inbox'},
+        ])
+        self.grant()
+        self.assertEqual(self.run_setup()['status'],'inbox_not_uniquely_verified')
+        self.assertNotIn('ZOHO_MAIL_FOLDER_ID',self.env)
+    def test_type_alone_cannot_identify_inbox(self):
+        self.folder_response([{'folderId':'11','folderType':'Inbox'}])
+        self.grant()
+        self.assertEqual(self.run_setup()['status'],'inbox_not_uniquely_verified')
+    def test_explicit_name_with_missing_path_is_supported(self):
+        self.folder_response([{'folderId':'11','folderType':'Inbox','folderName':'Inbox'}])
+        self.grant()
+        self.assertEqual(self.run_setup()['status'],'mail_and_sheet_verified')
+    def test_inbox_failure_recovers_with_stored_token_without_new_grant(self):
+        self.folder_response([{'folderId':'11','folderType':'Inbox','path':'/Custom','folderName':'Custom'}])
+        self.grant()
+        self.assertEqual(self.run_setup()['status'],'inbox_not_uniquely_verified')
+        self.assertTrue(self.vault.row['encrypted_token'])
+        self.env=copy.deepcopy(BASE)
+        self.override=None
+        self.assertEqual(self.run_setup()['status'],'mail_and_sheet_verified')
+        grants=[parse_qs(r.content.decode())['grant_type'][0] for r in self.calls if r.url.path=='/oauth/v2/token']
+        self.assertEqual(grants,['authorization_code','refresh_token'])
+        self.assertEqual(self.vault.reservations,1)
 
 if __name__=='__main__': unittest.main()
