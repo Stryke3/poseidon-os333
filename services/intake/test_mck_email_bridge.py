@@ -138,4 +138,40 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         mail=SimpleNamespace(config=SimpleNamespace(account_id='123',folder_id='456'),_request=AsyncMock(return_value=[self.ref]))
         self.assertEqual(await bridge.candidates(mail,1792500000,{'9999'}),[])
 
+
+class PollCadenceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_honors_twelve_hour_interval_and_bounds(self):
+        for configured, expected in [('43200', 43200), ('60', 60), ('1', 60), ('86400', 43200)]:
+            with self.subTest(configured=configured):
+                env = {'MCK_EMAIL_INTAKE_ENABLED': 'true',
+                       'MCK_EMAIL_START_AT': '2026-10-20T00:00:00Z',
+                       'MCK_EMAIL_POLL_SECONDS': configured}
+                sleep = AsyncMock(side_effect=[None, bridge.asyncio.CancelledError()])
+                poll = AsyncMock(return_value={'checked': 0})
+                with patch.dict(os.environ, env, clear=True), patch.object(bridge.asyncio, 'sleep', sleep), patch.object(bridge, 'poll_once', poll), patch.object(bridge, 'emit') as emit:
+                    with self.assertRaises(bridge.asyncio.CancelledError):
+                        await bridge.email_worker(object())
+                    self.assertEqual([c.args[0] for c in sleep.await_args_list], [5, expected])
+                    poll.assert_awaited_once()
+                    self.assertEqual(emit.call_args_list[0].args[0]['interval_seconds'], expected)
+
+    async def test_failed_poll_keeps_twelve_hour_wait(self):
+        env = {'MCK_EMAIL_INTAKE_ENABLED': 'true',
+               'MCK_EMAIL_START_AT': '2026-10-20T00:00:00Z',
+               'MCK_EMAIL_POLL_SECONDS': '43200'}
+        sleep = AsyncMock(side_effect=[None, bridge.asyncio.CancelledError()])
+        with patch.dict(os.environ, env, clear=True), patch.object(bridge.asyncio, 'sleep', sleep), patch.object(bridge, 'poll_once', AsyncMock(side_effect=RuntimeError('synthetic'))), patch.object(bridge, 'emit'):
+            with self.assertRaises(bridge.asyncio.CancelledError):
+                await bridge.email_worker(object())
+            self.assertEqual([c.args[0] for c in sleep.await_args_list], [5, 43200])
+
+    async def test_invalid_interval_never_polls(self):
+        env = {'MCK_EMAIL_INTAKE_ENABLED': 'true',
+               'MCK_EMAIL_START_AT': '2026-10-20T00:00:00Z',
+               'MCK_EMAIL_POLL_SECONDS': 'invalid'}
+        with patch.dict(os.environ, env, clear=True), patch.object(bridge, 'poll_once', AsyncMock()) as poll, patch.object(bridge, 'emit') as emit:
+            await bridge.email_worker(object())
+            poll.assert_not_awaited()
+            emit.assert_called_once_with({'status': 'configuration_required'})
+
 if __name__=='__main__': unittest.main()

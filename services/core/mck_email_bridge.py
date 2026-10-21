@@ -203,7 +203,8 @@ async def email_worker(app):
     if os.getenv('MCK_EMAIL_INTAKE_ENABLED', 'false').lower() != 'true':
         return
     try:
-        interval = max(60, min(900, int(os.getenv('MCK_EMAIL_POLL_SECONDS', '60'))))
+        # Permit the owner-selected 12-hour cadence instead of capping at 15 minutes.
+        interval = max(60, min(43200, int(os.getenv('MCK_EMAIL_POLL_SECONDS', '60'))))
         settings_for(os.environ)
     except Exception:
         emit({'status': 'configuration_required'})
