@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock, patch
 SERVICES = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(SERVICES / 'shared'), str(SERVICES / 'core')]
 os.environ.setdefault('LOCAL_PROOF_MODE', 'true')
-from mck_email_parser import ParseError, fields_from_text, parse_form
+from mck_email_parser import ParseError, fields_from_text, parse_form, label
+from mck_form_capture import FormCaptureError, snapshot_for, plan_capture, capture_checks
 import mck_email_bridge as bridge
 
 FORM = {
@@ -55,6 +56,10 @@ class ParserTests(unittest.TestCase):
         value = parse_form(message(html=True), account_id='123')
         self.assertEqual(value['email'], FORM['email'])
         self.assertEqual(value['due_date'], FORM['due_date'])
+    def test_every_submitted_field_is_retained_in_plain_and_html(self):
+        for html in (False, True):
+            parsed = parse_form(message(html=html), account_id='123')
+            self.assertEqual(parsed['_form_fields'], {label(k):v for k,v in FORM.items()})
     def test_label_then_value_format(self):
         values = fields_from_text('Name\nSynthetic Patient\nEmail\nsynthetic@example.test\nDate of Birth\n1990-01-01')
         self.assertEqual(values['name'], 'Synthetic Patient')
@@ -90,6 +95,60 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(bridge.settings_for({'MCK_EMAIL_START_AT':'2026-10-20T00:00:00Z'})[2])
 
 
+class FormCaptureTests(unittest.TestCase):
+    def setUp(self):
+        self.parsed = parse_form(message(), account_id='123')
+        self.payload = bridge.MckIntakePayload(**self.parsed)
+        self.row = {'first_name':'Synthetic','last_name':'Patient','date_of_birth':'1990-01-01',
+                    'phone':'7025550100','email':FORM['email'],'state':'NV',
+                    'source_reference':self.payload.source_reference,'intake_payload':{}}
+    def test_all_normalized_fields_and_source_values_are_preserved(self):
+        value = snapshot_for(self.payload,self.parsed)
+        self.assertEqual(value['normalized_fields'],self.payload.model_dump(mode='json',exclude={'record_id'}))
+        self.assertEqual(value['submitted_fields']['email'],FORM['email'])
+        self.assertEqual(value['submitted_fields']['provider_contact'],FORM['physician_office_contact'])
+        self.assertEqual(value['submitted_fields']['sms_consent'],'Yes')
+        self.assertEqual(value['submitted_fields']['medicaid'],'both')
+    def test_missing_chart_email_is_filled_from_form(self):
+        self.row['email']='  '
+        changes,snapshot,needed=plan_capture(self.row,self.payload,self.parsed)
+        self.assertEqual(changes,{'email':FORM['email']})
+        self.assertTrue(needed)
+        self.row.update(changes);self.row['intake_payload']['_source_form']=snapshot
+        self.assertTrue(all(capture_checks(self.row,self.payload,self.parsed).values()))
+    def test_existing_different_email_is_never_overwritten(self):
+        self.row['email']='other@example.test'
+        with self.assertRaisesRegex(FormCaptureError,'chart_field_conflict'):
+            plan_capture(self.row,self.payload,self.parsed)
+        self.assertEqual(self.row['email'],'other@example.test')
+    def test_replay_keeps_one_snapshot_without_additional_changes(self):
+        self.row['intake_payload']['_source_form']=snapshot_for(self.payload,self.parsed)
+        changes,_,needed=plan_capture(self.row,self.payload,self.parsed)
+        self.assertEqual(changes,{})
+        self.assertFalse(needed)
+    def test_source_and_patient_must_match_before_any_fill(self):
+        for key,value in [('source_reference','wrong-source'),('first_name','Other'),('date_of_birth','1980-01-01')]:
+            with self.subTest(key=key),self.assertRaises(FormCaptureError):
+                plan_capture({**self.row,key:value},self.payload,self.parsed)
+    def test_changed_original_snapshot_requires_review(self):
+        self.row['intake_payload']['_source_form']={'version':1,'submitted_fields':{'email':'different@example.test'}}
+        with self.assertRaisesRegex(FormCaptureError,'source_snapshot_conflict'):
+            plan_capture(self.row,self.payload,self.parsed)
+    def test_missing_form_email_stays_missing(self):
+        parsed=parse_form(message({**FORM,'email':''}),account_id='123')
+        payload=bridge.MckIntakePayload(**parsed)
+        changes,_,_=plan_capture({**self.row,'email':None},payload,parsed)
+        self.assertNotIn('email',changes)
+    def test_member_id_and_full_supplied_address_survive_capture(self):
+        fields={**FORM,'member_id':'SYNTHETIC-ID','address_line1':'100 Example St',
+                'address_line2':'Unit 2','city':'Las Vegas','zip_code':'89101'}
+        parsed=parse_form(message(fields),account_id='123')
+        payload=bridge.MckIntakePayload(**parsed)
+        _,snapshot,_=plan_capture(self.row,payload,parsed)
+        for key in ('member_id','address_line1','address_line2','city','zip_code'):
+            self.assertEqual(snapshot['normalized_fields'][key],fields[key])
+
+
 class BridgeTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.app = SimpleNamespace(state=SimpleNamespace(db_pool=object()))
@@ -99,6 +158,11 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         self.receipt = {'complete':True,'record_id':'MCK-TEST1',
             'spear':{'status':'confirmed','patient_id':'patient-1','order_id':'order-1'},
             'sheet':{'status':'confirmed'},'welcome':{'status':'confirmed','message_id':'mail-1'}}
+        capture_patch=patch.object(bridge,'capture_form_data',AsyncMock(return_value={
+            'after':{'patient_email_matches':True,'patient_fields_match':True,'submitted_form_preserved':True},
+            'submitted_field_count':len(FORM)}))
+        self.capture=capture_patch.start()
+        self.addCleanup(capture_patch.stop)
     async def process(self, dry_run=False):
         return await bridge.process_message(self.app,self.mail,None,'org-1',self.ref,dry_run=dry_run)
     async def test_dry_run_never_calls_write_workflow(self):
@@ -106,7 +170,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             result=await self.process(True)
             self.assertEqual(result['status'],'parsed_read_only')
             self.assertTrue(result['dob_present'])
-            intake.assert_not_awaited(); event.assert_not_awaited()
+            intake.assert_not_awaited(); event.assert_not_awaited();self.capture.assert_not_awaited()
     async def test_completed_message_is_not_parsed_or_sent_again(self):
         with patch.object(bridge,'is_completed',AsyncMock(return_value=True)), patch.object(bridge,'mck_intake',AsyncMock()) as intake:
             self.assertEqual((await self.process())['status'],'already_completed')
@@ -121,6 +185,15 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(event.call_args.args[2],'mck.email.completed')
             self.assertNotIn('Synthetic Patient',json.dumps(result))
             self.assertNotIn('synthetic@example.test',json.dumps(result))
+            self.assertTrue(result['form_capture']['patient_email_matches'])
+            self.capture.assert_awaited_once()
+    async def test_capture_failure_cannot_be_marked_complete(self):
+        self.capture.side_effect=FormCaptureError('chart_field_conflict')
+        with patch.object(bridge,'is_completed',AsyncMock(return_value=False)),patch.object(bridge,'mck_intake',AsyncMock(return_value=SimpleNamespace(body=json.dumps(self.receipt).encode()))),patch.object(bridge,'record_event',AsyncMock()),patch.object(bridge,'readback',AsyncMock()) as readback:
+            result=await self.process()
+            self.assertEqual(result['status'],'pending')
+            self.assertEqual(result['form_capture']['reason'],'chart_field_conflict')
+            readback.assert_not_awaited()
     async def test_partial_result_is_retryable_pending_not_complete(self):
         self.receipt['complete']=False; self.receipt['sheet']={'status':'failed','error':'ZohoSheetError'}
         with patch.object(bridge,'is_completed',AsyncMock(return_value=False)), patch.object(bridge,'mck_intake',AsyncMock(return_value=SimpleNamespace(body=json.dumps(self.receipt).encode()))), patch.object(bridge,'record_event',AsyncMock()) as event:
