@@ -17,6 +17,7 @@ import httpx
 from business_mail import ZohoConfig, ZohoMail
 from mck_email_parser import SUBJECT, ParseError, parse_form
 from conveyor_api import MckIntakePayload, _one, _event, _org_id, mck_intake
+from mck_form_capture import FormCaptureError, capture_form_data
 from base import logger, settings
 from zoho_sheet import ZohoSheet, ZohoSheetConfig
 
@@ -132,6 +133,15 @@ async def process_message(app, mail, client, org_id, ref, *, dry_run):
     request = SimpleNamespace(app=app, headers={'X-Internal-API-Key': settings.internal_api_key})
     response = await mck_intake(payload, request)
     result = json.loads(response.body)
+    capture = {'status': 'blocked'}
+    if result.get('spear', {}).get('status') == 'confirmed':
+        try:
+            captured = await capture_form_data(app.state.db_pool, org_id, payload, parsed, result['spear'])
+            capture = {'status': 'confirmed', **captured['after'],
+                       'submitted_field_count': captured['submitted_field_count']}
+        except Exception as exc:
+            capture = {'status': 'needs_review',
+                       'reason': str(exc) if isinstance(exc, FormCaptureError) else type(exc).__name__}
     safe = {
         **meta, 'record_id': result.get('record_id'),
         'patient_id': result.get('spear', {}).get('patient_id'),
@@ -140,6 +150,7 @@ async def process_message(app, mail, client, org_id, ref, *, dry_run):
         'sheet': result.get('sheet', {}).get('status'),
         'welcome': result.get('welcome', {}).get('status'),
         'welcome_message_id': result.get('welcome', {}).get('message_id'),
+        'form_capture': capture,
     }
     # Error type names from the handler are safe; patient/provider error bodies are not.
     for key in ('spear', 'sheet'):
@@ -147,7 +158,7 @@ async def process_message(app, mail, client, org_id, ref, *, dry_run):
         if kind and re.fullmatch(r'[A-Za-z_]{1,64}', kind):
             safe[key + '_error_type'] = kind
     safe['status'] = 'pending'
-    if result.get('complete'):
+    if result.get('complete') and capture['status'] == 'confirmed':
         checks = await readback(app.state.db_pool, client, org_id, result)
         safe['readback'] = checks
         if all(checks.values()):
