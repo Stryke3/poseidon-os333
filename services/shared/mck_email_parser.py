@@ -135,7 +135,8 @@ def parse_form(raw: bytes, *, account_id: str, allowed_domains=('web3forms.com',
     if not any(k in fields for k in ('insurance_plan', 'items_requested', 'date_of_birth', 'due_date')):
         raise ParseError('form_schema_unrecognized')
     source = 'zoho-mail:' + hashlib.sha256((account_id + '|' + original_id).encode()).hexdigest()
-    result = {'source_reference': source, 'first_name': first, 'last_name': last}
+    result = {'source_reference': source, 'first_name': first, 'last_name': last,
+              '_form_fields': dict(fields)}
     for key in ('email', 'phone', 'date_of_birth', 'due_date', 'insurance_plan', 'member_id',
                 'provider_name', 'provider_practice', 'provider_phone', 'provider_fax',
                 'address_line1', 'address_line2', 'city', 'zip_code'):
