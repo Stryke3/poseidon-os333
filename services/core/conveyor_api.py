@@ -227,8 +227,13 @@ def _candidate_has_conflict(candidate: dict[str, Any], payload: MckIntakePayload
     return bool(input_phone and stored_phone and (input_phone != stored_phone) or (input_email and stored_email and (input_email != stored_email)))
 
 async def _resolve_patient(conn, payload: MckIntakePayload, org_id: str) -> dict[str, Any] | None:
-    candidates = await _all(conn, 'SELECT id,phone,email,address_line1,address_line2,city,state,zip_code,address FROM patients WHERE org_id=$1::uuid AND lower(first_name)=lower($2) AND lower(last_name)=lower($3) AND COALESCE(date_of_birth,dob)=$4::date ORDER BY updated_at DESC,created_at DESC', org_id, payload.first_name, payload.last_name, payload.date_of_birth)
+    candidates = await _all(conn, "SELECT id,phone,email,address_line1,address_line2,city,state,zip_code,address FROM patients WHERE org_id=$1::uuid AND lower(regexp_replace(trim(concat_ws(' ',first_name,last_name)), '\\s+', ' ', 'g'))=lower($2) AND COALESCE(date_of_birth,dob)=$3::date ORDER BY updated_at DESC,created_at DESC", org_id, ' '.join(f'{payload.first_name} {payload.last_name}'.split()), payload.date_of_birth)
     if not candidates:
+        # A spelling/DOB mismatch on an existing contact goes to review instead
+        # of silently manufacturing another patient chart.
+        contact = await _one(conn, "SELECT id FROM patients WHERE org_id=$1::uuid AND (($2<>'' AND right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'),10)=$2) OR ($3<>'' AND lower(trim(COALESCE(email,'')))=$3)) LIMIT 1", org_id, _phone_key(payload.phone), _email_key(payload.email))
+        if contact:
+            raise IdentityConflict('Existing contact has a different or incomplete patient identity; review is required')
         return None
     exact = [candidate for candidate in candidates if _candidate_matches_identifier(candidate, payload)]
     if len(exact) == 1:
@@ -245,7 +250,8 @@ async def _resolve_patient(conn, payload: MckIntakePayload, org_id: str) -> dict
     return candidate
 
 async def _upsert_patient(conn, payload: MckIntakePayload, org_id: str) -> tuple[str, bool]:
-    await _one(conn, 'SELECT pg_advisory_xact_lock(hashtext($1)) locked', f'mck-patient:{org_id}:{payload.first_name.casefold()}:{payload.last_name.casefold()}:{payload.date_of_birth}')
+    identity = ' '.join(f'{payload.first_name} {payload.last_name}'.casefold().split())
+    await _one(conn, 'SELECT pg_advisory_xact_lock(hashtext($1)) locked', f'mck-patient:{org_id}:{identity}:{payload.date_of_birth}')
     existing = await _resolve_patient(conn, payload, org_id)
     address_json = json.dumps(_address_payload(payload), separators=(',', ':'))
     if existing:
@@ -286,6 +292,25 @@ async def _upsert_physician(conn, payload: MckIntakePayload) -> str | None:
     await _write(conn, "INSERT INTO physicians (id,npi,first_name,last_name,phone,fax,facility_name,address) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,'{}'::jsonb)", physician_id, payload.provider_npi, first_name, last_name, payload.provider_phone, payload.provider_fax, payload.provider_practice)
     return physician_id
 
+async def _reuse_mck_order(conn, order, payload, org_id, record_id):
+    clinical = order.get('clinical_data') or {}
+    intake = order.get('intake_payload') or {}
+    due = clinical.get('due_date') or intake.get('due_date')
+    if payload.due_date and due and str(due) != payload.due_date:
+        raise IdentityConflict('Existing maternity order has a different due date; review is required')
+    prior = await _one(conn, "SELECT payload->>'record_id' AS record_id FROM workflow_events WHERE org_id=$1::uuid AND order_id=$2::uuid AND payload->>'record_id' IS NOT NULL ORDER BY created_at ASC LIMIT 1", org_id, str(order['id']))
+    canonical = intake.get('mck_record_id') or clinical.get('mck_record_id') or (prior or {}).get('record_id') or record_id
+    if not _RECORD_ID_RE.fullmatch(str(canonical)):
+        raise IdentityConflict('Existing maternity tracker identifier requires review')
+    sources = list(dict.fromkeys([*(intake.get('_intake_source_references') or []), payload.source_reference]))
+    if len(sources) > 100:
+        raise IdentityConflict('Maternity source history requires review')
+    # Attach provenance to the same order; preserve its clinical/financial state.
+    await _write(conn, "UPDATE orders SET product_category='Mommy Care Kit', intake_payload=COALESCE(intake_payload,'{}'::jsonb) || $1::jsonb, updated_at=NOW() WHERE org_id=$2::uuid AND id=$3::uuid", json.dumps({'mck_record_id': canonical, '_intake_source_references': sources}, separators=(',', ':')), org_id, str(order['id']))
+    if payload.source_reference not in (intake.get('_intake_source_references') or []) and payload.source_reference != order.get('source_reference'):
+        await _event(conn, org_id, 'mck.intake.reused', {'source_reference': payload.source_reference, 'record_id': canonical, 'patient_id': str(order['patient_id'])}, str(order['id']))
+    return {'patient_id': str(order['patient_id']), 'order_id': str(order['id']), 'physician_id': str(order['physician_id']) if order.get('physician_id') else None, 'record_id': canonical, 'idempotent_replay': True}
+
 async def _spear_upsert(db, payload: MckIntakePayload, *, org_id: str, record_id: str) -> dict[str, Any]:
     if not payload.date_of_birth:
         raise ValueError('DOB is required to create or reconcile the SPEAR patient')
@@ -293,11 +318,23 @@ async def _spear_upsert(db, payload: MckIntakePayload, *, org_id: str, record_id
         await conn.execute('BEGIN')
         try:
             await _one(conn, 'SELECT pg_advisory_xact_lock(hashtext($1)) locked', f'mck-intake:{org_id}:{payload.source_reference}')
-            replay = await _one(conn, "SELECT id,patient_id,physician_id FROM orders WHERE org_id=$1::uuid AND (source_reference=$2 OR intake_payload->>'_intake_idempotency_key'=$2) ORDER BY created_at DESC LIMIT 1", org_id, payload.source_reference)
-            if replay:
+            replays = await _all(conn, "SELECT id,patient_id,physician_id,source_reference,clinical_data,intake_payload FROM orders WHERE org_id=$1::uuid AND (source_reference=$2 OR intake_payload->>'_intake_idempotency_key'=$2 OR intake_payload->'_intake_source_references' @> jsonb_build_array($2::text)) FOR UPDATE", org_id, payload.source_reference)
+            if len(replays) > 1:
+                raise IdentityConflict('Multiple orders share this maternity intake source; review is required')
+            if replays:
+                result = await _reuse_mck_order(conn, replays[0], payload, org_id, record_id)
                 await conn.execute('COMMIT')
-                return {'patient_id': str(replay['patient_id']), 'order_id': str(replay['id']), 'physician_id': str(replay['physician_id']) if replay.get('physician_id') else None, 'idempotent_replay': True}
+                return result
             patient_id, patient_created = await _upsert_patient(conn, payload, org_id)
+            # The patient lock above spans this lookup and insert, so different
+            # email IDs cannot race into two orders for the same pregnancy.
+            existing = await _all(conn, "SELECT id,patient_id,physician_id,source_reference,clinical_data,intake_payload FROM orders WHERE org_id=$1::uuid AND patient_id=$2::uuid AND lower(COALESCE(status,'')) NOT IN ('closed','cancelled','canceled','void','voided','paid') AND (lower(COALESCE(product_category,'')) LIKE '%mommy%' OR lower(COALESCE(product_category,'')) LIKE '%maternity%' OR source='mommycarekit' OR COALESCE(intake_payload->>'mck_record_id',clinical_data->>'mck_record_id','')<>'') FOR UPDATE", org_id, patient_id)
+            if len(existing) > 1:
+                raise IdentityConflict('Multiple active maternity orders already exist; review is required')
+            if existing:
+                result = await _reuse_mck_order(conn, existing[0], payload, org_id, record_id)
+                await conn.execute('COMMIT')
+                return result
             insurance_id = await _upsert_insurance(conn, payload, patient_id)
             physician_id = await _upsert_physician(conn, payload)
             order_id = str(uuid.uuid4())
@@ -307,7 +344,7 @@ async def _spear_upsert(db, payload: MckIntakePayload, *, org_id: str, record_id
             await _write(conn, "INSERT INTO orders (id,org_id,order_number,patient_id,physician_id,referring_physician_npi,status,product_category,vertical,source,priority,place_of_service,clinical_notes,clinical_data,hcpcs_codes,intake_payload,source_channel,source_reference,payer_id) VALUES ($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6,'intake','Mommy Care Kit','dme','mommycarekit','normal','12',$7,$8::jsonb,'[]'::jsonb,$9::jsonb,'zoho',$10,$11)", order_id, org_id, f"MCK-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{order_id[:6].upper()}", patient_id, physician_id, payload.provider_npi, payload.notes, json.dumps(clinical, separators=(',', ':')), json.dumps(intake_payload, separators=(',', ':')), payload.source_reference, payload.payer_id)
             await _event(conn, org_id, 'mck.intake.created', {'source_reference': payload.source_reference, 'record_id': record_id, 'patient_id': patient_id, 'patient_created': patient_created, 'received_at': received_at}, order_id)
             await conn.execute('COMMIT')
-            return {'patient_id': patient_id, 'insurance_id': insurance_id, 'physician_id': physician_id, 'order_id': order_id, 'idempotent_replay': False}
+            return {'patient_id': patient_id, 'insurance_id': insurance_id, 'physician_id': physician_id, 'order_id': order_id, 'record_id': record_id, 'idempotent_replay': False}
         except Exception:
             await conn.execute('ROLLBACK')
             raise
@@ -413,6 +450,8 @@ async def mck_intake(payload: MckIntakePayload, request: Request):
     else:
         try:
             spear = await _spear_upsert(db, payload, org_id=org_id, record_id=record_id)
+            record_id = spear['record_id']
+            results['record_id'] = record_id
             results['spear'] = {'status': 'confirmed', **spear}
         except IdentityConflict as exc:
             results['spear'] = {'status': 'blocked', 'reason': str(exc)}

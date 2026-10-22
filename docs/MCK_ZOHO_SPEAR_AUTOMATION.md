@@ -10,8 +10,10 @@ A new Mommy Care Kit submission follows this sequence:
 1. Zoho Flow, Zoho Forms, or another approved MCP Run source calls the Core
    endpoint `POST /api/v1/mck/intake`.
 2. Core reconciles the patient by organization, first name, last name, and DOB.
-3. Core creates one idempotent Mommy Care Kit order using the supplied
-   `source_reference` as the transaction key.
+3. Core reuses the patient's single active Mommy Care Kit order, including an
+   order created manually or from a different email reference. New orders are
+   explicitly Mommy Care Kit. Conflicting identities/due dates or multiple
+   active maternity orders require review instead of another automatic order.
 4. The workflow upserts the same stable `Record ID` into the migrated Zoho
    Sheet tabs `Patient Details` and `Heather Cover`.
 5. When a patient email is present and a prior confirmed welcome-send event is
@@ -82,7 +84,8 @@ The response is intentionally leg-specific:
 blocked, failed, or uncertain. Zoho Flow must store the response and route a
 `207` to the operating exception queue; it must not re-run the entire workflow.
 The stable `source_reference` makes a deliberate replay reconcile the same
-SPEAR order and tracker rows.
+SPEAR order and tracker rows. Resubmissions retain the existing order's tracker
+Record ID and welcome-mail receipts. Each source form is preserved on that order.
 
 ## Welcome email
 

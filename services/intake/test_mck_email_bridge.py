@@ -109,6 +109,17 @@ class FormCaptureTests(unittest.TestCase):
         self.assertEqual(value['submitted_fields']['provider_contact'],FORM['physician_office_contact'])
         self.assertEqual(value['submitted_fields']['sms_consent'],'Yes')
         self.assertEqual(value['submitted_fields']['medicaid'],'both')
+    def test_resubmission_preserves_original_form_on_reused_order(self):
+        original = snapshot_for(self.payload, self.parsed)
+        original['source_reference'] = 'synthetic:original'
+        self.row['source_reference'] = 'synthetic:original'
+        self.row['intake_payload'] = {'_source_form': original,
+            '_intake_source_references': [self.payload.source_reference]}
+        changes, snapshot, needed = plan_capture(self.row, self.payload, self.parsed)
+        self.assertTrue(needed)
+        self.row['intake_payload']['_source_forms'] = {self.payload.source_reference: snapshot}
+        self.assertTrue(all(capture_checks(self.row, self.payload, self.parsed).values()))
+        self.assertEqual(self.row['intake_payload']['_source_form'], original)
     def test_missing_chart_email_is_filled_from_form(self):
         self.row['email']='  '
         changes,snapshot,needed=plan_capture(self.row,self.payload,self.parsed)

@@ -42,12 +42,12 @@ def snapshot_for(payload, parsed: dict[str, Any]) -> dict[str, Any]:
 
 
 def plan_capture(row: dict[str, Any], payload, parsed: dict[str, Any]):
-    source = row.get('source_reference') or (row.get('intake_payload') or {}).get('_intake_idempotency_key')
-    if source != payload.source_reference:
+    intake = row.get('intake_payload') or {}
+    source = row.get('source_reference') or intake.get('_intake_idempotency_key')
+    if source != payload.source_reference and payload.source_reference not in intake.get('_intake_source_references', []):
         raise FormCaptureError('source_reference_conflict')
-    for field in ('first_name', 'last_name'):
-        if normalized(row.get(field)) != normalized(getattr(payload, field)):
-            raise FormCaptureError('patient_identity_conflict')
+    if normalized(f"{row.get('first_name', '')} {row.get('last_name', '')}") != normalized(f'{payload.first_name} {payload.last_name}'):
+        raise FormCaptureError('patient_identity_conflict')
     dob = str(row.get('date_of_birth') or row.get('dob') or '')
     if not payload.date_of_birth or dob != payload.date_of_birth:
         raise FormCaptureError('patient_identity_conflict')
@@ -62,10 +62,20 @@ def plan_capture(row: dict[str, Any], payload, parsed: dict[str, Any]):
         elif normalized(current, field) != normalized(incoming, field):
             raise FormCaptureError('chart_field_conflict')
     snapshot = snapshot_for(payload, parsed)
-    stored = (row.get('intake_payload') or {}).get('_source_form')
+    stored = source_snapshot(intake, payload.source_reference)
     if stored is not None and stored != snapshot:
         raise FormCaptureError('source_snapshot_conflict')
     return changes, snapshot, stored is None
+
+
+def source_snapshot(intake, source_reference):
+    legacy = intake.get('_source_form')
+    if legacy and legacy.get('source_reference') == source_reference:
+        return legacy
+    if legacy and not legacy.get('source_reference'):
+        # A malformed earlier snapshot must be reviewed, never replaced.
+        return legacy
+    return (intake.get('_source_forms') or {}).get(source_reference)
 
 
 def capture_checks(row: dict[str, Any], payload, parsed: dict[str, Any]) -> dict[str, bool]:
@@ -77,7 +87,7 @@ def capture_checks(row: dict[str, Any], payload, parsed: dict[str, Any]) -> dict
             normalized(row.get(field), field) == normalized(getattr(payload, field), field)
             for field in PATIENT_FIELDS
         ),
-        'submitted_form_preserved': (row.get('intake_payload') or {}).get('_source_form') == expected,
+        'submitted_form_preserved': source_snapshot(row.get('intake_payload') or {}, payload.source_reference) == expected,
     }
 
 
@@ -109,9 +119,15 @@ async def capture_form_data(db, org_id: str, payload, parsed: dict[str, Any], sp
                             (*changes.values(), org_id, str(spear['patient_id'])),
                         )
                     if needs_snapshot:
+                        intake = row.get('intake_payload') or {}
+                        snapshots = dict(intake.get('_source_forms') or {})
+                        snapshots[payload.source_reference] = snapshot
+                        captured = {'_source_forms': snapshots}
+                        if intake.get('_source_form') is None:
+                            captured['_source_form'] = snapshot
                         await cur.execute(
                             "UPDATE orders SET intake_payload=COALESCE(intake_payload,'{}'::jsonb) || %s::jsonb,updated_at=NOW() WHERE org_id=%s::uuid AND id=%s::uuid",
-                            (json.dumps({'_source_form': snapshot}, separators=(',', ':')), org_id, str(spear['order_id'])),
+                            (json.dumps(captured, separators=(',', ':')), org_id, str(spear['order_id'])),
                         )
                     if changes or needs_snapshot:
                         await cur.execute(

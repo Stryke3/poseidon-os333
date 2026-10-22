@@ -7,6 +7,8 @@ import re
 import sys
 from types import SimpleNamespace
 import unittest
+import uuid
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 import httpx
 
@@ -18,6 +20,17 @@ from zoho_mail_outbound import ZohoMailSender
 from zoho_sheet import ZohoSheet, ZohoSheetConfig, ZohoSheetError
 
 class IdentityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_existing_contact_with_changed_name_blocks_new_chart(self):
+        class Conflict(RuntimeError): pass
+        scope = functions(ROOT / 'core/conveyor_api.py',
+            {'_resolve_patient', '_phone_key', '_email_key'},
+            {'re': re, 'IdentityConflict': Conflict, '_all': AsyncMock(return_value=[]),
+             '_one': AsyncMock(return_value={'id': 'existing-patient'})})
+        payload = SimpleNamespace(first_name='Different', last_name='Spelling', date_of_birth='1990-01-01',
+                                  phone='7025550100', email='synthetic@example.test')
+        with self.assertRaises(Conflict):
+            await scope['_resolve_patient'](None, payload, 'synthetic-org')
+
     async def test_shared_phone_with_conflicting_email_requires_review(self):
         class Conflict(RuntimeError): pass
         scope = functions(ROOT / 'core/conveyor_api.py',
@@ -28,6 +41,81 @@ class IdentityTests(unittest.IsolatedAsyncioTestCase):
             phone='7025550100', email='different@example.test')
         with self.assertRaises(Conflict):
             await scope['_resolve_patient'](None, payload, 'synthetic-org')
+
+class MaternityOrderTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.conn = SimpleNamespace(execute=AsyncMock())
+        self.db = SimpleNamespace(connection=self.connection)
+        self.existing = {'id': 'existing-order', 'patient_id': 'existing-patient',
+                         'physician_id': None, 'source_reference': 'synthetic:original',
+                         'clinical_data': {'due_date': '2027-01-15', 'mck_record_id': 'MCK-ORIGINAL'},
+                         'intake_payload': {}}
+        self.payload = SimpleNamespace(source_reference='synthetic:resubmission', date_of_birth='1990-01-01',
+            first_name='Synthetic', last_name='Patient', due_date='2027-01-15', provider_npi=None,
+            medicaid=True, items_requested=['Breast pump'], provider_name='Synthetic Provider',
+            provider_practice=None, provider_phone=None, provider_fax=None, notes=None, payer_id=None)
+        self.all = AsyncMock(side_effect=[[], [self.existing]])
+        self.write, self.event = AsyncMock(), AsyncMock()
+        class Conflict(RuntimeError): pass
+        self.Conflict = Conflict
+        self.scope = functions(ROOT / 'core/conveyor_api.py', {'_spear_upsert', '_reuse_mck_order'}, {
+            'IdentityConflict': Conflict, '_RECORD_ID_RE': re.compile(r'^MCK-[A-Z0-9_-]{4,64}$'),
+            'json': json, 'uuid': uuid, 'datetime': datetime, 'timezone': timezone,
+            '_one': AsyncMock(return_value=None), '_all': self.all, '_write': self.write, '_event': self.event,
+            '_upsert_patient': AsyncMock(return_value=('existing-patient', False)),
+            '_upsert_insurance': AsyncMock(return_value=None), '_upsert_physician': AsyncMock(return_value=None)})
+
+    @asynccontextmanager
+    async def connection(self):
+        yield self.conn
+
+    async def run_intake(self):
+        return await self.scope['_spear_upsert'](self.db, self.payload, org_id='org', record_id='MCK-NEWEMAIL')
+
+    def assert_no_order_insert(self):
+        self.assertFalse(any('INSERT INTO orders' in call.args[1] for call in self.write.await_args_list))
+
+    async def test_new_email_reuses_existing_maternity_order_and_tracker_id(self):
+        result = await self.run_intake()
+        self.assertEqual((result['patient_id'], result['order_id'], result['record_id']),
+                         ('existing-patient', 'existing-order', 'MCK-ORIGINAL'))
+        self.assert_no_order_insert()
+        self.scope['_upsert_insurance'].assert_not_awaited()
+        self.assertIn("product_category='Mommy Care Kit'", self.write.await_args.args[1])
+        self.assertEqual(json.loads(self.write.await_args.args[2])['_intake_source_references'],
+                         ['synthetic:resubmission'])
+
+    async def test_same_source_replay_retains_canonical_tracker_id(self):
+        self.all.side_effect = [[self.existing]]
+        result = await self.run_intake()
+        self.assertEqual(result['record_id'], 'MCK-ORIGINAL')
+        self.scope['_upsert_patient'].assert_not_awaited()
+        self.assert_no_order_insert()
+
+    async def test_existing_duplicate_orders_block_a_third(self):
+        self.all.side_effect = [[], [self.existing, {**self.existing, 'id': 'duplicate-order'}]]
+        with self.assertRaises(self.Conflict): await self.run_intake()
+        self.assert_no_order_insert()
+        self.assertEqual(self.conn.execute.await_args.args[0], 'ROLLBACK')
+
+    async def test_conflicting_pregnancy_requires_review(self):
+        self.payload.due_date = '2028-01-15'
+        with self.assertRaises(self.Conflict): await self.run_intake()
+        self.assert_no_order_insert()
+        self.write.assert_not_awaited()
+
+    async def test_new_order_is_explicitly_mommy_care_kit(self):
+        self.all.side_effect = [[], []]
+        result = await self.run_intake()
+        inserts = [call for call in self.write.await_args_list if 'INSERT INTO orders' in call.args[1]]
+        self.assertEqual(len(inserts), 1)
+        self.assertIn("'Mommy Care Kit','dme','mommycarekit'", inserts[0].args[1])
+        self.assertEqual(result['record_id'], 'MCK-NEWEMAIL')
+
+    async def test_previous_tracker_receipt_wins_for_manual_maternity_order(self):
+        self.existing['clinical_data'] = {}
+        self.scope['_one'].return_value = {'record_id': 'MCK-TRACKER'}
+        self.assertEqual((await self.run_intake())['record_id'], 'MCK-TRACKER')
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_oauth_failure_does_not_reserve_send(self):
