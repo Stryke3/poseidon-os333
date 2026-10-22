@@ -1,0 +1,35 @@
+name: MCK mailbox listener contracts
+on:
+  push:
+    branches: [feature/mck-mail-listener-20261020]
+  pull_request:
+    branches: [redis-degraded-mode-20260816]
+    paths:
+      - services/shared/mck_mail_listener.py
+      - services/intake/mck_runtime.py
+      - services/intake/test_mck_mail_listener.py
+      - .github/workflows/mck-mail-listener.yml
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r services/core/requirements.txt
+      - name: Synthetic intake and mail contracts
+        run: |
+          set -euo pipefail
+          python services/intake/test_mck_mail_listener.py -v
+          python services/intake/test_business_channels.py -v
+          python services/intake/test_mck_automation.py -v
+          python services/intake/test_intake_delivery.py -v
+          python services/intake/test_mck_reliability.py -v
+          python services/intake/test_zoho_bootstrap.py -v
+          python -m py_compile services/shared/mck_mail_listener.py services/intake/mck_runtime.py
