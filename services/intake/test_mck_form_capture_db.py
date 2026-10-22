@@ -46,7 +46,7 @@ class CaptureDbTests(unittest.IsolatedAsyncioTestCase):
                 created_at timestamptz DEFAULT now(),physician_id uuid,clinical_data jsonb DEFAULT '{}',
                 product_category text,status text,source text,order_number text,referring_physician_npi text,
                 vertical text,priority text,place_of_service text,clinical_notes text,hcpcs_codes jsonb,
-                source_channel text,payer_id text);
+                source_channel text,payer_id text,physician_name text);
                 CREATE TABLE workflow_events (org_id uuid,order_id uuid,event_type text,payload jsonb,
                 created_at timestamptz DEFAULT now());''')
             await conn.execute('''CREATE TABLE order_diagnoses (id uuid PRIMARY KEY,order_id uuid,
@@ -103,6 +103,28 @@ class CaptureDbTests(unittest.IsolatedAsyncioTestCase):
     async def test_wrong_organization_does_not_touch_record(self):
         with self.assertRaisesRegex(FormCaptureError,'spear_record_unconfirmed'):
             await capture_form_data(self.pool,'00000000-0000-0000-0000-000000000099',self.payload,self.parsed,self.spear)
+    async def test_provider_name_without_npi_is_visible_on_replay(self):
+        os.environ.setdefault('LOCAL_PROOF_MODE','true')
+        from conveyor_api import MckIntakePayload,_spear_upsert
+        payload=MckIntakePayload(source_reference='synthetic-source',first_name='Synthetic',
+            last_name='Patient',date_of_birth='1990-01-01',provider_name='Synthetic Clinic')
+        await _spear_upsert(self.pool,payload,org_id=ORG,record_id='MCK-TEST')
+        async with self.pool.connection() as conn:
+            row=await (await conn.execute('SELECT physician_name,physician_id,referring_physician_npi FROM orders')).fetchone()
+        self.assertEqual(row,('Synthetic Clinic',None,None))
+
+    async def test_replay_preserves_manual_diagnosis_clear(self):
+        os.environ.setdefault('LOCAL_PROOF_MODE','true')
+        from conveyor_api import MckIntakePayload,_spear_upsert
+        async with self.pool.connection() as conn:
+            await conn.execute("UPDATE orders SET clinical_data=%s::jsonb",(json.dumps({'diagnosis_manual_clear':True}),))
+        payload=MckIntakePayload(source_reference='synthetic-source',first_name='Synthetic',
+            last_name='Patient',date_of_birth='1990-01-01',icd10_codes=['Z39.1'])
+        await _spear_upsert(self.pool,payload,org_id=ORG,record_id='MCK-TEST')
+        async with self.pool.connection() as conn:
+            count=await (await conn.execute('SELECT count(*) FROM order_diagnoses')).fetchone()
+        self.assertEqual(count[0],0)
+
     async def test_two_email_sources_converge_on_one_maternity_order(self):
         os.environ.setdefault('LOCAL_PROOF_MODE','true')
         from conveyor_api import MckIntakePayload,_spear_upsert

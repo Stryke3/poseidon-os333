@@ -150,6 +150,7 @@ async def process_message(app, mail, client, org_id, ref, *, dry_run):
         'sheet': result.get('sheet', {}).get('status'),
         'welcome': result.get('welcome', {}).get('status'),
         'welcome_message_id': result.get('welcome', {}).get('message_id'),
+        'swo_coding': result.get('coding', {'status': 'missing'}),
         'form_capture': capture,
     }
     # Error type names from the handler are safe; patient/provider error bodies are not.

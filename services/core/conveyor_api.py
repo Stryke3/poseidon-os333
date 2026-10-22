@@ -324,9 +324,9 @@ async def _enrich_mck_order(conn, payload, org_id, patient_id, order_id):
         supplied['patient_insurance_id'] = insurance_id
     # Existing populated values win. A practice name remains source information;
     # no physician identity is manufactured when the NPI is absent.
-    await _write(conn, "UPDATE orders SET physician_id=COALESCE(physician_id,$1::uuid), referring_physician_npi=COALESCE(NULLIF(referring_physician_npi,''),$2), clinical_data=$3::jsonb || COALESCE(clinical_data,'{}'::jsonb), updated_at=NOW() WHERE org_id=$4::uuid AND id=$5::uuid", physician_id, payload.provider_npi, json.dumps(supplied, separators=(',', ':')), org_id, order_id)
+    await _write(conn, "UPDATE orders SET physician_id=COALESCE(physician_id,$1::uuid), referring_physician_npi=COALESCE(NULLIF(referring_physician_npi,''),$2), clinical_data=$3::jsonb || COALESCE(clinical_data,'{}'::jsonb), physician_name=COALESCE(NULLIF(physician_name,''),$6), updated_at=NOW() WHERE org_id=$4::uuid AND id=$5::uuid", physician_id, payload.provider_npi, json.dumps(supplied, separators=(',', ':')), org_id, order_id, payload.provider_name)
     if payload.icd10_codes:
-        existing = await _one(conn, 'SELECT 1 present FROM order_diagnoses WHERE order_id=$1::uuid LIMIT 1', order_id)
+        existing = await _one(conn, "SELECT 1 present FROM order_diagnoses WHERE order_id=$1::uuid UNION ALL SELECT 1 present FROM orders WHERE id=$1::uuid AND org_id=$2::uuid AND (clinical_data->>'diagnosis_manual_clear'='true' OR nullif(clinical_data->>'icd10_reviewed_at','') IS NOT NULL OR COALESCE(clinical_data->'icd10_codes','[]'::jsonb)<>'[]'::jsonb) LIMIT 1", order_id, org_id)
         if not existing:
             for sequence, code in enumerate(payload.icd10_codes, 1):
                 await _write(conn, 'INSERT INTO order_diagnoses (id,order_id,icd10_code,description,is_primary,sequence) VALUES ($1::uuid,$2::uuid,$3,NULL,$4,$5)', str(uuid.uuid4()), order_id, code, sequence == 1, sequence)
@@ -473,6 +473,20 @@ async def _send_welcome(db, client, payload, *, org_id, record_id, order_id):
     subject, body = build_welcome_email(first_name=payload.first_name, insurance_name=payload.insurance_plan, provider_summary=_provider(payload) if payload.provider_name else None, needs_dob=not bool(payload.date_of_birth), needs_provider=not bool(payload.provider_name), needs_insurance=not bool(payload.member_id), needs_id=True, needs_address=not all((payload.address_line1, payload.city, payload.state, payload.zip_code)))
     return await _dispatch_mck_mail(db, client, org_id=org_id, order_id=order_id, prefix='mck.welcome', recipients=[payload.email], subject=subject, body=body, event_data={'source_reference': payload.source_reference, 'record_id': record_id})
 
+async def _swo_coding(client, spear, org_id):
+    if not spear:
+        return {'status': 'blocked'}
+    try:
+        response = await client.post('https://dashboard.strykefox.com/api/mck/intake-coding',
+            headers={'X-Internal-API-Key': settings.internal_api_key},
+            json={'org_id': org_id, 'order_id': str(spear['order_id'])})
+        value = response.json()
+        if response.status_code == 200 and value.get('status') in {'confirmed', 'preserved'}:
+            return {key: value[key] for key in ('status', 'icd10_count', 'hcpcs_count', 'provider_confirmation_required') if key in value}
+    except (httpx.HTTPError, ValueError):
+        pass
+    return {'status': 'needs_review', 'reason': 'configured_swo_coding_unavailable'}
+
 @router.post('/api/v1/mck/intake')
 async def mck_intake(payload: MckIntakePayload, request: Request):
     _internal(request)
@@ -482,7 +496,7 @@ async def mck_intake(payload: MckIntakePayload, request: Request):
         raise HTTPException(503, 'SPEAR database is unavailable')
     record_id = payload.record_id or stable_record_id(payload.source_reference)
     outstanding = _outstanding(payload)
-    results: dict[str, Any] = {'record_id': record_id, 'source_reference': payload.source_reference, 'spear': {'status': 'pending'}, 'sheet': {'status': 'pending'}, 'welcome': {'status': 'pending'}}
+    results: dict[str, Any] = {'record_id': record_id, 'source_reference': payload.source_reference, 'spear': {'status': 'pending'}, 'coding': {'status': 'pending'}, 'sheet': {'status': 'pending'}, 'welcome': {'status': 'pending'}}
     spear: dict[str, Any] | None = None
     if not payload.date_of_birth:
         results['spear'] = {'status': 'blocked', 'missing': ['DOB']}
@@ -503,6 +517,7 @@ async def mck_intake(payload: MckIntakePayload, request: Request):
             logger.warning('mck_intake_spear_failed source_reference_hash=%s type=%s', stable_record_id(payload.source_reference), type(exc).__name__)
             results['spear'] = {'status': 'failed', 'error': type(exc).__name__}
     async with httpx.AsyncClient(timeout=30.0) as client:
+        results['coding'] = await _swo_coding(client, spear, org_id)
         try:
             projected = await _sheet_project(db, client, payload, record_id, spear, outstanding, org_id=org_id)
             results['sheet'] = {'status': 'confirmed', **projected}
@@ -511,8 +526,8 @@ async def mck_intake(payload: MckIntakePayload, request: Request):
         except Exception as exc:
             results['sheet'] = {'status': 'failed', 'error': type(exc).__name__}
         results['welcome'] = await _send_welcome(db, client, payload, org_id=org_id, record_id=record_id, order_id=str((spear or {}).get('order_id') or '') or None)
-    statuses = {results[key]['status'] for key in ('spear', 'sheet', 'welcome')}
-    results['complete'] = statuses <= {'confirmed', 'already_sent'}
+    statuses = {results[key]['status'] for key in ('spear', 'coding', 'sheet', 'welcome')}
+    results['complete'] = statuses <= {'confirmed', 'already_sent', 'preserved'}
     return JSONResponse(status_code=200 if results['complete'] else 207, content=results)
 
 def _recipients() -> list[str]:

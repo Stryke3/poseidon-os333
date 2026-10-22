@@ -120,6 +120,27 @@ class MaternityOrderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.run_intake())['record_id'], 'MCK-TRACKER')
 
 class EnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_swo_coding_uses_existing_order_and_configuration_service(self):
+        seen = []
+        async def handler(request):
+            seen.append(json.loads(request.content))
+            return httpx.Response(200, json={'status':'confirmed','icd10_count':4,'hcpcs_count':9,
+                                            'provider_confirmation_required':True})
+        scope=functions(ROOT / 'core/conveyor_api.py', {'_swo_coding'}, {
+            'httpx':httpx,'settings':SimpleNamespace(internal_api_key='synthetic-test-key')})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            result=await scope['_swo_coding'](client,{'order_id':'existing-order'},'org')
+        self.assertEqual(seen,[{'order_id':'existing-order','org_id':'org'}])
+        self.assertEqual(result['hcpcs_count'],9)
+        self.assertTrue(result['provider_confirmation_required'])
+
+    async def test_swo_configuration_failure_is_not_completion(self):
+        scope=functions(ROOT / 'core/conveyor_api.py', {'_swo_coding'}, {
+            'httpx':httpx,'settings':SimpleNamespace(internal_api_key='synthetic-test-key')})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request:httpx.Response(401,json={}))) as client:
+            result=await scope['_swo_coding'](client,{'order_id':'existing-order'},'org')
+        self.assertEqual(result['status'],'needs_review')
+
     async def test_supplied_fields_fill_order_and_codes_without_marking_reviewed(self):
         write = AsyncMock()
         scope = functions(ROOT / 'core/conveyor_api.py', {'_enrich_mck_order'}, {
@@ -133,6 +154,8 @@ class EnrichmentTests(unittest.IsolatedAsyncioTestCase):
         update = write.await_args_list[0].args
         self.assertEqual(json.loads(update[4])['patient_insurance_id'], 'insurance')
         self.assertNotIn('icd10_reviewed', update[1])
+        self.assertEqual(update[-1], 'Synthetic Clinic')
+        self.assertIn("physician_name=COALESCE(NULLIF(physician_name,''),$6)", update[1])
         self.assertIn('INSERT INTO order_diagnoses', write.await_args_list[1].args[1])
 
     async def test_existing_diagnoses_are_not_replaced_on_replay(self):

@@ -32,7 +32,7 @@ jobs:
           # Python 3.11 fingerprints of the already-tested artifact's AST.
           # Python 3.13 ast.dump omits empty fields, producing different hashes.
           expected = {
-            'services/core/conveyor_api.py': 'a16356a9d078e57f351b074e03efdf149c1997eda05e5b15585a777748db4b43',
+            'services/core/conveyor_api.py': '947756ce426af78de3ad245cb726bd9010da8b07d7ed843b8f47205e979bd718',
             'services/intake/main.py': 'cc1c4a44053fd4b619333e36e59e76bde3e0091cef3f7301652567e3fae4b7ab',
           }
           for path, reference in expected.items():
