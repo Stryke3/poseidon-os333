@@ -16,6 +16,13 @@ ALIASES = {
     'phone': 'phone', 'phone number': 'phone', 'due date': 'due_date',
     'estimated due date': 'due_date', 'state': 'state',
     'insurance plan': 'insurance_plan', 'member id': 'member_id',
+    'insurance company': 'insurance_plan', 'insurance name': 'insurance_plan',
+    'subscriber id': 'member_id', 'policy number': 'member_id',
+    'group number': 'group_number', 'group id': 'group_number',
+    'payer id': 'payer_id', 'provider npi': 'provider_npi',
+    'physician npi': 'provider_npi', 'icd10 codes': 'icd10_codes',
+    'icd 10 codes': 'icd10_codes', 'icd10': 'icd10_codes',
+    'icd 10': 'icd10_codes', 'diagnosis codes': 'icd10_codes',
     'date of birth': 'date_of_birth', 'dob': 'date_of_birth',
     'medicaid': 'medicaid', 'items requested': 'items_requested',
     'referring physician': 'provider_name', 'referring physician ob gyn': 'provider_name',
@@ -138,6 +145,7 @@ def parse_form(raw: bytes, *, account_id: str, allowed_domains=('web3forms.com',
     result = {'source_reference': source, 'first_name': first, 'last_name': last,
               '_form_fields': dict(fields)}
     for key in ('email', 'phone', 'date_of_birth', 'due_date', 'insurance_plan', 'member_id',
+                'group_number', 'payer_id', 'provider_npi', 'icd10_codes',
                 'provider_name', 'provider_practice', 'provider_phone', 'provider_fax',
                 'address_line1', 'address_line2', 'city', 'zip_code'):
         result[key] = fields.get(key) or None

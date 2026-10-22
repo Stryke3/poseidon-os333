@@ -1,7 +1,7 @@
 name: MCK email intake bridge
 on:
   push:
-    branches: [fix/mck-email-to-intake-20261020, fix/mck-complete-form-capture-20261021, fix/mck-single-maternity-20261021]
+    branches: [fix/mck-email-to-intake-20261020, fix/mck-complete-form-capture-20261021, fix/mck-single-maternity-20261021, fix/mck-intake-fields-20261022]
   pull_request:
     branches: [redis-degraded-mode-20260816]
     paths:

@@ -1,7 +1,7 @@
 name: MCK reliability validation
 on:
   push:
-    branches: ["fix/mck-live-reliability-20261019", "fix/mck-single-maternity-20261021"]
+    branches: ["fix/mck-live-reliability-20261019", "fix/mck-single-maternity-20261021", "fix/mck-intake-fields-20261022"]
   pull_request:
     branches: [redis-degraded-mode-20260816]
     paths:
@@ -32,7 +32,7 @@ jobs:
           # Python 3.11 fingerprints of the already-tested artifact's AST.
           # Python 3.13 ast.dump omits empty fields, producing different hashes.
           expected = {
-            'services/core/conveyor_api.py': '876920877fc825b6629fe67a23d763c13fc2d2927cdbe02df39a3e539ef6081e',
+            'services/core/conveyor_api.py': 'a16356a9d078e57f351b074e03efdf149c1997eda05e5b15585a777748db4b43',
             'services/intake/main.py': 'cc1c4a44053fd4b619333e36e59e76bde3e0091cef3f7301652567e3fae4b7ab',
           }
           for path, reference in expected.items():

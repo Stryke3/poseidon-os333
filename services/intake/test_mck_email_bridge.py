@@ -42,6 +42,25 @@ def message(fields=None, *, html=False, sender='forms@web3forms.com', subject='N
 
 
 class ParserTests(unittest.TestCase):
+    def test_explicit_insurance_provider_and_diagnoses_reach_payload(self):
+        fields = {**FORM, 'insurance_company': 'Synthetic Health',
+                  'subscriber_id': 'TEST123', 'group_number': 'GRP123',
+                  'physician_npi': '1234567890', 'icd_10_codes': 'Z39.1, Z34.90'}
+        fields.pop('insurance_plan')
+        payload = bridge.MckIntakePayload(**parse_form(message(fields), account_id='123'))
+        self.assertEqual(payload.insurance_plan, 'Synthetic Health')
+        self.assertEqual(payload.member_id, 'TEST123')
+        self.assertEqual(payload.group_number, 'GRP123')
+        self.assertEqual(payload.provider_npi, '1234567890')
+        self.assertEqual(payload.icd10_codes, ['Z39.1', 'Z34.90'])
+
+    def test_missing_diagnoses_never_inferred_from_requested_kit(self):
+        payload = bridge.MckIntakePayload(**parse_form(message(), account_id='123'))
+        self.assertEqual(payload.icd10_codes, [])
+
+    def test_diagnosis_narrative_is_not_treated_as_a_code(self):
+        with self.assertRaises(ValueError):
+            bridge.MckIntakePayload(**parse_form(message({**FORM, 'icd10': 'choose pregnancy code'}), account_id='123'))
     def test_plaintext_form_creates_matching_payload(self):
         value = parse_form(message(), account_id='123')
         self.assertEqual(value['first_name'], 'Synthetic')

@@ -49,6 +49,8 @@ class CaptureDbTests(unittest.IsolatedAsyncioTestCase):
                 source_channel text,payer_id text);
                 CREATE TABLE workflow_events (org_id uuid,order_id uuid,event_type text,payload jsonb,
                 created_at timestamptz DEFAULT now());''')
+            await conn.execute('''CREATE TABLE order_diagnoses (id uuid PRIMARY KEY,order_id uuid,
+                icd10_code text,description text,is_primary boolean,sequence integer);''')
             await conn.execute('INSERT INTO patients(id,org_id,first_name,last_name,date_of_birth,phone,state) VALUES(%s,%s,%s,%s,%s,%s,%s)',
                 (PATIENT,ORG,'Synthetic','Patient','1990-01-01','7025550100','NV'))
             await conn.execute('INSERT INTO orders(id,org_id,patient_id,source_reference) VALUES(%s,%s,%s,%s)',

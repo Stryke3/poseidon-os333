@@ -106,7 +106,19 @@ class MckIntakePayload(BaseModel):
     provider_phone: str | None = None
     provider_fax: str | None = None
     items_requested: list[str] = Field(default_factory=list, max_length=20)
+    icd10_codes: list[str] = Field(default_factory=list, max_length=30)
     notes: str | None = None
+
+    @field_validator('icd10_codes', mode='before')
+    @classmethod
+    def normalize_diagnoses(cls, value: Any) -> list[str]:
+        values = re.split(r'[,;\s]+', value.strip()) if isinstance(value, str) else value or []
+        if not isinstance(values, list):
+            raise ValueError('icd10_codes must be a list or separated codes')
+        codes = list(dict.fromkeys(str(v).strip().upper() for v in values if str(v).strip()))
+        if any(not re.fullmatch(r'[A-TV-Z][0-9][A-Z0-9](?:\.[A-Z0-9]{1,4})?', code) for code in codes):
+            raise ValueError('icd10_codes must contain explicit ICD-10 codes only')
+        return codes
 
     @field_validator('date_of_birth', 'due_date')
     @classmethod
@@ -267,6 +279,11 @@ async def _upsert_insurance(conn, payload: MckIntakePayload, patient_id: str) ->
         return None
     if payload.member_id:
         insurance = await _one(conn, "SELECT id FROM patient_insurances WHERE patient_id=$1::uuid AND lower(payer_name)=lower($2) AND COALESCE(member_id,'')=$3 ORDER BY is_primary DESC,created_at DESC LIMIT 1", patient_id, payload.insurance_plan, payload.member_id)
+        if not insurance:
+            incomplete = await _all(conn, "SELECT id FROM patient_insurances WHERE patient_id=$1::uuid AND lower(payer_name)=lower($2) AND COALESCE(member_id,'')='' AND is_active=true FOR UPDATE", patient_id, payload.insurance_plan)
+            if len(incomplete) > 1:
+                raise IdentityConflict('Multiple incomplete insurance policies require review')
+            insurance = incomplete[0] if incomplete else None
     else:
         insurance = await _one(conn, 'SELECT id FROM patient_insurances WHERE patient_id=$1::uuid AND lower(payer_name)=lower($2) AND is_active=true ORDER BY is_primary DESC,created_at DESC LIMIT 1', patient_id, payload.insurance_plan)
     if insurance:
@@ -292,6 +309,29 @@ async def _upsert_physician(conn, payload: MckIntakePayload) -> str | None:
     await _write(conn, "INSERT INTO physicians (id,npi,first_name,last_name,phone,fax,facility_name,address) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,'{}'::jsonb)", physician_id, payload.provider_npi, first_name, last_name, payload.provider_phone, payload.provider_fax, payload.provider_practice)
     return physician_id
 
+async def _enrich_mck_order(conn, payload, org_id, patient_id, order_id):
+    """Fill supplied fields on new orders and replays without replacing reviewed data."""
+    insurance_id = await _upsert_insurance(conn, payload, patient_id)
+    physician_id = await _upsert_physician(conn, payload)
+    supplied = {key: value for key, value in {
+        'provider_name_as_submitted': payload.provider_name,
+        'provider_practice_as_submitted': payload.provider_practice,
+        'provider_phone_as_submitted': payload.provider_phone,
+        'provider_fax_as_submitted': payload.provider_fax,
+        'intake_icd10_codes': payload.icd10_codes,
+    }.items() if value}
+    if insurance_id:
+        supplied['patient_insurance_id'] = insurance_id
+    # Existing populated values win. A practice name remains source information;
+    # no physician identity is manufactured when the NPI is absent.
+    await _write(conn, "UPDATE orders SET physician_id=COALESCE(physician_id,$1::uuid), referring_physician_npi=COALESCE(NULLIF(referring_physician_npi,''),$2), clinical_data=$3::jsonb || COALESCE(clinical_data,'{}'::jsonb), updated_at=NOW() WHERE org_id=$4::uuid AND id=$5::uuid", physician_id, payload.provider_npi, json.dumps(supplied, separators=(',', ':')), org_id, order_id)
+    if payload.icd10_codes:
+        existing = await _one(conn, 'SELECT 1 present FROM order_diagnoses WHERE order_id=$1::uuid LIMIT 1', order_id)
+        if not existing:
+            for sequence, code in enumerate(payload.icd10_codes, 1):
+                await _write(conn, 'INSERT INTO order_diagnoses (id,order_id,icd10_code,description,is_primary,sequence) VALUES ($1::uuid,$2::uuid,$3,NULL,$4,$5)', str(uuid.uuid4()), order_id, code, sequence == 1, sequence)
+    return insurance_id, physician_id
+
 async def _reuse_mck_order(conn, order, payload, org_id, record_id):
     clinical = order.get('clinical_data') or {}
     intake = order.get('intake_payload') or {}
@@ -309,6 +349,7 @@ async def _reuse_mck_order(conn, order, payload, org_id, record_id):
     await _write(conn, "UPDATE orders SET product_category='Mommy Care Kit', intake_payload=COALESCE(intake_payload,'{}'::jsonb) || $1::jsonb, updated_at=NOW() WHERE org_id=$2::uuid AND id=$3::uuid", json.dumps({'mck_record_id': canonical, '_intake_source_references': sources}, separators=(',', ':')), org_id, str(order['id']))
     if payload.source_reference not in (intake.get('_intake_source_references') or []) and payload.source_reference != order.get('source_reference'):
         await _event(conn, org_id, 'mck.intake.reused', {'source_reference': payload.source_reference, 'record_id': canonical, 'patient_id': str(order['patient_id'])}, str(order['id']))
+    await _enrich_mck_order(conn, payload, org_id, str(order['patient_id']), str(order['id']))
     return {'patient_id': str(order['patient_id']), 'order_id': str(order['id']), 'physician_id': str(order['physician_id']) if order.get('physician_id') else None, 'record_id': canonical, 'idempotent_replay': True}
 
 async def _spear_upsert(db, payload: MckIntakePayload, *, org_id: str, record_id: str) -> dict[str, Any]:
@@ -343,6 +384,7 @@ async def _spear_upsert(db, payload: MckIntakePayload, *, org_id: str, record_id
             intake_payload = {**clinical, '_intake_received_at': received_at, '_intake_idempotency_key': payload.source_reference, '_processing_status': 'received'}
             await _write(conn, "INSERT INTO orders (id,org_id,order_number,patient_id,physician_id,referring_physician_npi,status,product_category,vertical,source,priority,place_of_service,clinical_notes,clinical_data,hcpcs_codes,intake_payload,source_channel,source_reference,payer_id) VALUES ($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6,'intake','Mommy Care Kit','dme','mommycarekit','normal','12',$7,$8::jsonb,'[]'::jsonb,$9::jsonb,'zoho',$10,$11)", order_id, org_id, f"MCK-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{order_id[:6].upper()}", patient_id, physician_id, payload.provider_npi, payload.notes, json.dumps(clinical, separators=(',', ':')), json.dumps(intake_payload, separators=(',', ':')), payload.source_reference, payload.payer_id)
             await _event(conn, org_id, 'mck.intake.created', {'source_reference': payload.source_reference, 'record_id': record_id, 'patient_id': patient_id, 'patient_created': patient_created, 'received_at': received_at}, order_id)
+            await _enrich_mck_order(conn, payload, org_id, patient_id, order_id)
             await conn.execute('COMMIT')
             return {'patient_id': patient_id, 'insurance_id': insurance_id, 'physician_id': physician_id, 'order_id': order_id, 'record_id': record_id, 'idempotent_replay': False}
         except Exception:

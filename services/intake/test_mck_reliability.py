@@ -63,6 +63,7 @@ class MaternityOrderTests(unittest.IsolatedAsyncioTestCase):
             'json': json, 'uuid': uuid, 'datetime': datetime, 'timezone': timezone,
             '_one': AsyncMock(return_value=None), '_all': self.all, '_write': self.write, '_event': self.event,
             '_upsert_patient': AsyncMock(return_value=('existing-patient', False)),
+            '_enrich_mck_order': AsyncMock(return_value=(None, None)),
             '_upsert_insurance': AsyncMock(return_value=None), '_upsert_physician': AsyncMock(return_value=None)})
 
     @asynccontextmanager
@@ -81,6 +82,7 @@ class MaternityOrderTests(unittest.IsolatedAsyncioTestCase):
                          ('existing-patient', 'existing-order', 'MCK-ORIGINAL'))
         self.assert_no_order_insert()
         self.scope['_upsert_insurance'].assert_not_awaited()
+        self.scope['_enrich_mck_order'].assert_awaited_once()
         self.assertIn("product_category='Mommy Care Kit'", self.write.await_args.args[1])
         self.assertEqual(json.loads(self.write.await_args.args[2])['_intake_source_references'],
                          ['synthetic:resubmission'])
@@ -116,6 +118,43 @@ class MaternityOrderTests(unittest.IsolatedAsyncioTestCase):
         self.existing['clinical_data'] = {}
         self.scope['_one'].return_value = {'record_id': 'MCK-TRACKER'}
         self.assertEqual((await self.run_intake())['record_id'], 'MCK-TRACKER')
+
+class EnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_supplied_fields_fill_order_and_codes_without_marking_reviewed(self):
+        write = AsyncMock()
+        scope = functions(ROOT / 'core/conveyor_api.py', {'_enrich_mck_order'}, {
+            'json': json, 'uuid': uuid, '_write': write, '_one': AsyncMock(return_value=None),
+            '_upsert_insurance': AsyncMock(return_value='insurance'),
+            '_upsert_physician': AsyncMock(return_value=None)})
+        payload = SimpleNamespace(provider_name='Synthetic Clinic', provider_npi=None,
+            provider_practice=None, provider_phone='7025550100', provider_fax=None,
+            icd10_codes=['Z39.1'])
+        await scope['_enrich_mck_order'](None, payload, 'org', 'patient', 'order')
+        update = write.await_args_list[0].args
+        self.assertEqual(json.loads(update[4])['patient_insurance_id'], 'insurance')
+        self.assertNotIn('icd10_reviewed', update[1])
+        self.assertIn('INSERT INTO order_diagnoses', write.await_args_list[1].args[1])
+
+    async def test_existing_diagnoses_are_not_replaced_on_replay(self):
+        write = AsyncMock()
+        scope = functions(ROOT / 'core/conveyor_api.py', {'_enrich_mck_order'}, {
+            'json': json, 'uuid': uuid, '_write': write, '_one': AsyncMock(return_value={'present': 1}),
+            '_upsert_insurance': AsyncMock(return_value=None),
+            '_upsert_physician': AsyncMock(return_value=None)})
+        payload = SimpleNamespace(provider_name=None, provider_npi=None,
+            provider_practice=None, provider_phone=None, provider_fax=None, icd10_codes=['Z39.1'])
+        await scope['_enrich_mck_order'](None, payload, 'org', 'patient', 'order')
+        self.assertEqual(write.await_count, 1)
+
+    async def test_unique_incomplete_insurance_is_enriched_instead_of_duplicated(self):
+        write = AsyncMock()
+        scope = functions(ROOT / 'core/conveyor_api.py', {'_upsert_insurance'}, {
+            '_one': AsyncMock(return_value=None), '_all': AsyncMock(return_value=[{'id': 'policy'}]),
+            '_write': write, 'uuid': uuid, 'IdentityConflict': RuntimeError})
+        payload = SimpleNamespace(insurance_plan='Synthetic Health', member_id='TEST123',
+                                  payer_id=None, group_number='TESTGROUP')
+        self.assertEqual(await scope['_upsert_insurance'](None, payload, 'patient'), 'policy')
+        self.assertTrue(write.await_args.args[1].startswith('UPDATE patient_insurances'))
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_oauth_failure_does_not_reserve_send(self):
