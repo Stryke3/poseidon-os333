@@ -167,7 +167,11 @@ class EnrichmentTests(unittest.IsolatedAsyncioTestCase):
         payload = SimpleNamespace(provider_name=None, provider_npi=None,
             provider_practice=None, provider_phone=None, provider_fax=None, icd10_codes=['Z39.1'])
         await scope['_enrich_mck_order'](None, payload, 'org', 'patient', 'order')
-        self.assertEqual(write.await_count, 1)
+        self.assertEqual(write.await_count, 2)
+        mrn = write.await_args_list[-1].args
+        self.assertIn("NULLIF(trim(mrn),'') IS NULL", mrn[1])
+        self.assertIn("mck.patient.mrn_assigned", mrn[1])
+        self.assertEqual(mrn[2:], ('org', 'patient', 'order'))
 
     async def test_unique_incomplete_insurance_is_enriched_instead_of_duplicated(self):
         write = AsyncMock()

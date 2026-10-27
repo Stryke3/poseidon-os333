@@ -330,6 +330,17 @@ async def _enrich_mck_order(conn, payload, org_id, patient_id, order_id):
         if not existing:
             for sequence, code in enumerate(payload.icd10_codes, 1):
                 await _write(conn, 'INSERT INTO order_diagnoses (id,order_id,icd10_code,description,is_primary,sequence) VALUES ($1::uuid,$2::uuid,$3,NULL,$4,$5)', str(uuid.uuid4()), order_id, code, sequence == 1, sequence)
+    # The automated intake must assign a stable chart identifier just as Quick Add does.
+    # Patient UUIDs keep this independent of concurrent creation and name changes.
+    # Replays repair blanks only and record the assignment in the same transaction.
+    await _write(conn, """WITH assigned AS (
+        UPDATE patients SET mrn='SFM-' || upper(replace(id::text,'-','')),updated_at=NOW()
+        WHERE org_id=$1::uuid AND id=$2::uuid AND NULLIF(trim(mrn),'') IS NULL
+        RETURNING id,mrn
+    ) INSERT INTO workflow_events (org_id,order_id,event_type,payload)
+      SELECT $1::uuid,$3::uuid,'mck.patient.mrn_assigned',
+             jsonb_build_object('patient_id',id::text,'mrn',mrn,'source','zoho_intake')
+      FROM assigned""", org_id, patient_id, order_id)
     return insurance_id, physician_id
 
 async def _reuse_mck_order(conn, order, payload, org_id, record_id):
