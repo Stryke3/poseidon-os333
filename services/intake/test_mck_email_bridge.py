@@ -41,6 +41,44 @@ def message(fields=None, *, html=False, sender='forms@web3forms.com', subject='N
     return msg.as_bytes()
 
 
+class ScheduleTests(unittest.TestCase):
+    def setUp(self):
+        self.schedule = bridge.daily_schedule({
+            'MCK_EMAIL_RUN_TIMES': '08:00,12:00,18:00',
+            'MCK_EMAIL_TIMEZONE': 'America/Los_Angeles',
+        })
+
+    def next_run(self, current):
+        return bridge.next_daily_run(bridge.datetime.fromisoformat(current), self.schedule).isoformat()
+
+    def test_each_slot_and_overnight(self):
+        for current, expected in (
+            ('2026-10-26T14:59:00+00:00', '2026-10-26T15:00:00+00:00'),
+            ('2026-10-26T15:00:00+00:00', '2026-10-26T19:00:00+00:00'),
+            ('2026-10-26T19:01:00+00:00', '2026-10-27T01:00:00+00:00'),
+            ('2026-10-27T01:00:00+00:00', '2026-10-27T15:00:00+00:00'),
+        ):
+            with self.subTest(current=current):
+                self.assertEqual(self.next_run(current), expected)
+
+    def test_daylight_saving_boundaries(self):
+        self.assertEqual(self.next_run('2026-11-01T01:01:00+00:00'), '2026-11-01T16:00:00+00:00')
+        self.assertEqual(self.next_run('2027-03-14T02:01:00+00:00'), '2027-03-14T15:00:00+00:00')
+
+    def test_restart_waits_for_next_slot(self):
+        self.assertEqual(self.next_run('2026-10-26T16:32:00+00:00'), '2026-10-26T19:00:00+00:00')
+
+    def test_invalid_settings_fail_closed(self):
+        for raw in ('25:00', '08:60', '08:00,', 'eight'):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                bridge.daily_schedule({'MCK_EMAIL_RUN_TIMES': raw})
+
+    def test_legacy_interval_and_sorted_unique_times(self):
+        self.assertIsNone(bridge.daily_schedule({}))
+        _, times = bridge.daily_schedule({'MCK_EMAIL_RUN_TIMES': '18:00,08:00,12:00,08:00'})
+        self.assertEqual(times, ((8, 0), (12, 0), (18, 0)))
+
+
 class ParserTests(unittest.TestCase):
     def test_explicit_insurance_provider_and_diagnoses_reach_payload(self):
         fields = {**FORM, 'insurance_company': 'Synthetic Health',

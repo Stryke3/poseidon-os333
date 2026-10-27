@@ -6,7 +6,8 @@ changes claims, payment ledgers, authorization decisions or fulfillment states.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import hashlib
 import json
 import os
@@ -211,20 +212,62 @@ async def poll_once(app, env=None):
             await conn.commit()
 
 
+def daily_schedule(env):
+    """Optional local wall-clock times; interval mode remains backward compatible."""
+    raw = env.get('MCK_EMAIL_RUN_TIMES', '').strip()
+    if not raw:
+        return None
+    times = []
+    for value in raw.split(','):
+        value = value.strip()
+        if not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', value):
+            raise ValueError('invalid_email_run_time')
+        times.append(tuple(map(int, value.split(':'))))
+    zone = ZoneInfo(env.get('MCK_EMAIL_TIMEZONE', 'America/Los_Angeles'))
+    return zone, tuple(sorted(set(times)))
+
+
+def next_daily_run(now, schedule):
+    """Return the next future slot in UTC, preserving the local time across DST."""
+    if now.tzinfo is None:
+        raise ValueError('current_timezone_required')
+    zone, times = schedule
+    local_date = now.astimezone(zone).date()
+    now_utc = now.astimezone(timezone.utc)
+    for offset in (0, 1):
+        day = local_date + timedelta(days=offset)
+        for hour, minute in times:
+            candidate = datetime(day.year, day.month, day.day, hour, minute,
+                                 tzinfo=zone).astimezone(timezone.utc)
+            if candidate > now_utc:
+                return candidate
+    raise ValueError('empty_email_schedule')
+
+
 async def email_worker(app):
     if os.getenv('MCK_EMAIL_INTAKE_ENABLED', 'false').lower() != 'true':
         return
     try:
-        # Permit the owner-selected 12-hour cadence instead of capping at 15 minutes.
-        interval = max(60, min(43200, int(os.getenv('MCK_EMAIL_POLL_SECONDS', '60'))))
+        schedule = daily_schedule(os.environ)
+        interval = None if schedule else max(60, min(43200, int(os.getenv('MCK_EMAIL_POLL_SECONDS', '60'))))
         settings_for(os.environ)
     except Exception:
         emit({'status': 'configuration_required'})
         return
-    emit({'status': 'watcher_started', 'interval_seconds': interval,
+    timing = ({'schedule_timezone': schedule[0].key,
+               'run_times': [f'{h:02d}:{m:02d}' for h, m in schedule[1]]}
+              if schedule else {'interval_seconds': interval})
+    emit({'status': 'watcher_started', **timing,
           'dry_run': os.getenv('MCK_EMAIL_DRY_RUN', 'true').lower() != 'false'})
-    await asyncio.sleep(5)
+    if not schedule:
+        await asyncio.sleep(5)
     while True:
+        if schedule:
+            now = datetime.now(timezone.utc)
+            due = next_daily_run(now, schedule)
+            emit({'status': 'poll_scheduled', 'next_poll_at': due.isoformat(),
+                  'schedule_timezone': schedule[0].key})
+            await asyncio.sleep(max(0, (due - now).total_seconds()))
         try:
             summary = await poll_once(app)
             emit({'status': 'poll_finished', **summary})
@@ -232,4 +275,5 @@ async def email_worker(app):
             raise
         except Exception as exc:
             emit({'status': 'poll_failed', 'reason': type(exc).__name__})
-        await asyncio.sleep(interval)
+        if not schedule:
+            await asyncio.sleep(interval)
