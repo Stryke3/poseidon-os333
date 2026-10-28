@@ -60,7 +60,7 @@ class MaternityOrderTests(unittest.IsolatedAsyncioTestCase):
         self.Conflict = Conflict
         self.scope = functions(ROOT / 'core/conveyor_api.py', {'_spear_upsert', '_reuse_mck_order'}, {
             'IdentityConflict': Conflict, '_RECORD_ID_RE': re.compile(r'^MCK-[A-Z0-9_-]{4,64}$'),
-            'json': json, 'uuid': uuid, 'datetime': datetime, 'timezone': timezone,
+            'json': json, 'uuid': uuid, 'datetime': datetime, 'timezone': timezone, '_outstanding': lambda p: 'Follow-up',
             '_one': AsyncMock(return_value=None), '_all': self.all, '_write': self.write, '_event': self.event,
             '_upsert_patient': AsyncMock(return_value=('existing-patient', False)),
             '_enrich_mck_order': AsyncMock(return_value=(None, None)),
@@ -75,6 +75,17 @@ class MaternityOrderTests(unittest.IsolatedAsyncioTestCase):
 
     def assert_no_order_insert(self):
         self.assertFalse(any('INSERT INTO orders' in call.args[1] for call in self.write.await_args_list))
+
+    async def test_missing_dob_and_provider_still_creates_intake(self):
+        self.payload.date_of_birth = None
+        self.payload.provider_name = None
+        self.all.side_effect = [[], []]
+        self.scope['_outstanding'] = lambda payload: 'DOB; Referring physician'
+        result = await self.run_intake()
+        self.assertTrue(result['order_id'])
+        self.assertFalse(result['idempotent_replay'])
+        insert = next(c for c in self.write.await_args_list if 'INSERT INTO orders' in c.args[1])
+        self.assertIn('DOB; Referring physician', insert.args[9])
 
     async def test_new_email_reuses_existing_maternity_order_and_tracker_id(self):
         result = await self.run_intake()

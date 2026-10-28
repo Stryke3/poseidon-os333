@@ -239,7 +239,7 @@ def _candidate_has_conflict(candidate: dict[str, Any], payload: MckIntakePayload
     return bool(input_phone and stored_phone and (input_phone != stored_phone) or (input_email and stored_email and (input_email != stored_email)))
 
 async def _resolve_patient(conn, payload: MckIntakePayload, org_id: str) -> dict[str, Any] | None:
-    candidates = await _all(conn, "SELECT id,phone,email,address_line1,address_line2,city,state,zip_code,address FROM patients WHERE org_id=$1::uuid AND lower(regexp_replace(trim(concat_ws(' ',first_name,last_name)), '\\s+', ' ', 'g'))=lower($2) AND COALESCE(date_of_birth,dob)=$3::date ORDER BY updated_at DESC,created_at DESC", org_id, ' '.join(f'{payload.first_name} {payload.last_name}'.split()), payload.date_of_birth)
+    candidates = await _all(conn, "SELECT id,phone,email,address_line1,address_line2,city,state,zip_code,address FROM patients WHERE org_id=$1::uuid AND lower(regexp_replace(trim(concat_ws(' ',first_name,last_name)), '\\s+', ' ', 'g'))=lower($2) AND (($3::date IS NOT NULL AND COALESCE(date_of_birth,dob)=$3::date) OR ($3::date IS NULL AND COALESCE(date_of_birth,dob) IS NULL)) ORDER BY updated_at DESC,created_at DESC", org_id, ' '.join(f'{payload.first_name} {payload.last_name}'.split()), payload.date_of_birth)
     if not candidates:
         # A spelling/DOB mismatch on an existing contact goes to review instead
         # of silently manufacturing another patient chart.
@@ -256,6 +256,8 @@ async def _resolve_patient(conn, payload: MckIntakePayload, org_id: str) -> dict
         raise IdentityConflict('More than one SPEAR patient matches the submitted identity')
     if len(candidates) > 1:
         raise IdentityConflict('Multiple SPEAR patients share the submitted name and DOB; phone or email must match')
+    if not payload.date_of_birth:
+        raise IdentityConflict('Incomplete identity requires a matching phone or email before linking an existing chart')
     candidate = candidates[0]
     if _candidate_has_conflict(candidate, payload):
         raise IdentityConflict('The submitted phone or email conflicts with the existing SPEAR patient')
@@ -364,8 +366,6 @@ async def _reuse_mck_order(conn, order, payload, org_id, record_id):
     return {'patient_id': str(order['patient_id']), 'order_id': str(order['id']), 'physician_id': str(order['physician_id']) if order.get('physician_id') else None, 'record_id': canonical, 'idempotent_replay': True}
 
 async def _spear_upsert(db, payload: MckIntakePayload, *, org_id: str, record_id: str) -> dict[str, Any]:
-    if not payload.date_of_birth:
-        raise ValueError('DOB is required to create or reconcile the SPEAR patient')
     async with db.connection() as conn:
         await conn.execute('BEGIN')
         try:
@@ -391,7 +391,7 @@ async def _spear_upsert(db, payload: MckIntakePayload, *, org_id: str, record_id
             physician_id = await _upsert_physician(conn, payload)
             order_id = str(uuid.uuid4())
             received_at = datetime.now(timezone.utc).isoformat()
-            clinical = {'mck_record_id': record_id, 'source_reference': payload.source_reference, 'due_date': payload.due_date, 'medicaid_reported': payload.medicaid, 'items_requested': payload.items_requested, 'provider_name_as_submitted': payload.provider_name, 'provider_practice_as_submitted': payload.provider_practice, 'provider_phone_as_submitted': payload.provider_phone, 'provider_fax_as_submitted': payload.provider_fax}
+            clinical = {'mck_record_id': record_id, 'source_reference': payload.source_reference, 'due_date': payload.due_date, 'medicaid_reported': payload.medicaid, 'items_requested': payload.items_requested, 'provider_name_as_submitted': payload.provider_name, 'provider_practice_as_submitted': payload.provider_practice, 'provider_phone_as_submitted': payload.provider_phone, 'provider_fax_as_submitted': payload.provider_fax, 'intake_outstanding': _outstanding(payload)}
             intake_payload = {**clinical, '_intake_received_at': received_at, '_intake_idempotency_key': payload.source_reference, '_processing_status': 'received'}
             await _write(conn, "INSERT INTO orders (id,org_id,order_number,patient_id,physician_id,referring_physician_npi,status,product_category,vertical,source,priority,place_of_service,clinical_notes,clinical_data,hcpcs_codes,intake_payload,source_channel,source_reference,payer_id) VALUES ($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6,'intake','Mommy Care Kit','dme','mommycarekit','normal','12',$7,$8::jsonb,'[]'::jsonb,$9::jsonb,'zoho',$10,$11)", order_id, org_id, f"MCK-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{order_id[:6].upper()}", patient_id, physician_id, payload.provider_npi, payload.notes, json.dumps(clinical, separators=(',', ':')), json.dumps(intake_payload, separators=(',', ':')), payload.source_reference, payload.payer_id)
             await _event(conn, org_id, 'mck.intake.created', {'source_reference': payload.source_reference, 'record_id': record_id, 'patient_id': patient_id, 'patient_created': patient_created, 'received_at': received_at}, order_id)
@@ -509,24 +509,18 @@ async def mck_intake(payload: MckIntakePayload, request: Request):
     outstanding = _outstanding(payload)
     results: dict[str, Any] = {'record_id': record_id, 'source_reference': payload.source_reference, 'spear': {'status': 'pending'}, 'coding': {'status': 'pending'}, 'sheet': {'status': 'pending'}, 'welcome': {'status': 'pending'}}
     spear: dict[str, Any] | None = None
-    if not payload.date_of_birth:
-        results['spear'] = {'status': 'blocked', 'missing': ['DOB']}
+    try:
+        spear = await _spear_upsert(db, payload, org_id=org_id, record_id=record_id)
+        record_id = spear['record_id']
+        results['record_id'] = record_id
+        results['spear'] = {'status': 'confirmed', **spear}
+    except IdentityConflict as exc:
+        results['spear'] = {'status': 'blocked', 'reason': str(exc)}
         async with db.connection() as conn:
-            if not await _source_event_exists(conn, org_id, 'mck.intake.spear_blocked', payload.source_reference):
-                await _event(conn, org_id, 'mck.intake.spear_blocked', {'source_reference': payload.source_reference, 'record_id': record_id, 'missing': ['DOB']})
-    else:
-        try:
-            spear = await _spear_upsert(db, payload, org_id=org_id, record_id=record_id)
-            record_id = spear['record_id']
-            results['record_id'] = record_id
-            results['spear'] = {'status': 'confirmed', **spear}
-        except IdentityConflict as exc:
-            results['spear'] = {'status': 'blocked', 'reason': str(exc)}
-            async with db.connection() as conn:
-                await _event(conn, org_id, 'mck.intake.identity_conflict', {'source_reference': payload.source_reference, 'record_id': record_id, 'reason': str(exc)})
-        except Exception as exc:
-            logger.warning('mck_intake_spear_failed source_reference_hash=%s type=%s', stable_record_id(payload.source_reference), type(exc).__name__)
-            results['spear'] = {'status': 'failed', 'error': type(exc).__name__}
+            await _event(conn, org_id, 'mck.intake.identity_conflict', {'source_reference': payload.source_reference, 'record_id': record_id, 'reason': str(exc)})
+    except Exception as exc:
+        logger.warning('mck_intake_spear_failed source_reference_hash=%s type=%s', stable_record_id(payload.source_reference), type(exc).__name__)
+        results['spear'] = {'status': 'failed', 'error': type(exc).__name__}
     async with httpx.AsyncClient(timeout=30.0) as client:
         results['coding'] = await _swo_coding(client, spear, org_id)
         try:
