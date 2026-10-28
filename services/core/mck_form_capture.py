@@ -49,7 +49,7 @@ def plan_capture(row: dict[str, Any], payload, parsed: dict[str, Any]):
     if normalized(f"{row.get('first_name', '')} {row.get('last_name', '')}") != normalized(f'{payload.first_name} {payload.last_name}'):
         raise FormCaptureError('patient_identity_conflict')
     dob = str(row.get('date_of_birth') or row.get('dob') or '')
-    if not payload.date_of_birth or dob != payload.date_of_birth:
+    if payload.date_of_birth and dob != payload.date_of_birth:
         raise FormCaptureError('patient_identity_conflict')
     changes = {}
     for field in PATIENT_FIELDS:
