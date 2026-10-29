@@ -15,7 +15,7 @@ import re
 from types import SimpleNamespace
 
 import httpx
-from business_mail import ZohoConfig, ZohoMail
+from business_mail import BusinessMailError, ZohoConfig, ZohoMail
 from mck_email_parser import SUBJECT, ParseError, parse_form
 from conveyor_api import MckIntakePayload, _one, _event, _org_id, mck_intake
 from mck_form_capture import FormCaptureError, capture_form_data
@@ -173,6 +173,13 @@ async def process_message(app, mail, client, org_id, ref, *, dry_run):
 
 async def poll_once(app, env=None):
     env = os.environ if env is None else env
+    # Startup OAuth can fail transiently. Reload the encrypted stored connection
+    # before polling instead of leaving the process unconfigured until restart.
+    if env is os.environ and not all(env.get(k) for k in
+            ('ZOHO_OAUTH_REFRESH_TOKEN', 'ZOHO_MAIL_ACCOUNT_ID', 'ZOHO_MAIL_FOLDER_ID')):
+        from zoho_bootstrap import bootstrap
+        recovery = await asyncio.to_thread(bootstrap, os.environ)
+        emit({'status': 'connection_recovery', **{'connection_status': recovery.get('status')}})
     since, ids, dry_run = settings_for(env)
     org_id = _org_id()
     db = app.state.db_pool
@@ -274,6 +281,6 @@ async def email_worker(app):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            emit({'status': 'poll_failed', 'reason': type(exc).__name__})
+            emit({'status': 'poll_failed', 'reason': type(exc).__name__, **({'detail': str(exc), 'http_status': exc.status_code} if isinstance(exc, BusinessMailError) else {})})
         if not schedule:
             await asyncio.sleep(interval)
