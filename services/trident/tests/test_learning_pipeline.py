@@ -127,6 +127,11 @@ def test_operator_and_refile_evidence_never_create_a_payer_label():
     assert record['claim_version']=='original-837'
     assert record['evidence']['training_state']=='EVIDENCE_INDEXED'
     assert 'is_denial' not in record['evidence']
+    source['workbench_data'].update({'id':'syn-refile','pcn':'SYN-1-CORRECTED','sourcePcn':'SYN-1'})
+    revised=event_record({'event':source,'org_id':ORG})
+    assert revised['claim_number']=='SYN-1-CORRECTED' and revised['claim_version']=='refile:syn-refile'
+    assert revised['evidence']['original_control_number']=='SYN-1'
+    assert revised['evidence']['original_submission']=='original-837'
 
 
 @pytest.mark.asyncio
@@ -145,6 +150,31 @@ async def test_ingestion_backfill_replay_and_late_commit_are_idempotent():
             await cur.execute("INSERT INTO ledger_events(event_id,patient_control_number,event_type) VALUES(10,'SYN-1','appeal_submitted')")
         assert (await ingest_sources(conn))['ingested']==1
         assert len(await rows(conn,'SELECT * FROM trident_feedback_ingestion'))==2
+        assert len(await rows(conn,'SELECT * FROM payment_outcomes'))==0
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE trident_feedback_ingestion SET evidence=evidence-'normalizer_version' WHERE source_key='ledger_events:20'")
+        assert (await ingest_sources(conn))['ingested']==1
+        assert len(await rows(conn,'SELECT * FROM trident_feedback_ingestion'))==2
+    finally: await close(conn)
+
+
+@pytest.mark.asyncio
+async def test_chart_packet_faxes_enter_learning_without_an_appeals_row():
+    conn=await database()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute('''CREATE TABLE spear_fax_attempts(id text,workflow text,org_id text,order_id text,
+                status text,provider_fax_id text,document_sha256 text,updated_at timestamptz DEFAULT NOW())''')
+            await cur.execute("INSERT INTO spear_fax_attempts(id,workflow,org_id,status,provider_fax_id,document_sha256) VALUES('syn-fax','appeal',%s,'accepted','syn-receipt','syn-sha')",(ORG,))
+        assert (await ingest_sources(conn))['ingested']==1
+        assert (await ingest_sources(conn))['ingested']==0
+        record=(await rows(conn,'SELECT record_kind,evidence FROM trident_feedback_ingestion'))[0]
+        assert record['record_kind']=='APPEAL_TRANSMISSION'
+        assert record['evidence']['delivery_confirmed'] is False
+        assert record['evidence']['fax_receipt']=='syn-receipt'
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE spear_fax_attempts SET status='delivered',updated_at=NOW() WHERE id='syn-fax'")
+        assert (await ingest_sources(conn))['ingested']==1
         assert len(await rows(conn,'SELECT * FROM payment_outcomes'))==0
     finally: await close(conn)
 

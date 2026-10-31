@@ -77,7 +77,7 @@ async def library(conn, org_id: str, query: str = "", codes: list[str] | None = 
         (SELECT COUNT(*) FROM payment_outcomes p WHERE p.org_id=f.org_id
            AND p.claim_number=f.claim_number) AS related_outcomes
         FROM trident_feedback_ingestion f WHERE f.org_id=%s::uuid
-        AND f.record_kind IN('APPEAL','APPEAL_PACKET','REBILL','OPERATOR_DECISION')
+        AND f.record_kind IN('APPEAL','APPEAL_PACKET','APPEAL_TRANSMISSION','REBILL','OPERATOR_DECISION')
         AND (%s='' OR STRPOS(LOWER(COALESCE(f.payer_id,'')||' '||COALESCE(f.payer_name,'')),LOWER(%s))>0
           OR f.payer_id IN(SELECT id FROM payers WHERE STRPOS(LOWER(name),LOWER(%s))>0))
         AND (cardinality(%s::text[])=0 OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(

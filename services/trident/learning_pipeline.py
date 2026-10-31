@@ -89,6 +89,7 @@ def event_record(row: dict) -> dict:
     proposed = data.get("proposed") or {}
     proposal = data.get("proposal") or {}
     evidence = {
+        "normalizer_version":2,
         "event_type": typ, "transaction_id": raw.get("stedi_transaction_id"),
         "source_hash": data.get("sourceHash") or raw.get("payload_sha256"),
         "feedback_id": data.get("feedback_id"), "source_id": data.get("sourceId"),
@@ -98,14 +99,16 @@ def event_record(row: dict) -> dict:
         "fax_receipt": detail.get("telnyx_fax_id"), "delivery_confirmed": detail.get("delivery_confirmed"),
         "hcpcs": raw.get("hcpcs") or row.get("order_hcpcs") or [], "service_dates": raw.get("dos") or [],
         "coding_changes": data.get("input"), "review_fingerprint": proposal.get("fingerprint"),
+        "original_submission":data.get("sourceTransactionId"),
+        "original_control_number":data.get("sourcePcn") or raw.get("patient_control_number"),
         "submitted_control_number": (proposed.get("claimInformation") or {}).get("patientControlNumber"),
         "training_state": "EVIDENCE_INDEXED",
     }
     return {
         "source_key": f"ledger_events:{raw['event_id']}", "org_id": row.get("org_id"),
         "order_id": data.get("orderId") or row.get("order_id"),
-        "claim_number": raw.get("patient_control_number"),
-        "claim_version": data.get("claimVersion") or data.get("sourceTransactionId") or
+        "claim_number": (data.get("pcn") or evidence["submitted_control_number"] or raw.get("patient_control_number")) if typ=="claim_diagnosis_refile" else raw.get("patient_control_number"),
+        "claim_version": data.get("claimVersion") or (f"refile:{data['id']}" if typ=="claim_diagnosis_refile" and data.get("id") else None) or data.get("sourceTransactionId") or
                          (raw.get("stedi_transaction_id") if typ == "claim_submitted" else None),
         "payer_id": row.get("payer_id"), "payer_name": raw.get("payer") or row.get("payer_name"),
         "record_kind": kind, "source_table": "ledger_events", "source_id": str(raw["event_id"]),
@@ -119,9 +122,16 @@ async def save_record(conn, record: dict) -> int:
           (source_key,org_id,order_id,claim_number,claim_version,payer_id,payer_name,
            record_kind,source_table,source_id,source_hash,evidence,occurred_at)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
-        ON CONFLICT(source_key) DO UPDATE SET org_id=EXCLUDED.org_id,
-          order_id=COALESCE(trident_feedback_ingestion.order_id,EXCLUDED.order_id),evidence=EXCLUDED.evidence
-        WHERE trident_feedback_ingestion.org_id IS NULL AND EXCLUDED.org_id IS NOT NULL
+        ON CONFLICT(source_key) DO UPDATE SET org_id=COALESCE(trident_feedback_ingestion.org_id,EXCLUDED.org_id),
+          order_id=COALESCE(trident_feedback_ingestion.order_id,EXCLUDED.order_id),
+          claim_number=EXCLUDED.claim_number,claim_version=EXCLUDED.claim_version,
+          payer_id=COALESCE(EXCLUDED.payer_id,trident_feedback_ingestion.payer_id),
+          payer_name=COALESCE(EXCLUDED.payer_name,trident_feedback_ingestion.payer_name),
+          evidence=EXCLUDED.evidence,source_hash=EXCLUDED.source_hash,ingested_at=NOW()
+        WHERE (trident_feedback_ingestion.org_id IS NULL AND EXCLUDED.org_id IS NOT NULL)
+          OR (EXCLUDED.evidence->>'normalizer_version' IS NOT NULL
+            AND COALESCE(trident_feedback_ingestion.evidence->>'normalizer_version','')<>EXCLUDED.evidence->>'normalizer_version'
+            AND (trident_feedback_ingestion.org_id IS NULL OR trident_feedback_ingestion.org_id IS NOT DISTINCT FROM EXCLUDED.org_id))
         """, tuple(record.get(k) for k in (
             "source_key", "org_id", "order_id", "claim_number", "claim_version", "payer_id", "payer_name",
             "record_kind", "source_table", "source_id", "source_hash")) +
@@ -151,6 +161,7 @@ async def _ingest_sources(conn, max_pages: int = 20) -> dict:
                 LEFT JOIN ledger_claims lc USING(patient_control_number)
                 WHERE e.event_type=ANY(%s) AND NOT EXISTS (
                   SELECT 1 FROM trident_feedback_ingestion f WHERE f.source_key='ledger_events:'||e.event_id::text
+                    AND f.evidence->>'normalizer_version'='2'
                     AND (f.org_id IS NOT NULL OR (o.org_id IS NULL AND e.workbench_data->>'orgId' IS NULL)))
                 ORDER BY e.event_id LIMIT 500
                 """, (EVENT_TYPES,))
@@ -188,6 +199,33 @@ async def _ingest_sources(conn, max_pages: int = 20) -> dict:
                 "payer_id":denial.get("payer_id") or order.get("payer_id"),"payer_name":denial.get("payer_name"),
                 "record_kind": "APPEAL_PACKET", "evidence": evidence,
                 "occurred_at": a.get("updated_at") or a.get("created_at"),
+            })
+    if await table_exists(conn,"spear_fax_attempts"):
+        # Chart-packet refaxes use the canonical dispatcher directly and need
+        # not create an appeals row. Index their actual document/receipt lineage.
+        transmissions=await rows(conn,"""SELECT to_jsonb(f) AS item,to_jsonb(o) AS order_context
+            FROM spear_fax_attempts f LEFT JOIN orders o ON o.id::text=f.order_id
+            WHERE f.workflow='appeal'"""
+        )
+        for row in transmissions:
+            item=row["item"];order=row.get("order_context") or {}
+            revision=fingerprint({k:item.get(k) for k in ("status","provider_status","provider_fax_id","provider_event_id","document_sha256","updated_at")})
+            raw_org=item.get("org_id") or order.get("org_id")
+            try:
+                org_id=str(uuid.UUID(str(raw_org)))
+            except ValueError:
+                org_id=None
+            inserted+=await save_record(conn,{
+                "source_key":f"spear_fax_attempts:{item['id']}:{revision}","source_table":"spear_fax_attempts",
+                "source_id":str(item["id"]),"source_hash":revision,"org_id":org_id,
+                "order_id":item.get("order_id"),"payer_id":order.get("payer_id"),
+                "record_kind":"APPEAL_TRANSMISSION","occurred_at":item.get("provider_occurred_at") or item.get("created_at"),
+                "evidence":{"status":item.get("status"),"provider_status":item.get("provider_status"),
+                    "fax_receipt":item.get("provider_fax_id"),"document_sha256":item.get("document_sha256"),
+                    "document_id":item.get("document_id"),"artifact_id":item.get("artifact_id"),
+                    "appeal_id":item.get("appeal_id"),"case_id":item.get("case_id"),
+                    "source_control_number":item.get("control_number"),"hcpcs":order.get("hcpcs_codes") or [],
+                    "delivery_confirmed":item.get("status")=="delivered","payer_registered":None},
             })
     result = {"state": "INGESTED", "ingested": inserted}
     await execute(conn, """INSERT INTO trident_learning_jobs(job_key,last_success_at,last_result,last_error)
