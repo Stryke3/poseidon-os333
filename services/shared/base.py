@@ -127,8 +127,8 @@ class Settings:
     billing_claim_block_duplicate_submission: bool = os.getenv("BILLING_CLAIM_BLOCK_DUPLICATE_SUBMISSION", "true").lower() == "true"
     appeal_window_days: int = int(os.getenv("APPEAL_WINDOW_DAYS", "60"))
     min_training_records: int = int(os.getenv("MIN_TRAINING_RECORDS", "25"))
-    trident_learning_mode: str = os.getenv("TRIDENT_LEARNING_MODE", "continuous").lower()
-    trident_learning_interval_minutes: int = int(os.getenv("TRIDENT_LEARNING_INTERVAL_MINUTES", "15"))
+    trident_learning_mode: str = os.getenv("TRIDENT_LEARNING_MODE", "weekly").lower()
+    trident_learning_interval_minutes: int = int(os.getenv("TRIDENT_LEARNING_INTERVAL_MINUTES", "10080"))
     trident_learning_lookback_days: int = int(os.getenv("TRIDENT_LEARNING_LOOKBACK_DAYS", "365"))
     trident_learning_auto_retrain: bool = os.getenv("TRIDENT_LEARNING_AUTO_RETRAIN", "true").lower() == "true"
 

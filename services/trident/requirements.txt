@@ -6,3 +6,4 @@ redis[asyncio]==5.2.0
 numpy==2.2.0
 scikit-learn==1.6.0
 httpx==0.28.0
+PyJWT==2.9.0

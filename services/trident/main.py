@@ -23,7 +23,7 @@ from psycopg.rows import dict_row  # type: ignore[import-untyped]
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit
 
 # Shared module: Docker has /app/shared; local uses repo/services/shared
 _shared_dir = Path("/app/shared") if Path("/app/shared").exists() else (Path(__file__).resolve().parent.parent / "shared")
@@ -46,6 +46,10 @@ try:
 except ImportError:
     from .appeals_intelligence import AppealsIntelligenceRuntime, build_artifact
 
+from learning_pipeline import (ensure_schema, ingest_sources, index_outcomes, json_safe,
+    outcome_record, fingerprint, rows as pipeline_rows, execute as pipeline_execute)
+from library_api import authorize as authorize_learning, library as learning_library
+
 # ---------------------------------------------------------------------------
 app = create_app(
     title="POSEIDON Trident Intelligence Engine",
@@ -53,7 +57,7 @@ app = create_app(
     description="ML denial prediction, medical necessity scoring, billing optimization",
 )
 
-MODELS_DIR = Path("/app/models")
+MODELS_DIR = Path(os.getenv("TRIDENT_MODELS_DIR", "/app/models"))
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 HISTORICAL_DATA_DIR = Path(__file__).resolve().parent / "Historical_Model_Data"
 TRIDENT_MODEL_PATH = MODELS_DIR / "trident_denial_model.pkl"
@@ -82,16 +86,7 @@ async def exec_write(conn, query: str, *params) -> int:
 
 
 def _serialize(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {k: _serialize(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_serialize(v) for v in value]
-    if hasattr(value, "isoformat"):
-        try:
-            return value.isoformat()
-        except Exception:
-            return str(value)
-    return value
+    return json_safe(value)
 
 # ---------------------------------------------------------------------------
 # Payer Rules â€” 19 major payers
@@ -579,10 +574,17 @@ async def get_diagnosis_weights():
 
 
 @app.get("/model/status")
-async def model_status():
+async def model_status(request: Request):
     # Must point at the artifact _train_trident_model actually writes
     # (was "denial_predictor.pkl", so model_exists was always false).
     model_file = TRIDENT_MODEL_PATH
+    async with request.app.state.db_pool.connection() as conn:
+        ready=await pipeline_rows(conn,"SELECT to_regclass('trident_model_artifacts') IS NOT NULL AS ready")
+        stored=await pipeline_rows(conn,"SELECT model_version,metadata,created_at FROM trident_model_artifacts ORDER BY created_at DESC LIMIT 1") if ready[0]["ready"] else []
+    if stored:
+        return {"model_exists":True,"storage":"postgres","model_version":stored[0]["model_version"],
+                "last_modified":json_safe(stored[0]["created_at"]),"metadata":stored[0]["metadata"],
+                "payers_configured":len(PAYER_RULES),"diagnosis_codes_mapped":len(DIAGNOSIS_WEIGHTS)}
     return {
         "model_exists": model_file.exists(),
         "model_path": str(model_file),
@@ -719,75 +721,67 @@ def _feature_dict_from_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _train_trident_model(conn, trigger_type: str = "manual") -> dict[str, Any]:
-    rows = [dict(row) for row in await fetch_all(
-        conn,
-        """
-        SELECT payer_id, hcpcs_code, icd10_code, billed_amount, is_denial, date_of_service
-        FROM payment_outcomes
+    await ensure_schema(conn)
+    await index_outcomes(conn)
+    data = [dict(row["item"]) for row in await pipeline_rows(conn, """
+        SELECT to_jsonb(p) AS item FROM payment_outcomes p
         WHERE payer_id IS NOT NULL AND hcpcs_code IS NOT NULL
+          AND is_denial IS NOT NULL AND adjudicated_at IS NOT NULL
+        ORDER BY id
         """
     )]
-    if len(rows) < 10:
-        result = {
-            "model_version": None,
-            "records_ingested": len(rows),
-            "records_labeled": len(rows),
-            "accuracy_after": None,
-            "status": "insufficient_data",
-        }
-        await exec_write(
-            conn,
-            """
-            INSERT INTO trident_training_ledger (training_run_id, trigger_type, records_ingested, records_labeled, status, completed_at)
-            VALUES ($1,$2,$3,$4,$5,NOW())
-            """,
-            str(uuid.uuid4()),
-            trigger_type,
-            len(rows),
-            len(rows),
-            "insufficient_data",
-        )
-        return result
-
-    dataset = []
-    labels = []
-    for row in rows:
-        dataset.append(_feature_dict_from_row(row))
-        labels.append(1 if row.get("is_denial") else 0)
-    vectorizer = DictVectorizer(sparse=False)
-    x = vectorizer.fit_transform(dataset)
+    run_id = str(uuid.uuid4())
+    labels = [int(row["is_denial"]) for row in data]
+    groups = [str(row.get("org_id"))+":"+str(row.get("order_id") or row.get("claim_number") or row["id"]) for row in data]
+    if len(data) < max(10, settings.min_training_records) or len(set(labels)) < 2 or len(set(groups)) < 4:
+        await exec_write(conn, """
+            INSERT INTO trident_training_ledger(training_run_id,trigger_type,records_ingested,records_labeled,status,completed_at)
+            VALUES($1,$2,$3,$4,'insufficient_data',NOW())
+            """, run_id,trigger_type,len(data),len(data))
+        return {"status":"insufficient_data","training_run_id":run_id,"record_count":len(data),"model_version":None}
+    features = [_feature_dict_from_row(row) for row in data]
     y = np.array(labels)
-    if len(set(labels)) < 2:
-        accuracy = 1.0
-        model = None
-    else:
-        x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.25, random_state=42)
-        model = GradientBoostingClassifier(random_state=42)
-        model.fit(x_train, y_train)
-        accuracy = float(accuracy_score(y_test, model.predict(x_test)))
-    model_version = f"trident-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-    artifact = {"model": model, "vectorizer": vectorizer, "version": model_version, "trained_at": datetime.now(timezone.utc).isoformat(), "record_count": len(rows), "accuracy": accuracy}
-    with TRIDENT_MODEL_PATH.open("wb") as fh:
-        pickle.dump(artifact, fh)
-    await exec_write(
-        conn,
-        """
-        INSERT INTO trident_training_ledger (
-            training_run_id, trigger_type, records_ingested, records_labeled, model_version,
-            accuracy_before, accuracy_after, accuracy_delta, status, completed_at
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'completed',NOW())
-        """,
-        str(uuid.uuid4()),
-        trigger_type,
-        len(rows),
-        len(rows),
-        model_version,
-        None,
-        accuracy,
-        None,
-    )
-    return artifact
+    train_indices, test_indices = next(GroupShuffleSplit(n_splits=1,test_size=0.25,random_state=42).split(features,y,groups))
+    if len(set(y[train_indices])) < 2 or len(set(y[test_indices])) < 2:
+        return {"status":"insufficient_class_diversity","record_count":len(data),"model_version":None}
+    evaluation_vectorizer = DictVectorizer(sparse=False)
+    evaluation_model = GradientBoostingClassifier(random_state=42)
+    evaluation_model.fit(evaluation_vectorizer.fit_transform([features[i] for i in train_indices]),y[train_indices])
+    accuracy = float(accuracy_score(y[test_indices],evaluation_model.predict(
+        evaluation_vectorizer.transform([features[i] for i in test_indices]))))
+    # Evaluate on separate claim/order groups, then fit the published artifact on
+    # the full labeled dataset. Outcome fields never enter the feature dictionary.
+    vectorizer = DictVectorizer(sparse=False)
+    model = GradientBoostingClassifier(random_state=42)
+    model.fit(vectorizer.fit_transform(features),y)
+    model_version = f"trident-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{run_id[:8]}"
+    metadata = {"status":"completed","version":model_version,"model_version":model_version,
+        "training_run_id":run_id,"trained_at":datetime.now(timezone.utc).isoformat(),
+        "record_count":len(data),"accuracy":accuracy,"evaluation":"claim-group holdout",
+        "training_groups":len(set(groups)),"evaluation_records":len(test_indices),
+        "dataset_hash":fingerprint([outcome_record(row)["source_key"] for row in data])}
+    artifact = {**metadata,"model":model,"vectorizer":vectorizer}
+    # The artifact and exact source membership commit with the completed ledger.
+    # No model/vectorizer object ever enters JSON responses or Redis.
+    await pipeline_execute(conn,"""INSERT INTO trident_model_artifacts(model_version,training_run_id,artifact,metadata)
+        VALUES(%s,%s,%s,%s::jsonb)""",(model_version,run_id,pickle.dumps(artifact),json.dumps(metadata)))
+    async with conn.cursor() as cur:
+        await cur.executemany("""INSERT INTO trident_training_membership(training_run_id,model_version,source_key,label,feature_hash)
+            VALUES(%s,%s,%s,%s,%s)""",[(run_id,model_version,outcome_record(row)["source_key"],
+            "DENIED" if row["is_denial"] else "ADJUDICATED",fingerprint(feature)) for row,feature in zip(data,features)])
+    await exec_write(conn,"""INSERT INTO trident_training_ledger(training_run_id,trigger_type,records_ingested,
+        records_labeled,model_version,accuracy_after,status,completed_at)
+        VALUES($1,$2,$3,$4,$5,$6,'completed',NOW())""",run_id,trigger_type,len(data),len(data),model_version,accuracy)
+    return metadata
+
+
+async def _durable_model(conn) -> dict[str, Any] | None:
+    present = await pipeline_rows(conn,"SELECT to_regclass('trident_model_artifacts') IS NOT NULL AS present")
+    if present[0]["present"]:
+        stored = await pipeline_rows(conn,"SELECT artifact FROM trident_model_artifacts ORDER BY created_at DESC LIMIT 1")
+        if stored:
+            return pickle.loads(bytes(stored[0]["artifact"]))
+    return _load_trident_model()
 
 
 async def _refresh_learned_rates(conn) -> int:
@@ -802,7 +796,7 @@ async def _refresh_learned_rates(conn) -> int:
                AVG(CASE WHEN is_denial THEN 1.0 ELSE 0.0 END) AS denial_rate,
                COUNT(*) AS sample_count
         FROM payment_outcomes
-        WHERE payer_id IS NOT NULL
+        WHERE is_denial IS NOT NULL AND adjudicated_at IS NOT NULL AND payer_id IS NOT NULL
           AND hcpcs_code IS NOT NULL
           AND created_at >= NOW() - make_interval(days => $1)
         GROUP BY org_id, payer_id, hcpcs_code
@@ -870,83 +864,58 @@ async def _run_learning_sync(conn, trigger_type: str = "sync") -> dict[str, Any]
         "learning_mode": settings.trident_learning_mode,
         "learned_rates_updated": learned_rates_updated,
         "training_records": training_count,
-        "auto_retrained": auto_retrained,
+        "auto_retrained": bool(artifact and artifact.get("status")=="completed"),
         "artifact": _serialize(artifact) if artifact else None,
-        "snapshot": snapshot,
+        "snapshot": await _learning_snapshot(conn),
         "synced_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
 async def _maybe_run_learning_refresh(app) -> None:
-    """Run a continuous-learning refresh if the interval has elapsed.
-
-    Redis keys act as a cross-worker throttle/lock so multiple uvicorn
-    workers (or overlapping triggers) never run concurrent refreshes.
-    """
-    if settings.trident_learning_mode not in {"continuous", "full"}:
-        return
-    redis = getattr(app.state, "redis", None)
-    if redis is None:
-        logger.warning("Skipping Trident continuous learning refresh; Redis throttle unavailable.")
-        return
-    now = datetime.now(timezone.utc)
-    last_started_raw = await redis.get("trident:learning:last_started_at")
-    in_flight = await redis.get("trident:learning:in_flight")
-    if in_flight == "1":
-        return
-    if last_started_raw:
-        try:
-            last_started = datetime.fromisoformat(last_started_raw)
-            if (now - last_started).total_seconds() < settings.trident_learning_interval_minutes * 60:
-                return
-        except ValueError:
-            pass
-
-    await redis.set("trident:learning:in_flight", "1", ex=max(settings.trident_learning_interval_minutes * 60, 60))
-    await redis.set("trident:learning:last_started_at", now.isoformat(), ex=max(settings.trident_learning_interval_minutes * 120, 120))
-
-    async def _runner() -> None:
-        try:
-            db = app.state.db_pool
-            async with db.connection() as conn:
-                result = await _run_learning_sync(conn, "continuous_refresh")
-            await redis.set("trident:learning:last_success_at", datetime.now(timezone.utc).isoformat())
-            await redis.set("trident:learning:last_result", json.dumps(_serialize(result)), ex=max(settings.trident_learning_interval_minutes * 240, 600))
-        except Exception:
-            logger.exception("Trident continuous learning refresh failed")
-        finally:
-            await redis.delete("trident:learning:in_flight")
-
-    asyncio.create_task(_runner())
+    # PostgreSQL serializes workers even when Redis is unavailable. Source
+    # ingestion is independent of the weekly model-training cadence.
+    async with app.state.db_pool.connection() as conn:
+        lock = await pipeline_rows(conn,"SELECT pg_try_advisory_xact_lock(817260032) AS acquired")
+        if not lock[0]["acquired"]:
+            return
+        await ensure_schema(conn)
+        await ingest_sources(conn)
+        await index_outcomes(conn)
+        if settings.trident_learning_mode not in {"weekly","continuous","full"}:
+            return
+        latest = await pipeline_rows(conn,"""SELECT MAX(completed_at) AS at FROM trident_training_ledger
+            WHERE status='completed'"""
+        )
+        last = latest[0]["at"]
+        interval = 10080 if settings.trident_learning_mode=="weekly" else max(1,settings.trident_learning_interval_minutes)
+        if last and (datetime.now(timezone.utc)-last).total_seconds()<interval*60:
+            return
+        result = await _run_learning_sync(conn,"weekly_refresh" if settings.trident_learning_mode=="weekly" else "continuous_refresh")
+        encoded = json.dumps(json_safe(result))
+        await pipeline_execute(conn,"""INSERT INTO trident_learning_jobs(job_key,last_success_at,last_result,last_error)
+            VALUES('model_training',NOW(),%s::jsonb,NULL) ON CONFLICT(job_key) DO UPDATE
+            SET last_success_at=NOW(),last_result=EXCLUDED.last_result,last_error=NULL""",(encoded,))
+    # Bookkeeping follows the successful database commit and JSON conversion.
+    await cache_set(app.state,"trident:learning:last_result",encoded,ttl=1209600)
+    await cache_set(app.state,"trident:learning:last_success_at",datetime.now(timezone.utc).isoformat())
 
 
 async def _maybe_schedule_learning_refresh(request: Request) -> None:
-    # Kept for request-triggered refreshes (e.g. scoring traffic); the real
-    # guarantee now comes from the background loop below.
-    await _maybe_run_learning_refresh(request.app)
+    # Scoring always uses the existing model; reads never start training.
+    return None
 
 
 async def _continuous_learning_loop(app) -> None:
-    """True scheduler for continuous learning.
-
-    Previously refreshes only piggybacked on scoring requests, so with zero
-    traffic the 15-minute retrain silently never fired. This loop runs under
-    the app lifespan and checks every 60s; the Redis throttle inside
-    _maybe_run_learning_refresh enforces the configured interval and keeps
-    multiple workers from double-running.
-    """
-    await asyncio.sleep(15)  # let connections settle after startup
     while True:
         try:
             await _maybe_run_learning_refresh(app)
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Trident continuous learning loop iteration failed")
-        await asyncio.sleep(60)
+            logger.exception("TRIDENT feedback ingestion or scheduled training failed")
+        await asyncio.sleep(300)
 
 
-# Registered here (import time) so shared.base's lifespan starts it on boot.
 app.service_background_tasks = [_continuous_learning_loop]
 
 
@@ -991,7 +960,7 @@ async def _trident_score(conn, payload: CanonicalScoreRequest) -> dict[str, Any]
             "patient_age_bucket": _age_bucket(payload.patient_age),
         }
     )
-    artifact = _load_trident_model()
+    artifact = await _durable_model(conn)
     if artifact and artifact.get("model") is not None:
         denial_probability = float(artifact["model"].predict_proba(artifact["vectorizer"].transform([feature]))[0][1])
     else:
@@ -1044,8 +1013,14 @@ async def v1_trident_score(payload: CanonicalScoreRequest, request: Request):
 
 @app.post("/api/v1/trident/retrain")
 async def v1_trident_retrain(request: Request):
+    authorize_learning(request,write=True)
     db = request.app.state.db_pool
     async with db.connection() as conn:
+        lock = await pipeline_rows(conn,"SELECT pg_try_advisory_xact_lock(817260032) AS acquired")
+        if not lock[0]["acquired"]:
+            raise HTTPException(409,"A training or ingestion run is already active")
+        await ensure_schema(conn)
+        await ingest_sources(conn,max_pages=100)
         artifact = await _train_trident_model(conn, "manual")
         await _refresh_learned_rates(conn)
     return _serialize(artifact)
@@ -1053,6 +1028,10 @@ async def v1_trident_retrain(request: Request):
 
 @app.post("/api/v1/trident/feedback")
 async def v1_trident_feedback(payload: FeedbackPayload, request: Request):
+    org_id=authorize_learning(request,write=True)
+    if payload.org_id and payload.org_id!=org_id:
+        raise HTTPException(403,"Organization does not match the signed session")
+    payload.org_id=org_id
     db = request.app.state.db_pool
     threshold = settings.min_training_records
     async with db.connection() as conn:
@@ -1085,19 +1064,7 @@ async def v1_trident_feedback(payload: FeedbackPayload, request: Request):
             payload.date_of_service,
         )
         await _refresh_learned_rates(conn)
-        recent = await fetch_one(
-            conn,
-            """
-            SELECT COUNT(*) AS count
-            FROM payment_outcomes
-            WHERE created_at >= NOW() - INTERVAL '1 day'
-            """,
-        )
-        auto_retrained = False
-        if int((recent or {}).get("count") or 0) >= threshold:
-            await _train_trident_model(conn, "feedback_threshold")
-            auto_retrained = True
-    return {"status": "recorded", "auto_retrained": auto_retrained}
+    return {"status":"recorded","auto_retrained":False,"training_state":"AWAITING_WEEKLY_TRAINING"}
 
 
 @app.get("/api/v1/trident/payer-rules/{payer_id}")
@@ -1124,7 +1091,7 @@ async def v1_trident_score_batch(payload: list[CanonicalScoreRequest], request: 
 async def v1_trident_forecast(request: Request):
     db = request.app.state.db_pool
     async with db.connection() as conn:
-        artifact = _load_trident_model()
+        artifact = await _durable_model(conn)
         open_orders = [dict(row) for row in await fetch_all(
             conn,
             """
@@ -1193,11 +1160,18 @@ async def v1_trident_learning_status(request: Request):
 
 @app.post("/api/v1/trident/learning-sync")
 async def v1_trident_learning_sync(request: Request):
+    authorize_learning(request,write=True)
     db = request.app.state.db_pool
     async with db.connection() as conn:
+        lock = await pipeline_rows(conn,"SELECT pg_try_advisory_xact_lock(817260032) AS acquired")
+        if not lock[0]["acquired"]:
+            raise HTTPException(409,"A training or ingestion run is already active")
+        await ensure_schema(conn)
+        await ingest_sources(conn,max_pages=100)
         result = await _run_learning_sync(conn, "manual_sync")
-    await cache_set(request.app.state, "trident:learning:last_success_at", datetime.now(timezone.utc).isoformat())
-    await cache_set(request.app.state, "trident:learning:last_result", json.dumps(_serialize(result)), ttl=max(settings.trident_learning_interval_minutes * 240, 600))
+    encoded = json.dumps(json_safe(result))
+    await cache_set(request.app.state,"trident:learning:last_result",encoded,ttl=1209600)
+    await cache_set(request.app.state,"trident:learning:last_success_at",datetime.now(timezone.utc).isoformat())
     return _serialize(result)
 
 
@@ -1216,3 +1190,30 @@ async def v1_trident_code_map(icd10: str, request: Request):
             icd10,
         )]
     return {"icd10": icd10, "matches": _serialize(rows)}
+
+
+@app.get("/api/v1/trident/library")
+async def trident_library(request: Request, query: str = ""):
+    org_id = authorize_learning(request)
+    async with request.app.state.db_pool.connection() as conn:
+        payload = await learning_library(conn,org_id,query,request.query_params.getlist("code"),bool(request.state.trident_case_access))
+        latest = await fetch_one(conn,"SELECT MAX(completed_at) AS at FROM trident_training_ledger WHERE status='completed'")
+    last = (latest or {}).get("at")
+    return {**payload,"schedule":{"cadence":settings.trident_learning_mode,
+        "interval_minutes":10080 if settings.trident_learning_mode=="weekly" else settings.trident_learning_interval_minutes,
+        "last_trained_at":json_safe(last),
+        "next_training_at":json_safe(last+timedelta(days=7)) if last and settings.trident_learning_mode=="weekly" else None}}
+
+
+@app.post("/api/v1/trident/backfill")
+async def trident_backfill(request: Request):
+    authorize_learning(request,write=True)
+    async with request.app.state.db_pool.connection() as conn:
+        await ensure_schema(conn)
+        ingestion = await ingest_sources(conn,max_pages=100)
+        if ingestion["state"]=="BUSY":
+            raise HTTPException(409,"An evidence sync is already active")
+        outcomes = await index_outcomes(conn)
+    # Backfill only indexes source evidence. The explicit retrain endpoint can
+    # then prove this dataset's membership without resending a claim or appeal.
+    return {**ingestion,"outcomes_indexed":outcomes,"training_state":"AWAITING_WEEKLY_TRAINING"}
