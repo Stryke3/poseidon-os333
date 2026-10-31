@@ -113,7 +113,9 @@ async def close(conn):
 
 def test_json_metadata_rejects_model_objects():
     from decimal import Decimal
-    assert json.loads(json.dumps(json_safe({'accuracy':Decimal('.5'),'at':datetime.now(timezone.utc)})))['accuracy']==.5
+    identifier=uuid.uuid4()
+    encoded=json.loads(json.dumps(json_safe({'accuracy':Decimal('.5'),'at':datetime.now(timezone.utc),'run':identifier})))
+    assert encoded['accuracy']==.5 and encoded['run']==str(identifier)
     with pytest.raises(TypeError): json_safe({'model':object()})
 
 

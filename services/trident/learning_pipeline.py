@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -30,6 +31,8 @@ def json_safe(value: Any) -> Any:
         return [json_safe(v) for v in value]
     if isinstance(value, (datetime, date)):
         return value.isoformat()
+    if isinstance(value,uuid.UUID):
+        return str(value)
     if isinstance(value, Decimal):
         return float(value)
     if value is None or isinstance(value, (str, int, float, bool)):
@@ -157,7 +160,6 @@ async def _ingest_sources(conn, max_pages: int = 20) -> dict:
                 # the order can be matched. Unattributed sources stay quarantined.
                 raw_org = (row["event"].get("workbench_data") or {}).get("orgId")
                 if raw_org:
-                    import uuid
                     try:
                         record["org_id"] = str(uuid.UUID(str(raw_org)))
                     except ValueError:
