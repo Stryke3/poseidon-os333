@@ -20,6 +20,7 @@ from mck_email_parser import SUBJECT, ParseError, parse_form
 from conveyor_api import MckIntakePayload, _one, _event, _org_id, mck_intake
 from mck_form_capture import FormCaptureError, capture_form_data
 from base import logger, settings
+from zoho_oauth import token_session
 from zoho_sheet import ZohoSheet, ZohoSheetConfig
 
 
@@ -191,7 +192,7 @@ async def poll_once(app, env=None):
         if not lock or not lock.get('locked'):
             return {'status': 'another_worker_active'}
         try:
-            async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+            async with token_session(), httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
                 mail = ZohoMail(client, ZohoConfig.from_env())
                 await mail.authenticate()
                 refs = await candidates(mail, since, ids)

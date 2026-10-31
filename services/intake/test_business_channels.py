@@ -7,10 +7,13 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "shared"))
+from zoho_oauth import access_token, token_session
 from business_mail import BusinessMailError, ZohoConfig, ZohoMail
 from dropbox_archive import DropboxArchive, DropboxConfig, content_hash
 
@@ -21,6 +24,28 @@ BOX = DropboxConfig("client", "secret", "refresh", "789", "/2. SFM/Test Intake")
 
 def ok(data=None, **kwargs):
     return httpx.Response(200, json={"status": {"code": 200}, "data": data, **kwargs})
+
+
+class SweepTokenTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reuse_is_scoped_to_grant_and_sweep_and_expires(self):
+        def response(token):
+            return SimpleNamespace(is_error=False, json=lambda: {"access_token": token, "expires_in": 3600})
+
+        client = SimpleNamespace(post=AsyncMock(side_effect=[
+            response("mail"), response("sheet"), response("renewed"), response("next-sweep")]))
+        config = dict(accounts_origin="https://accounts.zoho.com", client_id="id", client_secret="secret")
+        mail = SimpleNamespace(**config, refresh_token="shared-grant")
+        sheet = SimpleNamespace(**config, refresh_token="dedicated-grant")
+        with patch("zoho_oauth.monotonic", return_value=0) as clock:
+            async with token_session():
+                self.assertEqual(await access_token(client, mail), "mail")
+                self.assertEqual(await access_token(client, mail), "mail")
+                self.assertEqual(await access_token(client, sheet), "sheet")
+                clock.return_value = 3550
+                self.assertEqual(await access_token(client, mail), "renewed")
+            async with token_session():
+                self.assertEqual(await access_token(client, mail), "next-sweep")
+        self.assertEqual(client.post.await_count, 4)
 
 
 class MailTests(unittest.IsolatedAsyncioTestCase):
