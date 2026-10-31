@@ -56,7 +56,9 @@ async def execute(conn, query: str, params=()):
 
 async def ensure_schema(conn):
     # Run before ingestion/training on startup, never from an unauthenticated read.
-    await execute(conn, Path(__file__).with_name("learning_schema.sql").read_text())
+    async with conn.transaction():
+        await rows(conn,"SELECT pg_advisory_xact_lock(817260030)")
+        await execute(conn, Path(__file__).with_name("learning_schema.sql").read_text())
 
 
 async def table_exists(conn, name: str) -> bool:
@@ -124,6 +126,11 @@ async def save_record(conn, record: dict) -> int:
 
 
 async def ingest_sources(conn, max_pages: int = 20) -> dict:
+    async with conn.transaction():
+        return await _ingest_sources(conn,max_pages)
+
+
+async def _ingest_sources(conn, max_pages: int = 20) -> dict:
     """Anti-join receipts rather than a high-water mark: late source commits
     remain discoverable even when their sequence id precedes an earlier page."""
     lock = await rows(conn, "SELECT pg_try_advisory_xact_lock(817260031) AS acquired")

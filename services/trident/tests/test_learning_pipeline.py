@@ -34,6 +34,8 @@ class Cursor:
     async def __aenter__(self): return self
     async def __aexit__(self,*args): pass
     async def execute(self,sql,params=()):
+        if 'advisory_xact_lock' in sql and not self.conn.depth:
+            raise AssertionError('Transaction-scoped locks require an explicit transaction on the production autocommit pool')
         request=json.dumps({'sql':sql,'params':params},default=lambda v:{'__bytes':base64.b64encode(v).decode()} if isinstance(v,bytes) else str(v))
         self.conn.process.stdin.write((request+'\n').encode()); await self.conn.process.stdin.drain()
         response=json.loads(await self.conn.process.stdout.readline())
@@ -52,10 +54,25 @@ class Cursor:
 
 
 class Connection:
-    def __init__(self,process): self.process=process
+    def __init__(self,process): self.process=process;self.depth=0
     def cursor(self,**kwargs): return Cursor(self)
+    def transaction(self): return Transaction(self)
     async def __aenter__(self): return self
     async def __aexit__(self,*args): pass
+
+
+class Transaction:
+    def __init__(self,conn): self.conn=conn;self.name=''
+    async def __aenter__(self):
+        self.name=f'test_savepoint_{self.conn.depth}'
+        async with self.conn.cursor() as cur:
+            await cur.execute('BEGIN' if self.conn.depth==0 else 'SAVEPOINT '+self.name)
+        self.conn.depth+=1
+    async def __aexit__(self,typ,*args):
+        self.conn.depth-=1
+        async with self.conn.cursor() as cur:
+            await cur.execute(('ROLLBACK' if typ else 'COMMIT') if self.conn.depth==0 else
+                              ('ROLLBACK TO SAVEPOINT ' if typ else 'RELEASE SAVEPOINT ')+self.name)
 
 
 SCHEMA='''

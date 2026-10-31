@@ -721,58 +721,59 @@ def _feature_dict_from_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _train_trident_model(conn, trigger_type: str = "manual") -> dict[str, Any]:
-    await ensure_schema(conn)
-    await index_outcomes(conn)
-    data = [dict(row["item"]) for row in await pipeline_rows(conn, """
-        SELECT to_jsonb(p) AS item FROM payment_outcomes p
-        WHERE payer_id IS NOT NULL AND hcpcs_code IS NOT NULL
-          AND is_denial IS NOT NULL AND adjudicated_at IS NOT NULL
-        ORDER BY id
-        """
-    )]
-    run_id = str(uuid.uuid4())
-    labels = [int(row["is_denial"]) for row in data]
-    groups = [str(row.get("org_id"))+":"+str(row.get("order_id") or row.get("claim_number") or row["id"]) for row in data]
-    if len(data) < max(10, settings.min_training_records) or len(set(labels)) < 2 or len(set(groups)) < 4:
-        await exec_write(conn, """
-            INSERT INTO trident_training_ledger(training_run_id,trigger_type,records_ingested,records_labeled,status,completed_at)
-            VALUES($1,$2,$3,$4,'insufficient_data',NOW())
-            """, run_id,trigger_type,len(data),len(data))
-        return {"status":"insufficient_data","training_run_id":run_id,"record_count":len(data),"model_version":None}
-    features = [_feature_dict_from_row(row) for row in data]
-    y = np.array(labels)
-    train_indices, test_indices = next(GroupShuffleSplit(n_splits=1,test_size=0.25,random_state=42).split(features,y,groups))
-    if len(set(y[train_indices])) < 2 or len(set(y[test_indices])) < 2:
-        return {"status":"insufficient_class_diversity","record_count":len(data),"model_version":None}
-    evaluation_vectorizer = DictVectorizer(sparse=False)
-    evaluation_model = GradientBoostingClassifier(random_state=42)
-    evaluation_model.fit(evaluation_vectorizer.fit_transform([features[i] for i in train_indices]),y[train_indices])
-    accuracy = float(accuracy_score(y[test_indices],evaluation_model.predict(
-        evaluation_vectorizer.transform([features[i] for i in test_indices]))))
-    # Evaluate on separate claim/order groups, then fit the published artifact on
-    # the full labeled dataset. Outcome fields never enter the feature dictionary.
-    vectorizer = DictVectorizer(sparse=False)
-    model = GradientBoostingClassifier(random_state=42)
-    model.fit(vectorizer.fit_transform(features),y)
-    model_version = f"trident-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{run_id[:8]}"
-    metadata = {"status":"completed","version":model_version,"model_version":model_version,
-        "training_run_id":run_id,"trained_at":datetime.now(timezone.utc).isoformat(),
-        "record_count":len(data),"accuracy":accuracy,"evaluation":"claim-group holdout",
-        "training_groups":len(set(groups)),"evaluation_records":len(test_indices),
-        "dataset_hash":fingerprint([outcome_record(row)["source_key"] for row in data])}
-    artifact = {**metadata,"model":model,"vectorizer":vectorizer}
-    # The artifact and exact source membership commit with the completed ledger.
-    # No model/vectorizer object ever enters JSON responses or Redis.
-    await pipeline_execute(conn,"""INSERT INTO trident_model_artifacts(model_version,training_run_id,artifact,metadata)
-        VALUES(%s,%s,%s,%s::jsonb)""",(model_version,run_id,pickle.dumps(artifact),json.dumps(metadata)))
-    async with conn.cursor() as cur:
-        await cur.executemany("""INSERT INTO trident_training_membership(training_run_id,model_version,source_key,label,feature_hash)
-            VALUES(%s,%s,%s,%s,%s)""",[(run_id,model_version,outcome_record(row)["source_key"],
-            "DENIED" if row["is_denial"] else "ADJUDICATED",fingerprint(feature)) for row,feature in zip(data,features)])
-    await exec_write(conn,"""INSERT INTO trident_training_ledger(training_run_id,trigger_type,records_ingested,
-        records_labeled,model_version,accuracy_after,status,completed_at)
-        VALUES($1,$2,$3,$4,$5,$6,'completed',NOW())""",run_id,trigger_type,len(data),len(data),model_version,accuracy)
-    return metadata
+    async with conn.transaction():
+        await ensure_schema(conn)
+        await index_outcomes(conn)
+        data = [dict(row["item"]) for row in await pipeline_rows(conn, """
+            SELECT to_jsonb(p) AS item FROM payment_outcomes p
+            WHERE payer_id IS NOT NULL AND hcpcs_code IS NOT NULL
+              AND is_denial IS NOT NULL AND adjudicated_at IS NOT NULL
+            ORDER BY id
+            """
+        )]
+        run_id = str(uuid.uuid4())
+        labels = [int(row["is_denial"]) for row in data]
+        groups = [str(row.get("org_id"))+":"+str(row.get("order_id") or row.get("claim_number") or row["id"]) for row in data]
+        if len(data) < max(10, settings.min_training_records) or len(set(labels)) < 2 or len(set(groups)) < 4:
+            await exec_write(conn, """
+                INSERT INTO trident_training_ledger(training_run_id,trigger_type,records_ingested,records_labeled,status,completed_at)
+                VALUES($1,$2,$3,$4,'insufficient_data',NOW())
+                """, run_id,trigger_type,len(data),len(data))
+            return {"status":"insufficient_data","training_run_id":run_id,"record_count":len(data),"model_version":None}
+        features = [_feature_dict_from_row(row) for row in data]
+        y = np.array(labels)
+        train_indices, test_indices = next(GroupShuffleSplit(n_splits=1,test_size=0.25,random_state=42).split(features,y,groups))
+        if len(set(y[train_indices])) < 2 or len(set(y[test_indices])) < 2:
+            return {"status":"insufficient_class_diversity","record_count":len(data),"model_version":None}
+        evaluation_vectorizer = DictVectorizer(sparse=False)
+        evaluation_model = GradientBoostingClassifier(random_state=42)
+        evaluation_model.fit(evaluation_vectorizer.fit_transform([features[i] for i in train_indices]),y[train_indices])
+        accuracy = float(accuracy_score(y[test_indices],evaluation_model.predict(
+            evaluation_vectorizer.transform([features[i] for i in test_indices]))))
+        # Evaluate on separate claim/order groups, then fit the published artifact on
+        # the full labeled dataset. Outcome fields never enter the feature dictionary.
+        vectorizer = DictVectorizer(sparse=False)
+        model = GradientBoostingClassifier(random_state=42)
+        model.fit(vectorizer.fit_transform(features),y)
+        model_version = f"trident-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{run_id[:8]}"
+        metadata = {"status":"completed","version":model_version,"model_version":model_version,
+            "training_run_id":run_id,"trained_at":datetime.now(timezone.utc).isoformat(),
+            "record_count":len(data),"accuracy":accuracy,"evaluation":"claim-group holdout",
+            "training_groups":len(set(groups)),"evaluation_records":len(test_indices),
+            "dataset_hash":fingerprint([outcome_record(row)["source_key"] for row in data])}
+        artifact = {**metadata,"model":model,"vectorizer":vectorizer}
+        # The artifact and exact source membership commit with the completed ledger.
+        # No model/vectorizer object ever enters JSON responses or Redis.
+        await pipeline_execute(conn,"""INSERT INTO trident_model_artifacts(model_version,training_run_id,artifact,metadata)
+            VALUES(%s,%s,%s,%s::jsonb)""",(model_version,run_id,pickle.dumps(artifact),json.dumps(metadata)))
+        async with conn.cursor() as cur:
+            await cur.executemany("""INSERT INTO trident_training_membership(training_run_id,model_version,source_key,label,feature_hash)
+                VALUES(%s,%s,%s,%s,%s)""",[(run_id,model_version,outcome_record(row)["source_key"],
+                "DENIED" if row["is_denial"] else "ADJUDICATED",fingerprint(feature)) for row,feature in zip(data,features)])
+        await exec_write(conn,"""INSERT INTO trident_training_ledger(training_run_id,trigger_type,records_ingested,
+            records_labeled,model_version,accuracy_after,status,completed_at)
+            VALUES($1,$2,$3,$4,$5,$6,'completed',NOW())""",run_id,trigger_type,len(data),len(data),model_version,accuracy)
+        return metadata
 
 
 async def _durable_model(conn) -> dict[str, Any] | None:
@@ -874,7 +875,7 @@ async def _run_learning_sync(conn, trigger_type: str = "sync") -> dict[str, Any]
 async def _maybe_run_learning_refresh(app) -> None:
     # PostgreSQL serializes workers even when Redis is unavailable. Source
     # ingestion is independent of the weekly model-training cadence.
-    async with app.state.db_pool.connection() as conn:
+    async with app.state.db_pool.connection() as conn, conn.transaction():
         lock = await pipeline_rows(conn,"SELECT pg_try_advisory_xact_lock(817260032) AS acquired")
         if not lock[0]["acquired"]:
             return
@@ -1015,7 +1016,7 @@ async def v1_trident_score(payload: CanonicalScoreRequest, request: Request):
 async def v1_trident_retrain(request: Request):
     authorize_learning(request,write=True)
     db = request.app.state.db_pool
-    async with db.connection() as conn:
+    async with db.connection() as conn, conn.transaction():
         lock = await pipeline_rows(conn,"SELECT pg_try_advisory_xact_lock(817260032) AS acquired")
         if not lock[0]["acquired"]:
             raise HTTPException(409,"A training or ingestion run is already active")
@@ -1162,7 +1163,7 @@ async def v1_trident_learning_status(request: Request):
 async def v1_trident_learning_sync(request: Request):
     authorize_learning(request,write=True)
     db = request.app.state.db_pool
-    async with db.connection() as conn:
+    async with db.connection() as conn, conn.transaction():
         lock = await pipeline_rows(conn,"SELECT pg_try_advisory_xact_lock(817260032) AS acquired")
         if not lock[0]["acquired"]:
             raise HTTPException(409,"A training or ingestion run is already active")
@@ -1208,7 +1209,7 @@ async def trident_library(request: Request, query: str = ""):
 @app.post("/api/v1/trident/backfill")
 async def trident_backfill(request: Request):
     authorize_learning(request,write=True)
-    async with request.app.state.db_pool.connection() as conn:
+    async with request.app.state.db_pool.connection() as conn, conn.transaction():
         await ensure_schema(conn)
         ingestion = await ingest_sources(conn,max_pages=100)
         if ingestion["state"]=="BUSY":
