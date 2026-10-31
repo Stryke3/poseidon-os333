@@ -36,7 +36,7 @@ class CaptureDbTests(unittest.IsolatedAsyncioTestCase):
         await self.pool.open()
         async with self.pool.connection() as conn:
             await conn.execute('''CREATE TABLE patients (
-                id uuid PRIMARY KEY,org_id uuid,first_name text,last_name text,
+                id uuid PRIMARY KEY,org_id uuid,mrn text,first_name text,last_name text,
                 date_of_birth date,dob date,email text,phone text,gender text,
                 address_line1 text,address_line2 text,city text,state text,zip_code text,
                 address jsonb DEFAULT '{}',created_at timestamptz DEFAULT now(),

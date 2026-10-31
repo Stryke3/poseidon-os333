@@ -9,6 +9,8 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
+from zoho_oauth import access_token
+
 
 class ZohoSheetError(RuntimeError):
     def __init__(self, message: str, status_code: int = 502):
@@ -102,20 +104,10 @@ class ZohoSheet:
 
     async def authenticate(self) -> None:
         try:
-            response = await self.client.post(
-                f"{self.config.accounts_origin}/oauth/v2/token",
-                data={
-                    "client_id": self.config.client_id,
-                    "client_secret": self.config.client_secret,
-                    "refresh_token": self.config.refresh_token,
-                    "grant_type": "refresh_token",
-                },
-            )
-            payload = response.json()
+            token = await access_token(self.client, self.config)
         except (httpx.HTTPError, ValueError) as exc:
             raise ZohoSheetError("Zoho Sheet authentication could not be confirmed.") from exc
-        token = payload.get("access_token") if isinstance(payload, dict) else None
-        if response.is_error or not isinstance(token, str) or not token:
+        if not token:
             raise ZohoSheetError("Zoho Sheet authentication failed; reconnect the Sheet scopes.", 503)
         self.headers = {
             "Authorization": f"Zoho-oauthtoken {token}",

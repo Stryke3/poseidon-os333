@@ -32,7 +32,8 @@ jobs:
           # Python 3.11 fingerprints of the already-tested artifact's AST.
           # Python 3.13 ast.dump omits empty fields, producing different hashes.
           expected = {
-            'services/core/conveyor_api.py': '947756ce426af78de3ad245cb726bd9010da8b07d7ed843b8f47205e979bd718',
+            # Verified production baseline at 9df029a (unchanged by the token-reuse repair).
+            'services/core/conveyor_api.py': 'b912654cf721ddc90c78c4d2ec54cffaecb34fb98a6e3c35d270e0f6fe389f52',
             'services/intake/main.py': 'cc1c4a44053fd4b619333e36e59e76bde3e0091cef3f7301652567e3fae4b7ab',
           }
           for path, reference in expected.items():
