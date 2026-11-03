@@ -33,6 +33,30 @@ async def test_warm_schema_checks_do_not_repeat_locking_ddl(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_repeated_parser_failures_become_an_explicit_review_hold():
+    conn=await database()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute('''CREATE TABLE order_documents(id uuid,order_id uuid,org_id uuid,doc_type text,
+                file_name text,mime_type text,metadata jsonb,status text)''')
+            await cur.execute("INSERT INTO order_documents VALUES(%s,NULL,%s,'swo','synthetic.pdf','application/pdf',%s::jsonb,'final')",
+                (str(uuid.uuid4()),ORG,json.dumps({'content_base64':base64.b64encode(b'%PDF-synthetic').decode()})))
+        await discover_documents(conn)
+        async def failure(*args): raise RuntimeError('Synthetic parser failure')
+        assert (await process_documents(conn,extractor=failure))['held']==1
+        assert (await rows(conn,'SELECT status FROM trident_learning_documents'))[0]['status']=='RETRY'
+        async with conn.cursor() as cur:
+            await cur.execute('UPDATE trident_learning_documents SET next_attempt_at=NOW()')
+        await process_documents(conn,extractor=failure)
+        held=(await rows(conn,'SELECT status,last_error FROM trident_learning_documents'))[0]
+        assert held=={'status':'NEEDS_REVIEW','last_error':'REPEATED_EXTRACTION_FAILURE'}
+        assert (await process_documents(conn,extractor=failure))['processed']==0
+        assert await train_document_models(conn)==[]
+    finally:
+        await close(conn)
+
+
+@pytest.mark.asyncio
 async def test_all_upload_stores_revisions_models_and_org_boundaries():
     conn = await database()
     try:

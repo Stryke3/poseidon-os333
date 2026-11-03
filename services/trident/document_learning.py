@@ -267,6 +267,8 @@ async def process_documents(conn, limit=8, extractor=None):
         await rows(conn, 'SELECT pg_advisory_xact_lock(817260031)')
         for record in queue:
             parsed = tasks[record['source_key']].result()
+            if parsed['status']=='RETRY' and record['attempts']>=1:
+                parsed={**parsed,'status':'NEEDS_REVIEW','error':'REPEATED_EXTRACTION_FAILURE'}
             text = parsed.get('text') or ''
             codes = sorted(set(re.findall(r'\b[A-V][0-9]{4}\b', text.upper())))
             await execute(conn, '''UPDATE trident_learning_documents SET status=%s,content_sha256=%s,

@@ -1257,6 +1257,9 @@ async def trident_backfill(request: Request):
         if ingestion["state"]=="BUSY":
             raise HTTPException(409,"An evidence sync is already active")
         outcomes = await index_outcomes(conn)
+        await pipeline_execute(conn,"""UPDATE trident_learning_documents SET status='NEEDS_REVIEW',
+            last_error='REPEATED_EXTRACTION_FAILURE' WHERE org_id=%s::uuid
+            AND status='RETRY' AND attempts>=2 AND active""",(org_id,))
         await pipeline_execute(conn,"UPDATE trident_learning_documents SET next_attempt_at=NOW() WHERE org_id=%s::uuid AND status='RETRY' AND active",(org_id,))
     # Backfill only indexes source evidence. The explicit retrain endpoint can
     # then prove this dataset's membership without resending a claim or appeal.
