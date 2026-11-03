@@ -13,6 +13,24 @@ from document_learning import discover_documents, process_documents, train_docum
 from document_extract import extract
 
 
+@pytest.mark.asyncio
+async def test_pdf_bytes_override_a_builders_incorrect_json_mime():
+    from document_learning import _extract_input
+    pdf=pymupdf.open()
+    for number in range(2):
+        page=pdf.new_page();page.insert_text((72,72),f'Synthetic signed order page {number+1}. E0676 actual retained source evidence.',fontsize=12)
+    parsed=await _extract_input({'source_table':'order_documents','mime_type':'application/json'},base64.b64encode(pdf.tobytes()).decode())
+    assert parsed['status']=='EXTRACTED' and parsed['page_count']==parsed['extracted_pages']==2
+
+
+def test_archive_identity_supports_two_letter_names_without_ignoring_dob():
+    from document_recovery import identity_matches
+    case={'patient_name':'Jo Magner','dob':'1980-01-02'}
+    assert identity_matches(case,'Jo Magner DOB 01/02/1980 source documentation')
+    assert not identity_matches(case,'Jo Magner DOB 01/03/1980 source documentation')
+    assert not identity_matches(case,'Jane Magner DOB 01/02/1980 source documentation')
+
+
 def test_live_case_facts_preserve_all_retained_source_pages_and_their_basis():
     from document_learning import case_learning_facts
     case={'id':'synthetic-case','source_document_id':'synthetic-source','source_document':'original.pdf',
@@ -71,7 +89,7 @@ def test_oversized_fax_raster_is_bounded_and_sparse_ocr_recovers(monkeypatch):
     result=extract(document.tobytes(),'application/pdf')
     assert result['status']=='EXTRACTED' and 'E0676' in result['text']
     assert calls==['3','11']
-    assert result['details']['parser_version']==3
+    assert result['details']['parser_version']==4
 
 
 def test_independent_pdf_engine_reads_every_page():
@@ -125,12 +143,39 @@ async def test_archive_recovery_verifies_identity_size_scope_and_keeps_source_im
         assert (await rows(conn,'SELECT COUNT(*) AS n FROM trident_document_recoveries'))[0]['n']==2
         assert (await rows(conn,'SELECT provenance FROM trident_recovered_files'))[0]['provenance']=={'provider':'test','file_id':'synthetic-source'}
         assert (await recover_archive_copy(conn,ORG,payload))['recovered']==0
+        assert (await recover_archive_copy(conn,OTHER,payload))['recovered']==0
         held=await rows(conn,"SELECT source_id,status FROM trident_learning_documents WHERE status='MISSING_CONTENT'")
         assert len(held)==2
         await train_document_models(conn,force=True,org_id=ORG)
         manifest=(await rows(conn,'SELECT source_manifest FROM trident_document_models'))[0]['source_manifest']
         assert len(manifest)==2 and all(m['extraction_details']['content_origin']=='RECOVERED_ARCHIVE_COPY' for m in manifest)
         assert (await rows(conn,'SELECT COUNT(*) AS n FROM payment_outcomes'))[0]['n']==0
+    finally:await close(conn)
+
+
+@pytest.mark.asyncio
+async def test_staging_recovery_can_reuse_only_an_identical_file_already_in_its_org():
+    import hashlib
+    from document_recovery import recover_archive_copy
+    conn=await database()
+    try:
+        pdf=pymupdf.open();pdf.new_page().insert_text((72,72),'Synthetic source E0676 authorization documentation for evidence learning.',fontsize=12)
+        content=pdf.tobytes();sha=hashlib.sha256(content).hexdigest()
+        data={'documents':[{'id':'staging','case_id':'pending_source','org_id':ORG,'filename':'synthetic.pdf',
+            'size':len(content),'content_type':'application/pdf','content_base64':''}]}
+        async with conn.cursor() as cur:
+            await cur.execute('CREATE TABLE spear_store_snapshots(store_key text,store jsonb)')
+            await cur.execute('INSERT INTO spear_store_snapshots VALUES(%s,%s::jsonb)',('spear-production',json.dumps(data)))
+            await cur.execute('''INSERT INTO trident_learning_documents(source_key,source_table,source_id,source_revision,
+                org_id,filename,document_kind,status,content_sha256) VALUES('known','order_documents','known','known',
+                %s::uuid,'synthetic.pdf','supporting_record','EXTRACTED',%s)''',(OTHER,sha))
+        await discover_documents(conn);await process_documents(conn)
+        payload={'filename':'synthetic.pdf','sha256':sha,'content_base64':base64.b64encode(content).decode(),
+                 'provenance':{'file_id':'synthetic'}}
+        assert (await recover_archive_copy(conn,ORG,payload))['recovered']==0
+        async with conn.cursor() as cur:await cur.execute("UPDATE trident_learning_documents SET org_id=%s::uuid WHERE source_key='known'",(ORG,))
+        assert (await recover_archive_copy(conn,ORG,payload))['recovered']==1
+        assert (await rows(conn,'SELECT verification_basis FROM trident_document_recoveries'))[0]['verification_basis']=='SAME_CONTENT_SHA256_IN_ORGANIZATION_NO_CASE_ASSERTION'
     finally:await close(conn)
 
 

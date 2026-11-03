@@ -19,7 +19,7 @@ def normalized_name(value):
 def identity_matches(case,text):
     name=str(case.get('patient_name') or '')
     dob=str(case.get('dob') or '')[:10]
-    words=[w for w in re.findall(r'[a-z]+',name.lower()) if len(w)>2]
+    words=[w for w in re.findall(r'[a-z]+',name.lower()) if len(w)>1]
     found=set(re.findall(r'[a-z]+',text.lower()))
     if len(words)<2 or not all(w in found for w in words):
         return False
@@ -83,7 +83,7 @@ async def recover_archive_copy(conn,org_id,payload):
         if expected:
             if expected!=digest:continue
             basis='EXACT_SOURCE_HASH'
-        elif case and identity_matches(case,parsed['text']):
+        elif case and str(case.get('org_id') or os.getenv('TRIDENT_SPEAR_SQL_DOCUMENT_ORG_ID'))==org_id and identity_matches(case,parsed['text']):
             basis='CASE_IDENTITY_FILENAME_AND_SIZE'
         elif not case and str(candidate['case_id'] or '').startswith('pending_'):
             staging.append(candidate);continue
@@ -93,6 +93,12 @@ async def recover_archive_copy(conn,org_id,payload):
     # only after an actual in-scope case validates that archive copy's identity.
     if verified:
         verified.extend((candidate,'SAME_VERIFIED_FILE_STAGING_REFERENCE') for candidate in staging)
+    elif staging:
+        known=await rows(conn,'''SELECT EXISTS(SELECT 1 FROM trident_learning_documents
+            WHERE org_id=%s::uuid AND active AND status='EXTRACTED' AND content_sha256=%s
+            AND source_table IN('order_documents','spear_store_snapshots')) AS present''',(org_id,digest))
+        if known[0]['present']:
+            verified.extend((candidate,'SAME_CONTENT_SHA256_IN_ORGANIZATION_NO_CASE_ASSERTION') for candidate in staging)
     if not verified:return {'recovered':0,'reason':'Patient identity or the original source hash could not be verified.'}
     async with conn.transaction():
         await rows(conn,'SELECT pg_advisory_xact_lock(817260031)')

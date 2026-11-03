@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pymupdf
 
-PARSER_VERSION = 3
+PARSER_VERSION = 4
 MAX_RASTER_PIXELS = 6_000_000
 MAX_RASTER_EDGE = 3200
 
@@ -36,9 +36,11 @@ def ocr_page(page):
     best = ''; successes = 0
     # Sparse insurance cards and sideways fax scans need a different layout.
     # Retry only weak pages; ordinary packets keep one OCR pass per scan.
-    for rotation,layout in ((0,3),(0,11),(180,11),(90,11),(270,11)):
+    for rotation,layout,threshold in ((0,3,0),(0,11,0),(0,6,2),(0,11,2),(180,11,2),(90,11,2),(270,11,2)):
         try:
-            result = subprocess.run(['tesseract','stdin','stdout','--psm',str(layout)],
+            command=['tesseract','stdin','stdout','--psm',str(layout)]
+            if threshold:command+=['-c','thresholding_method='+str(threshold)]
+            result = subprocess.run(command,
                 input=raster_page(page,rotation),capture_output=True,timeout=25,check=True,
                 env={**os.environ,'OMP_THREAD_LIMIT':'1'})
             successes += 1

@@ -285,10 +285,16 @@ async def _extract_input(record, content, extractor=None):
         parsed = {'status': 'MISSING_CONTENT', 'error': 'SOURCE_BYTES_UNAVAILABLE', 'text': ''}
     else:
         try:
+            decoded=base64.b64decode(content,validate=True)
+            mime=record['mime_type']
+            # A builder's missing/incorrect MIME must not decode a real PDF as
+            # UTF-8 JSON. Validate the retained bytes before choosing a parser.
+            if decoded.startswith(b'%PDF-'):mime='application/pdf'
+            elif decoded.startswith(b'\x89PNG\r\n'):mime='image/png'
+            elif decoded.startswith(b'\xff\xd8\xff'):mime='image/jpeg'
             if extractor:
-                parsed = await extractor(content, record['mime_type'])
-            elif record['mime_type'] in {'application/json','application/edi-x12','text/plain','text/csv'}:
-                decoded = base64.b64decode(content,validate=True)
+                parsed = await extractor(content, mime)
+            elif mime in {'application/json','application/edi-x12','text/plain','text/csv'}:
                 text = decoded.decode('utf-8-sig')
                 parsed = {'status':'EXTRACTED' if text.strip() else 'NEEDS_REVIEW','text':text,
                     'sha256':hashlib.sha256(decoded).hexdigest(),'page_count':1,
@@ -299,7 +305,7 @@ async def _extract_input(record, content, extractor=None):
                         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
                     try:
                         output, _ = await asyncio.wait_for(proc.communicate(json.dumps({
-                            'content_base64': content, 'mime_type': record['mime_type'],'engine':engine}).encode()), timeout=600)
+                            'content_base64': content, 'mime_type': mime,'engine':engine}).encode()), timeout=600)
                     except BaseException:
                         if proc.returncode is None: proc.kill()
                         await proc.wait()
@@ -310,11 +316,11 @@ async def _extract_input(record, content, extractor=None):
                             break
                     else:
                         parsed={'status':'NEEDS_REVIEW','error':'LOCAL_PARSER_FAILED','text':'',
-                            'details':{'parser_version':3,'parser_engine':engine,'worker_return_code':proc.returncode}}
+                            'details':{'parser_version':4,'parser_engine':engine,'worker_return_code':proc.returncode}}
                         if not content.startswith('JVBER'):break
         except (Exception, asyncio.TimeoutError) as error:
             parsed = {'status': 'RETRY', 'error': 'EXTRACTION_RETRY', 'text': '',
-                'details':{'parser_version':3,'failure_type':type(error).__name__}}
+                'details':{'parser_version':4,'failure_type':type(error).__name__}}
     return parsed
 
 
@@ -349,7 +355,7 @@ async def process_documents(conn, limit=8, extractor=None):
                 attempts=attempts+1,next_attempt_at=NOW()+INTERVAL '1 hour',extracted_at=NOW(),extraction_details=%s::jsonb
                 WHERE source_key=%s''', (parsed['status'], parsed.get('sha256'), text, parsed.get('page_count'),
                     parsed.get('extracted_pages'), parsed.get('ocr_pages'), codes, parsed.get('error'),
-                    json.dumps(parsed.get('details') or {'parser_version':3}),record['source_key']))
+                    json.dumps(parsed.get('details') or {'parser_version':4}),record['source_key']))
             result['processed'] += 1
             result['extracted' if parsed['status'] == 'EXTRACTED' else 'held'] += 1
     return result
@@ -395,7 +401,7 @@ async def request_document_repair(conn, org_id):
     queued = await execute(conn, '''UPDATE trident_learning_documents SET status='PENDING',
         attempts=0,next_attempt_at=NOW() WHERE org_id=%s::uuid AND active
         AND status IN('NEEDS_REVIEW','RETRY')
-        AND COALESCE((extraction_details->>'parser_version')::int,0)<3''',(org_id,))
+        AND COALESCE((extraction_details->>'parser_version')::int,0)<4''',(org_id,))
     fresh=await rows(conn,'''SELECT COUNT(*) AS n FROM trident_learning_documents d
         WHERE d.org_id=%s::uuid AND d.active AND d.status IN('EXTRACTED','PENDING')
         AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE((SELECT source_manifest
