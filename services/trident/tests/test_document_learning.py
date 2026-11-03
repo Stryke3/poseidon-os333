@@ -13,6 +13,19 @@ from document_learning import discover_documents, process_documents, train_docum
 from document_extract import extract
 
 
+def test_live_case_facts_preserve_all_retained_source_pages_and_their_basis():
+    from document_learning import case_learning_facts
+    case={'id':'synthetic-case','source_document_id':'synthetic-source','source_document':'original.pdf',
+        'extraction_result':{'pages':[{'page':1,'text':'Synthetic source page. ID 123-45-6789'},
+                                     {'page':2,'text':'LAST PAGE CO-197 authorization evidence','method':'pdf_text'}]}}
+    facts=case_learning_facts(case)
+    retained=facts['retained_source_extraction']
+    assert len(retained['pages'])==2 and 'CO-197' in retained['pages'][1]['text']
+    assert '123-45-6789' not in json.dumps(facts)
+    assert retained['source_document_id']=='synthetic-source'
+    assert retained['basis']=='PREVIOUSLY_RECORDED_EXTRACTION' and facts['original_files_reconstructed'] is False
+
+
 @pytest.mark.asyncio
 async def test_retained_case_and_appeal_facts_reach_model_without_reconstructing_files_or_labels(monkeypatch):
     from learning_pipeline import execute

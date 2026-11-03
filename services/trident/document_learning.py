@@ -27,10 +27,19 @@ CASE_LEARNING_FIELDS=('id','core_order_id','order_id','payer','payer_id','produc
 
 
 def case_learning_facts(case):
-    return {'kind':'LIVE_CASE_FACTS','mime_type':'application/json','case_id':case['id'],
+    result={'kind':'LIVE_CASE_FACTS','mime_type':'application/json','case_id':case['id'],
         'org_id':case.get('org_id'),'evidence_role':'RECORDED_REFERENCE_FACTS',
         'original_files_reconstructed':False,
         'facts':{k:case[k] for k in CASE_LEARNING_FIELDS if case.get(k) is not None}}
+    extraction=case.get('extraction_result') or {}
+    if isinstance(extraction,dict) and isinstance(extraction.get('pages'),list):
+        result['retained_source_extraction']={'source_document_id':case.get('source_document_id'),
+            'source_filename':case.get('source_document'),'basis':'PREVIOUSLY_RECORDED_EXTRACTION',
+            'original_file_availability_not_asserted':True,
+            'pages':[{k:re.sub(r'\b\d{3}-\d{2}-\d{4}\b','[REDACTED ID]',str(page[k])) if k=='text' else page[k]
+                for k in ('page','text','method','ocr_status','ocr_attempted') if page.get(k) is not None}
+                for page in extraction['pages'] if isinstance(page,dict)]}
+    return result
 
 def verified_org(value):
     try:
@@ -303,8 +312,9 @@ async def _extract_input(record, content, extractor=None):
                         parsed={'status':'NEEDS_REVIEW','error':'LOCAL_PARSER_FAILED','text':'',
                             'details':{'parser_version':3,'parser_engine':engine,'worker_return_code':proc.returncode}}
                         if not content.startswith('JVBER'):break
-        except (Exception, asyncio.TimeoutError):
-            parsed = {'status': 'RETRY', 'error': 'EXTRACTION_RETRY', 'text': ''}
+        except (Exception, asyncio.TimeoutError) as error:
+            parsed = {'status': 'RETRY', 'error': 'EXTRACTION_RETRY', 'text': '',
+                'details':{'parser_version':3,'failure_type':type(error).__name__}}
     return parsed
 
 
