@@ -7,6 +7,7 @@ for review, rather than silently counting the file as learned.
 import base64
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -36,7 +37,8 @@ def extract(content: bytes, mime: str) -> dict:
             try:
                 raster = page.get_pixmap(dpi=170, alpha=False).tobytes('png')
                 result = subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '3'],
-                                        input=raster, capture_output=True, timeout=30, check=True)
+                                        input=raster, capture_output=True, timeout=30, check=True,
+                                        env={**os.environ, 'OMP_THREAD_LIMIT':'1'})
                 ocr = result.stdout.decode('utf-8').strip()
                 ocr_pages += 1
                 if ocr and ocr != text:

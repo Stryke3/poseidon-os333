@@ -64,8 +64,9 @@ async def discover_documents(conn) -> dict:
               'id',d.item->>'id','core_order_id',c.item->>'core_order_id') AS item,
             to_jsonb(o) AS order_context
             FROM files d LEFT JOIN cases c ON c.item->>'id'=d.item->>'case_id'
-            LEFT JOIN LATERAL (SELECT o.* FROM orders o WHERE o.id::text=replace(
-              COALESCE(NULLIF(c.item->>'core_order_id',''),c.item->>'order_id'),'ord_','')
+            LEFT JOIN LATERAL (SELECT o.* FROM orders o WHERE o.id::text=ANY(ARRAY[
+              replace(c.item->>'core_order_id','ord_',''),replace(c.item->>'order_id','ord_','')])
+              OR to_jsonb(o)->>'order_number'=ANY(ARRAY[c.item->>'order_number',c.item->>'order_id'])
               OR o.id::text IN(SELECT replace(to_jsonb(l)->>'order_id','ord_','') FROM ledger_claim_links l
                  WHERE to_jsonb(l)->>'case_id'=d.item->>'case_id')
               ORDER BY o.id LIMIT 2) o ON true
@@ -204,6 +205,37 @@ async def source_bytes(conn, record):
     return data[0].get('content') if data else None
 
 
+async def _extract_input(record, content, extractor=None):
+    if content and record['source_table']!='remittance_batches' and record.get('content_token') and hashlib.md5(content.encode(),usedforsecurity=False).hexdigest()!=record['content_token']:
+        parsed = {'status':'SOURCE_CHANGED','error':'AWAITING_SOURCE_REDISCOVERY','text':''}
+    elif not content:
+        parsed = {'status': 'MISSING_CONTENT', 'error': 'SOURCE_BYTES_UNAVAILABLE', 'text': ''}
+    else:
+        try:
+            if extractor:
+                parsed = await extractor(content, record['mime_type'])
+            elif record['mime_type'] in {'application/json','application/edi-x12','text/plain','text/csv'}:
+                decoded = base64.b64decode(content,validate=True)
+                text = decoded.decode('utf-8-sig')
+                parsed = {'status':'EXTRACTED' if text.strip() else 'NEEDS_REVIEW','text':text,
+                    'sha256':hashlib.sha256(decoded).hexdigest(),'page_count':1,
+                    'extracted_pages':int(bool(text.strip())),'ocr_pages':0}
+            else:
+                proc = await asyncio.create_subprocess_exec(sys.executable, str(Path(__file__).with_name('document_extract.py')),
+                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+                try:
+                    output, _ = await asyncio.wait_for(proc.communicate(json.dumps({
+                        'content_base64': content, 'mime_type': record['mime_type']}).encode()), timeout=180)
+                except BaseException:
+                    if proc.returncode is None: proc.kill()
+                    await proc.wait()
+                    raise
+                parsed = json.loads(output)
+        except (Exception, asyncio.TimeoutError):
+            parsed = {'status': 'RETRY', 'error': 'EXTRACTION_RETRY', 'text': ''}
+    return parsed
+
+
 async def process_documents(conn, limit=8, extractor=None):
     """Bounded batches, isolated parser, durable retries. A busy file cannot
     prevent later uploads from entering the corpus. Caller holds worker lock."""
@@ -211,35 +243,17 @@ async def process_documents(conn, limit=8, extractor=None):
         AND status IN('PENDING','RETRY') AND next_attempt_at<=NOW()
         ORDER BY attempts,created_at,source_key LIMIT %s''', (limit,))
     result = {'processed': 0, 'extracted': 0, 'held': 0}
+    semaphore = asyncio.Semaphore(3)
+    tasks = {}
+    async def parse_one(record, content):
+        async with semaphore:
+            return await _extract_input(record, content, extractor)
+    async with asyncio.TaskGroup() as group:
+        for record in queue:
+            content = await source_bytes(conn, record)
+            tasks[record['source_key']] = group.create_task(parse_one(record, content))
     for record in queue:
-        content = await source_bytes(conn, record)
-        if content and record['source_table']!='remittance_batches' and record.get('content_token') and hashlib.md5(content.encode(),usedforsecurity=False).hexdigest()!=record['content_token']:
-            parsed = {'status':'SOURCE_CHANGED','error':'AWAITING_SOURCE_REDISCOVERY','text':''}
-        elif not content:
-            parsed = {'status': 'MISSING_CONTENT', 'error': 'SOURCE_BYTES_UNAVAILABLE', 'text': ''}
-        else:
-            try:
-                if extractor:
-                    parsed = await extractor(content, record['mime_type'])
-                elif record['mime_type'] in {'application/json','application/edi-x12','text/plain','text/csv'}:
-                    decoded = base64.b64decode(content,validate=True)
-                    text = decoded.decode('utf-8-sig')
-                    parsed = {'status':'EXTRACTED' if text.strip() else 'NEEDS_REVIEW','text':text,
-                        'sha256':hashlib.sha256(decoded).hexdigest(),'page_count':1,
-                        'extracted_pages':int(bool(text.strip())),'ocr_pages':0}
-                else:
-                    proc = await asyncio.create_subprocess_exec(sys.executable, str(Path(__file__).with_name('document_extract.py')),
-                        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-                    try:
-                        output, _ = await asyncio.wait_for(proc.communicate(json.dumps({
-                            'content_base64': content, 'mime_type': record['mime_type']}).encode()), timeout=180)
-                    except BaseException:
-                        if proc.returncode is None: proc.kill()
-                        await proc.wait()
-                        raise
-                    parsed = json.loads(output)
-            except (Exception, asyncio.TimeoutError):
-                parsed = {'status': 'RETRY', 'error': 'EXTRACTION_RETRY', 'text': ''}
+        parsed = tasks[record['source_key']].result()
         text = parsed.get('text') or ''
         codes = sorted(set(re.findall(r'\b[A-V][0-9]{4}\b', text.upper())))
         await execute(conn, '''UPDATE trident_learning_documents SET status=%s,content_sha256=%s,
@@ -286,7 +300,7 @@ async def train_document_models(conn, force=False):
     return trained
 
 
-async def document_library(conn, org_id, query='', codes=None, include_text=False, insurance=''):
+async def document_library(conn, org_id, query='', codes=None, include_text=False, insurance='', include_admin=False):
     counts = await rows(conn, '''SELECT status,COUNT(*) AS count FROM trident_learning_documents
         WHERE org_id=%s::uuid AND active GROUP BY status''', (org_id,))
     models = await rows(conn, '''SELECT model_version,document_count,created_at,source_manifest FROM trident_document_models
@@ -323,7 +337,10 @@ async def document_library(conn, org_id, query='', codes=None, include_text=Fals
         WHERE l.locktype='advisory' AND l.objid=ANY(ARRAY[817260030,817260031,817260032,817260033]::oid[])
           AND a.pid<>pg_backend_pid()"""
     ) if include_text else []
+    unlinked = await rows(conn, '''SELECT source_table,source_id,case_id,document_kind,status
+        FROM trident_learning_documents WHERE active AND org_id IS NULL ORDER BY source_table,source_id''') if include_admin else []
     return json_safe({'counts':{r['status']:r['count'] for r in counts},'models':models,'files':found,'jobs':diagnostics,
+                     'unlinked_sources':unlinked if include_admin else None,
                      'matched_files':found[0]['matched_files'] if found else 0})
 
 

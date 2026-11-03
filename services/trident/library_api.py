@@ -17,6 +17,7 @@ def authorize(request: Request, write: bool = False) -> str:
     if settings.internal_api_key and internal and hmac.compare_digest(internal, settings.internal_api_key):
         raw_org = request.query_params.get("org_id", "")
         request.state.trident_case_access=True
+        request.state.trident_admin=True
     else:
         header = request.headers.get("Authorization", "")
         if not header.startswith("Bearer "):
@@ -29,6 +30,7 @@ def authorize(request: Request, write: bool = False) -> str:
             raise HTTPException(403, "Administrator permission is required")
         raw_org = claims.get("org_id", "")
         request.state.trident_case_access=str(claims.get("role","")).lower() in {"admin","system","billing","biller","intake","executive","clinical","supervisor"}
+        request.state.trident_admin=str(claims.get('role','')).lower() in {'admin','system'}
         requested_org = request.query_params.get("org_id")
         if requested_org and requested_org != raw_org:
             raise HTTPException(403, "Organization does not match the signed session")
@@ -38,7 +40,7 @@ def authorize(request: Request, write: bool = False) -> str:
         raise HTTPException(403, "A verified organization is required")
 
 
-async def library(conn, org_id: str, query: str = "", codes: list[str] | None = None, include_case_evidence: bool = False, document_query: str = "") -> dict:
+async def library(conn, org_id: str, query: str = "", codes: list[str] | None = None, include_case_evidence: bool = False, document_query: str = "", include_admin: bool = False) -> dict:
     query = query.strip()[:200]
     codes = list(dict.fromkeys(str(c).strip().upper() for c in (codes or []) if str(c).strip()))[:100]
     # Each observed payer identity remains distinct; a kit filter expands into
@@ -86,5 +88,5 @@ async def library(conn, org_id: str, query: str = "", codes: list[str] | None = 
           WHERE UPPER(code)=ANY(%s::text[]))) ORDER BY f.occurred_at DESC,f.source_key""",
         (org_id,query,query,query,codes,codes)) if include_case_evidence else []
     return json_safe({"payers": payers,"observed":observed,"rules":rules,"models":models,
-                      "documents":await document_library(conn,org_id,document_query.strip()[:200],codes,include_case_evidence,query),
+                      "documents":await document_library(conn,org_id,document_query.strip()[:200],codes,include_case_evidence,query,include_admin),
                       "case_evidence":evidence,"feedback":await feedback_status(conn,org_id),"query":query,"codes":codes})

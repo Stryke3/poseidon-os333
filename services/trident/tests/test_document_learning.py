@@ -100,6 +100,8 @@ async def test_missing_bytes_and_unlinked_files_are_visible_holds():
         assert (await process_documents(conn))['held']==1
         status = await document_library(conn,ORG,'',[],True)
         assert status['counts']=={'MISSING_CONTENT':1}
+        assert status['unlinked_sources'] is None
+        assert len((await document_library(conn,ORG,'',[],True,'',True))['unlinked_sources'])==1
         assert await train_document_models(conn)==[]
         assert (await rows(conn,"SELECT COUNT(*) AS n FROM trident_learning_documents WHERE status='UNLINKED'"))[0]['n']==1
     finally:
@@ -120,5 +122,28 @@ async def test_retained_835_includes_unmatched_claims_without_posting():
         files=(await document_library(conn,ORG,'CO-197',[],True))['files']
         assert len(files)==1 and 'SYN-UNMATCHED' in files[0]['excerpt']
         assert len(await rows(conn,'SELECT * FROM payment_outcomes'))==0
+    finally:
+        await close(conn)
+
+
+@pytest.mark.asyncio
+async def test_legacy_order_number_linkage_requires_a_unique_order():
+    conn=await database()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute('ALTER TABLE orders ADD COLUMN order_number text')
+            await cur.execute('CREATE TABLE spear_store_snapshots(store_key text,store jsonb)')
+            for org,number in [(ORG,'SYN-UNIQUE'),(ORG,'SYN-AMBIGUOUS'),(OTHER,'SYN-AMBIGUOUS')]:
+                await cur.execute('INSERT INTO orders VALUES(%s,%s,%s)',(str(uuid.uuid4()),org,number))
+            data={'cases':[{'id':'case-unique','order_id':'SYN-UNIQUE'}, {'id':'case-ambiguous','order_number':'SYN-AMBIGUOUS'}],
+                'documents':[{'id':'file-unique','case_id':'case-unique','filename':'synthetic.txt','content_type':'text/plain',
+                    'content_base64':base64.b64encode(b'Synthetic authorization appeal').decode()},
+                    {'id':'file-ambiguous','case_id':'case-ambiguous','filename':'synthetic.txt','content_type':'text/plain',
+                    'content_base64':base64.b64encode(b'Synthetic authorization appeal').decode()}]}
+            await cur.execute('INSERT INTO spear_store_snapshots VALUES(%s,%s::jsonb)',('spear-production',json.dumps(data)))
+        await discover_documents(conn)
+        found=await rows(conn,'SELECT source_id,org_id::text AS org_id,status FROM trident_learning_documents ORDER BY source_id')
+        assert found[0]['org_id'] is None and found[0]['status']=='UNLINKED'
+        assert found[1]['org_id']==ORG and found[1]['status']=='PENDING'
     finally:
         await close(conn)

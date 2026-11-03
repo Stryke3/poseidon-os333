@@ -873,14 +873,26 @@ async def _run_learning_sync(conn, trigger_type: str = "sync") -> dict[str, Any]
     }
 
 
+async def _ensure_learning_schema(app, conn) -> None:
+    if getattr(app.state,'trident_schema_ready',False):
+        return
+    if not hasattr(app.state,'trident_schema_lock'):
+        app.state.trident_schema_lock=asyncio.Lock()
+    async with app.state.trident_schema_lock:
+        if not getattr(app.state,'trident_schema_ready',False):
+            await ensure_schema(conn)
+            app.state.trident_schema_ready=True
+
+
 async def _maybe_run_learning_refresh(app) -> None:
     # PostgreSQL serializes workers even when Redis is unavailable. Source
     # ingestion is independent of the weekly model-training cadence.
+    async with app.state.db_pool.connection() as conn:
+        await _ensure_learning_schema(app,conn)
     async with app.state.db_pool.connection() as conn, conn.transaction():
         lock = await pipeline_rows(conn,"SELECT pg_try_advisory_xact_lock(817260032) AS acquired")
         if not lock[0]["acquired"]:
             return
-        await ensure_schema(conn)
         await ingest_sources(conn)
         await index_outcomes(conn)
         if settings.trident_learning_mode not in {"weekly","continuous","full"}:
@@ -925,7 +937,7 @@ async def _document_learning_loop(app) -> None:
             # Independent from financial training: all new files get extracted
             # between weekly runs, and parser failures cannot stop claim ingestion.
             async with app.state.db_pool.connection() as conn:
-                await ensure_schema(conn)
+                await _ensure_learning_schema(app,conn)
             async with app.state.db_pool.connection() as conn, conn.transaction():
                 lock = await pipeline_rows(conn,"SELECT pg_try_advisory_xact_lock(817260033) AS acquired")
                 if lock[0]['acquired']:
@@ -1225,7 +1237,7 @@ async def v1_trident_code_map(icd10: str, request: Request):
 async def trident_library(request: Request, query: str = ""):
     org_id = authorize_learning(request)
     async with request.app.state.db_pool.connection() as conn:
-        payload = await learning_library(conn,org_id,query,request.query_params.getlist("code"),bool(request.state.trident_case_access),request.query_params.get('document_query',''))
+        payload = await learning_library(conn,org_id,query,request.query_params.getlist("code"),bool(request.state.trident_case_access),request.query_params.get('document_query',''),bool(request.state.trident_admin))
         latest = await fetch_one(conn,"SELECT MAX(completed_at) AS at FROM trident_training_ledger WHERE status='completed'")
     last = (latest or {}).get("at")
     return {**payload,"schedule":{"cadence":settings.trident_learning_mode,
