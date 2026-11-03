@@ -33,7 +33,12 @@ def extract(content: bytes, mime: str) -> dict:
     output = []; readable = 0; ocr_pages = 0; failures = 0
     for page in document:
         text = page.get_text('text').strip()
-        if len(re.findall(r'\w', text)) < 40 or page.get_images():
+        # Small letterhead logos do not turn a selectable-text medical record
+        # into a scan. A raster body beneath a readable header still needs OCR.
+        page_area=max(1,page.rect.width*page.rect.height)
+        scanned_body=any(pymupdf.Rect(info['bbox']).get_area()/page_area>=0.08
+                         for info in page.get_image_info())
+        if len(re.findall(r'\w', text)) < 40 or scanned_body:
             try:
                 raster = page.get_pixmap(dpi=170, alpha=False).tobytes('png')
                 result = subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '3'],

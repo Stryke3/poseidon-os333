@@ -78,12 +78,13 @@ def test_pdf_reads_every_page_and_ocr_scanned_page_with_text_header():
         page.insert_text((72,72),f'Synthetic appeal supporting documentation page {i+1}. E0676 authorization evidence.',fontsize=12)
     scanned = pymupdf.open(); scan = scanned.new_page()
     scan.insert_text((72,150),'LAST PAGE DENIAL CO-197 REQUIRES AUTHORIZATION',fontsize=15)
+    document[0].insert_image(pymupdf.Rect(450,20,520,45),stream=scan.get_pixmap(dpi=80).tobytes('png'))
     # A real raster scan beneath a readable header must not be skipped.
     document[-1].insert_image(pymupdf.Rect(0,90,595,800),stream=scan.get_pixmap(dpi=150).tobytes('png'))
     result = extract(document.tobytes(),'application/pdf')
     assert result['status']=='EXTRACTED'
     assert result['page_count']==result['extracted_pages']==4
-    assert result['ocr_pages']>=1
+    assert result['ocr_pages']==1
     assert 'CO-197' in result['text']
 
 

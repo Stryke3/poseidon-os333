@@ -324,7 +324,8 @@ async def document_library(conn, org_id, query='', codes=None, include_text=Fals
         AND (%s='' OR STRPOS(LOWER(COALESCE(payer_id,'')||' '||COALESCE(payer_name,'')||' '||COALESCE(text_content,'')),LOWER(%s))>0
           OR payer_id IN(SELECT id FROM payers WHERE STRPOS(LOWER(name),LOWER(%s))>0))
         AND (cardinality(%s::text[])=0 OR hcpcs && %s::text[])
-        ORDER BY extracted_at DESC NULLS LAST,created_at DESC LIMIT 100''', (org_id,query,query,insurance,insurance,insurance,codes or [],codes or [])) if include_text else []
+        ORDER BY CASE WHEN status IN('MISSING_CONTENT','NEEDS_REVIEW','UNSUPPORTED_FORMAT','SOURCE_CHANGED','RETRY')
+          THEN 0 ELSE 1 END,extracted_at DESC NULLS LAST,created_at DESC LIMIT 100''', (org_id,query,query,insurance,insurance,insurance,codes or [],codes or [])) if include_text else []
     for doc in found: doc['model_version']=membership.get(doc['source_key'])
     # Use the learned corpus model to rank relevant reference files. Newer files
     # remain immediately searchable before their next weekly model inclusion.

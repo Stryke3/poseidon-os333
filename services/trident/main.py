@@ -1248,7 +1248,7 @@ async def trident_library(request: Request, query: str = ""):
 
 @app.post("/api/v1/trident/backfill")
 async def trident_backfill(request: Request):
-    authorize_learning(request,write=True)
+    org_id=authorize_learning(request,write=True)
     async with request.app.state.db_pool.connection() as conn:
         await cancel_obsolete_scans(conn)
     async with request.app.state.db_pool.connection() as conn, conn.transaction():
@@ -1257,6 +1257,7 @@ async def trident_backfill(request: Request):
         if ingestion["state"]=="BUSY":
             raise HTTPException(409,"An evidence sync is already active")
         outcomes = await index_outcomes(conn)
+        await pipeline_execute(conn,"UPDATE trident_learning_documents SET next_attempt_at=NOW() WHERE org_id=%s::uuid AND status='RETRY' AND active",(org_id,))
     # Backfill only indexes source evidence. The explicit retrain endpoint can
     # then prove this dataset's membership without resending a claim or appeal.
     return {**ingestion,"outcomes_indexed":outcomes,"training_state":"AWAITING_WEEKLY_TRAINING"}
