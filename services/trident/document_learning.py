@@ -355,9 +355,47 @@ async def document_library(conn, org_id, query='', codes=None, include_text=Fals
     ) if include_text else []
     unlinked = await rows(conn, '''SELECT source_table,source_id,case_id,document_kind,status
         FROM trident_learning_documents WHERE active AND org_id IS NULL ORDER BY source_table,source_id''') if include_admin else []
+    repair_inventory = await document_repair_inventory(conn, org_id) if include_admin and include_text else None
     return json_safe({'counts':{r['status']:r['count'] for r in counts},'models':models,'files':found,'jobs':diagnostics,
+                     'repair_inventory':repair_inventory,
                      'unlinked_sources':unlinked if include_admin else None,
                      'matched_files':found[0]['matched_files'] if found else 0})
+
+
+async def document_repair_inventory(conn, org_id):
+    """Scoped source locators for repair, without bytes or patient identity fields."""
+    held = await rows(conn, '''SELECT source_key,source_table,source_id,source_revision,order_id,case_id,
+        filename,document_kind,status,last_error,content_sha256,page_count,extracted_pages,ocr_pages
+        FROM trident_learning_documents WHERE active AND org_id=%s::uuid
+        AND status<>'EXTRACTED' ORDER BY source_table,source_id LIMIT 1000''', (org_id,))
+    locators = {}
+    if await table_exists(conn,'order_documents'):
+        for row in await rows(conn, '''SELECT d.id::text AS id,d.metadata-'content_base64' AS metadata
+            FROM order_documents d JOIN trident_learning_documents l ON l.source_table='order_documents'
+              AND l.source_id=d.id::text WHERE l.active AND l.org_id=%s::uuid AND l.status<>'EXTRACTED' ''',(org_id,)):
+            locators[('order_documents',row['id'])]=row['metadata'] or {}
+    if await table_exists(conn,'spear_store_snapshots'):
+        for row in await rows(conn, '''WITH files AS MATERIALIZED (
+            SELECT s.store_key,section.name,d.item-'content_base64' AS item
+            FROM spear_store_snapshots s CROSS JOIN (VALUES ('documents'),('artifacts')) section(name)
+            CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.store->section.name,'[]'::jsonb)) d(item)
+            WHERE s.store_key=%s)
+            SELECT f.store_key||':'||f.name||':'||(f.item->>'id') AS id,f.item AS metadata
+            FROM files f JOIN trident_learning_documents l ON l.source_table='spear_store_snapshots'
+              AND l.source_id=f.store_key||':'||f.name||':'||(f.item->>'id')
+            WHERE l.active AND l.org_id=%s::uuid AND l.status<>'EXTRACTED' ''',
+            (os.getenv('SPEAR_SQL_STORE_KEY','spear-production'),org_id)):
+            locators[('spear_store_snapshots',row['id'])]=row['metadata'] or {}
+    safe_keys={'id','case_id','order_id','kind','size','created_at','source','source_id','source_document_id',
+        'source_doc_id','source_artifact_id','document_id','artifact_id','storage_note','sha256','content_sha256',
+        'source_sha256','dropbox_path','source_path','original_filename','original_file_name','file_name','filename',
+        'storage_key','object_key','bucket','extracted_text','ocr_text','text_content'}
+    for item in held:
+        metadata=locators.get((item['source_table'],item['source_id']),{})
+        item['metadata_keys']=sorted(metadata)
+        item['source_locator']={k:v for k,v in metadata.items() if k in safe_keys and k not in {'extracted_text','ocr_text','text_content'}}
+        item['retained_text_fields']=[k for k in ('extracted_text','ocr_text','text_content') if metadata.get(k)]
+    return held
 
 
 async def cancel_obsolete_scans(conn):
