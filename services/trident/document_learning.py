@@ -80,6 +80,7 @@ async def discover_documents(conn) -> dict:
             row = group[0]
             if len(group) > 1:
                 row['order_context'] = None
+                row['scope_conflict'] = True
             sources.append(row)
         coverage['spear_store_documents_and_artifacts'] = len(grouped)
     if await table_exists(conn, 'remittance_batches'):
@@ -115,26 +116,33 @@ async def discover_documents(conn) -> dict:
     indexed = 0
     incoming = []
     existing = {r['source_key']:r for r in await rows(conn,
-        'SELECT source_key,org_id::text AS org_id,order_id,active FROM trident_learning_documents')}
+        'SELECT source_key,org_id::text AS org_id,order_id,active,scope_basis FROM trident_learning_documents')}
     for source in sources:
         item = source['item']; context = source.get('order_context') or {}
         table = source['source_table']; sid = source['source_id']
         revision = fingerprint(item)
         key = f'{table}:{sid}:{revision}'
         org = verified_org(context.get('org_id') or item.get('org_id'))
+        scope_basis='ORDER_LINK' if context.get('org_id') else 'SOURCE_ORGANIZATION' if org else None
+        # A deployment may explicitly bind its own SPEAR SQL document store to
+        # its organization. This asserts file ownership only; it never invents
+        # an order/patient link, overrides source orgs, or resolves ambiguity.
+        if not org and table=='spear_store_snapshots' and not source.get('scope_conflict'):
+            org=verified_org(os.getenv('TRIDENT_SPEAR_SQL_DOCUMENT_ORG_ID'))
+            if org: scope_basis='CONFIGURED_SQL_STORE_OWNER'
         deleted = str(item.get('status', '')).lower() in {'deleted', 'void', 'voided'}
         order_id = str(context.get('id') or item.get('order_id') or '') or None
         old = existing.get(key)
-        if old and old['org_id']==org and old['order_id']==order_id and old['active']==(not deleted):
+        if old and old['org_id']==org and old['order_id']==order_id and old['active']==(not deleted) and old.get('scope_basis')==scope_basis:
             continue
         values = (key, table, sid, revision, item.get('content_revision'), org, order_id,
              item.get('case_id'), context.get('payer_id') or item.get('payer_id'), item.get('payer_name'),
              str(item.get('file_name') or item.get('filename') or f'{table}-{sid}.json'),
              str(item.get('doc_type') or item.get('kind') or table),
              item.get('mime_type') or item.get('content_type') or 'application/json',
-             'PENDING' if org else 'UNLINKED', not deleted)
+             'PENDING' if org else 'UNLINKED', not deleted, scope_basis)
         incoming.append(dict(zip(('source_key','source_table','source_id','source_revision','content_token','org_id',
-            'order_id','case_id','payer_id','payer_name','filename','document_kind','mime_type','status','active'),values)))
+            'order_id','case_id','payer_id','payer_name','filename','document_kind','mime_type','status','active','scope_basis'),values)))
     if incoming:
         encoded = json.dumps(json_safe(incoming))
         # Two bulk statements rather than two round trips per historical file.
@@ -144,15 +152,16 @@ async def discover_documents(conn) -> dict:
               AND d.source_key<>p.source_key AND d.active''', (encoded,))
         indexed = await execute(conn, '''INSERT INTO trident_learning_documents
             (source_key,source_table,source_id,source_revision,content_token,org_id,order_id,case_id,payer_id,payer_name,
-             filename,document_kind,mime_type,status,active)
+             filename,document_kind,mime_type,status,active,scope_basis)
             SELECT * FROM jsonb_to_recordset(%s::jsonb) p(source_key text,source_table text,source_id text,
               source_revision text,content_token text,org_id uuid,order_id text,case_id text,payer_id text,
-              payer_name text,filename text,document_kind text,mime_type text,status text,active boolean)
-            ON CONFLICT(source_key) DO UPDATE SET org_id=EXCLUDED.org_id,order_id=EXCLUDED.order_id,
+              payer_name text,filename text,document_kind text,mime_type text,status text,active boolean,scope_basis text)
+            ON CONFLICT(source_key) DO UPDATE SET org_id=EXCLUDED.org_id,order_id=EXCLUDED.order_id,scope_basis=EXCLUDED.scope_basis,
               status=CASE WHEN trident_learning_documents.status='UNLINKED' AND EXCLUDED.org_id IS NOT NULL
                 THEN 'PENDING' ELSE trident_learning_documents.status END,active=EXCLUDED.active
             WHERE trident_learning_documents.org_id IS DISTINCT FROM EXCLUDED.org_id
               OR trident_learning_documents.order_id IS DISTINCT FROM EXCLUDED.order_id
+              OR trident_learning_documents.scope_basis IS DISTINCT FROM EXCLUDED.scope_basis
               OR trident_learning_documents.active IS DISTINCT FROM EXCLUDED.active''', (encoded,))
     # Removed source records remain in history but are no longer searchable or
     # included in a later model. Never serve deleted snapshot documents.

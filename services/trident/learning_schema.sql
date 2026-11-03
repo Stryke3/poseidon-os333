@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS trident_learning_documents (
     org_id UUID,
     order_id TEXT,
     case_id TEXT,
+    scope_basis TEXT,
     payer_id TEXT,
     payer_name TEXT,
     filename TEXT NOT NULL,
@@ -85,3 +86,4 @@ CREATE TABLE IF NOT EXISTS trident_document_models (
     document_count INTEGER NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE trident_learning_documents ADD COLUMN IF NOT EXISTS scope_basis TEXT;

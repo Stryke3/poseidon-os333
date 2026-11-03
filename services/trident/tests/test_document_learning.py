@@ -127,7 +127,8 @@ async def test_retained_835_includes_unmatched_claims_without_posting():
 
 
 @pytest.mark.asyncio
-async def test_legacy_order_number_linkage_requires_a_unique_order():
+async def test_legacy_order_number_linkage_requires_a_unique_order(monkeypatch):
+    monkeypatch.setenv('TRIDENT_SPEAR_SQL_DOCUMENT_ORG_ID',ORG)
     conn=await database()
     try:
         async with conn.cursor() as cur:
@@ -139,11 +140,16 @@ async def test_legacy_order_number_linkage_requires_a_unique_order():
                 'documents':[{'id':'file-unique','case_id':'case-unique','filename':'synthetic.txt','content_type':'text/plain',
                     'content_base64':base64.b64encode(b'Synthetic authorization appeal').decode()},
                     {'id':'file-ambiguous','case_id':'case-ambiguous','filename':'synthetic.txt','content_type':'text/plain',
-                    'content_base64':base64.b64encode(b'Synthetic authorization appeal').decode()}]}
+                    'content_base64':base64.b64encode(b'Synthetic authorization appeal').decode()},
+                    {'id':'file-workspace','case_id':None,'filename':'synthetic.txt','content_type':'text/plain'},
+                    {'id':'file-other','case_id':None,'org_id':OTHER,'filename':'synthetic.txt','content_type':'text/plain'}]}
             await cur.execute('INSERT INTO spear_store_snapshots VALUES(%s,%s::jsonb)',('spear-production',json.dumps(data)))
         await discover_documents(conn)
-        found=await rows(conn,'SELECT source_id,org_id::text AS org_id,status FROM trident_learning_documents ORDER BY source_id')
+        found=await rows(conn,'SELECT source_id,org_id::text AS org_id,status,order_id,scope_basis FROM trident_learning_documents ORDER BY source_id')
         assert found[0]['org_id'] is None and found[0]['status']=='UNLINKED'
-        assert found[1]['org_id']==ORG and found[1]['status']=='PENDING'
+        assert found[1]['org_id']==OTHER
+        assert found[2]['org_id']==ORG and found[2]['status']=='PENDING'
+        assert found[3]['org_id']==ORG and found[3]['order_id'] is None
+        assert found[3]['scope_basis']=='CONFIGURED_SQL_STORE_OWNER'
     finally:
         await close(conn)
