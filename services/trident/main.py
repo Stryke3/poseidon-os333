@@ -49,7 +49,7 @@ except ImportError:
 from learning_pipeline import (ensure_schema, ingest_sources, index_outcomes, json_safe,
     outcome_record, fingerprint, rows as pipeline_rows, execute as pipeline_execute)
 from library_api import authorize as authorize_learning, library as learning_library
-from document_learning import process_documents, train_document_models
+from document_learning import process_documents, train_document_models, cancel_obsolete_scans
 
 # ---------------------------------------------------------------------------
 app = create_app(
@@ -1237,6 +1237,8 @@ async def trident_library(request: Request, query: str = ""):
 @app.post("/api/v1/trident/backfill")
 async def trident_backfill(request: Request):
     authorize_learning(request,write=True)
+    async with request.app.state.db_pool.connection() as conn:
+        await cancel_obsolete_scans(conn)
     async with request.app.state.db_pool.connection() as conn, conn.transaction():
         await ensure_schema(conn)
         ingestion = await ingest_sources(conn,max_pages=100)

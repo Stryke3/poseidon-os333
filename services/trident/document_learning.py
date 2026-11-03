@@ -313,5 +313,34 @@ async def document_library(conn, org_id, query='', codes=None, include_text=Fals
             ranks = {}
             for key, score in zip(model['source_keys'], scores): ranks[key] = max(ranks.get(key,0),float(score))
             found.sort(key=lambda d:ranks.get(d['source_key'],0),reverse=True)
-    return json_safe({'counts':{r['status']:r['count'] for r in counts},'models':models,'files':found,
+    diagnostics = await rows(conn, """SELECT DISTINCT a.pid,a.state,a.wait_event_type,a.wait_event,
+        EXTRACT(EPOCH FROM NOW()-a.query_start)::float AS running_seconds,
+        CASE WHEN STRPOS(a.query,'FROM spear_store_snapshots s')>0
+          AND STRPOS(a.query,'''spear_store_snapshots'' AS source_table')>0 THEN 'LEGACY_SNAPSHOT_SCAN'
+          WHEN STRPOS(a.query,'WITH scoped AS MATERIALIZED')>0 THEN 'SNAPSHOT_SCAN'
+          ELSE 'LEARNING_JOB' END AS phase
+        FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid
+        WHERE l.locktype='advisory' AND l.objid=ANY(ARRAY[817260030,817260031,817260032,817260033]::oid[])
+          AND a.pid<>pg_backend_pid()"""
+    ) if include_text else []
+    return json_safe({'counts':{r['status']:r['count'] for r in counts},'models':models,'files':found,'jobs':diagnostics,
                      'matched_files':found[0]['matched_files'] if found else 0})
+
+
+async def cancel_obsolete_scans(conn):
+    # A removed deployment can leave a CPU-bound PostgreSQL SELECT alive until
+    # the server notices the disconnected client. Cancel only our obsolete,
+    # read-only snapshot query, holding our ingestion lock, older than 5 min.
+    # The materialized replacement, models, claims and payment jobs cannot match.
+    result = await rows(conn, """SELECT DISTINCT a.pid FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid
+        WHERE l.locktype='advisory' AND l.objid=817260031::oid AND l.granted
+          AND a.pid<>pg_backend_pid() AND a.state='active' AND a.query_start<NOW()-INTERVAL '5 minutes'
+          AND STRPOS(a.query,'FROM spear_store_snapshots s')>0
+          AND STRPOS(a.query,'''spear_store_snapshots'' AS source_table')>0
+          AND STRPOS(a.query,'WITH scoped AS MATERIALIZED')=0"""
+    )
+    cancelled=0
+    for job in result:
+        response=await rows(conn,'SELECT pg_cancel_backend(%s) AS cancelled',(job['pid'],))
+        cancelled+=int(bool(response[0]['cancelled']))
+    return cancelled
