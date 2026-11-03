@@ -9,6 +9,7 @@ from fastapi import HTTPException, Request
 
 from base import settings
 from learning_pipeline import feedback_status, json_safe, rows
+from document_learning import document_library
 
 
 def authorize(request: Request, write: bool = False) -> str:
@@ -37,7 +38,7 @@ def authorize(request: Request, write: bool = False) -> str:
         raise HTTPException(403, "A verified organization is required")
 
 
-async def library(conn, org_id: str, query: str = "", codes: list[str] | None = None, include_case_evidence: bool = False) -> dict:
+async def library(conn, org_id: str, query: str = "", codes: list[str] | None = None, include_case_evidence: bool = False, document_query: str = "") -> dict:
     query = query.strip()[:200]
     codes = list(dict.fromkeys(str(c).strip().upper() for c in (codes or []) if str(c).strip()))[:100]
     # Each observed payer identity remains distinct; a kit filter expands into
@@ -85,4 +86,5 @@ async def library(conn, org_id: str, query: str = "", codes: list[str] | None = 
           WHERE UPPER(code)=ANY(%s::text[]))) ORDER BY f.occurred_at DESC,f.source_key""",
         (org_id,query,query,query,codes,codes)) if include_case_evidence else []
     return json_safe({"payers": payers,"observed":observed,"rules":rules,"models":models,
+                      "documents":await document_library(conn,org_id,document_query.strip()[:200],codes,include_case_evidence,query),
                       "case_evidence":evidence,"feedback":await feedback_status(conn,org_id),"query":query,"codes":codes})

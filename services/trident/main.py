@@ -49,6 +49,7 @@ except ImportError:
 from learning_pipeline import (ensure_schema, ingest_sources, index_outcomes, json_safe,
     outcome_record, fingerprint, rows as pipeline_rows, execute as pipeline_execute)
 from library_api import authorize as authorize_learning, library as learning_library
+from document_learning import process_documents, train_document_models
 
 # ---------------------------------------------------------------------------
 app = create_app(
@@ -917,7 +918,34 @@ async def _continuous_learning_loop(app) -> None:
         await asyncio.sleep(300)
 
 
-app.service_background_tasks = [_continuous_learning_loop]
+async def _document_learning_loop(app) -> None:
+    while True:
+        processed = 0
+        try:
+            # Independent from financial training: all new files get extracted
+            # between weekly runs, and parser failures cannot stop claim ingestion.
+            async with app.state.db_pool.connection() as conn:
+                await ensure_schema(conn)
+            async with app.state.db_pool.connection() as conn, conn.transaction():
+                lock = await pipeline_rows(conn,"SELECT pg_try_advisory_xact_lock(817260033) AS acquired")
+                if lock[0]['acquired']:
+                    result = await process_documents(conn,limit=12)
+                    processed = result['processed']
+                    # An empty document corpus gets its initial model after the
+                    # backlog clears; later model refreshes remain weekly.
+                    pending = await pipeline_rows(conn,"SELECT COUNT(*) AS n FROM trident_learning_documents WHERE active AND org_id IS NOT NULL AND status='PENDING'")
+                    result['models'] = await train_document_models(conn) if not pending[0]['n'] else []
+                    await pipeline_execute(conn,"""INSERT INTO trident_learning_jobs(job_key,last_success_at,last_result,last_error)
+                        VALUES('document_extraction',NOW(),%s::jsonb,NULL) ON CONFLICT(job_key) DO UPDATE
+                        SET last_success_at=NOW(),last_result=EXCLUDED.last_result,last_error=NULL""",(json.dumps(result),))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('TRIDENT document corpus refresh failed')
+        await asyncio.sleep(1 if processed else 30)
+
+
+app.service_background_tasks = [_continuous_learning_loop, _document_learning_loop]
 
 
 async def _lookup_learned_rate(conn, payer_id: str, hcpcs_code: str) -> dict[str, Any] | None:
@@ -1197,7 +1225,7 @@ async def v1_trident_code_map(icd10: str, request: Request):
 async def trident_library(request: Request, query: str = ""):
     org_id = authorize_learning(request)
     async with request.app.state.db_pool.connection() as conn:
-        payload = await learning_library(conn,org_id,query,request.query_params.getlist("code"),bool(request.state.trident_case_access))
+        payload = await learning_library(conn,org_id,query,request.query_params.getlist("code"),bool(request.state.trident_case_access),request.query_params.get('document_query',''))
         latest = await fetch_one(conn,"SELECT MAX(completed_at) AS at FROM trident_training_ledger WHERE status='completed'")
     last = (latest or {}).get("at")
     return {**payload,"schedule":{"cadence":settings.trident_learning_mode,

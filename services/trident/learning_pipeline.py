@@ -227,7 +227,9 @@ async def _ingest_sources(conn, max_pages: int = 20) -> dict:
                     "source_control_number":item.get("control_number"),"hcpcs":order.get("hcpcs_codes") or [],
                     "delivery_confirmed":item.get("status")=="delivered","payer_registered":None},
             })
-    result = {"state": "INGESTED", "ingested": inserted}
+    from document_learning import discover_documents
+    documents = await discover_documents(conn)
+    result = {"state": "INGESTED", "ingested": inserted, "documents": documents}
     await execute(conn, """INSERT INTO trident_learning_jobs(job_key,last_success_at,last_result,last_error)
         VALUES ('feedback_ingestion',NOW(),%s::jsonb,NULL) ON CONFLICT(job_key) DO UPDATE
         SET last_success_at=NOW(),last_result=EXCLUDED.last_result,last_error=NULL""", (json.dumps(result),))
