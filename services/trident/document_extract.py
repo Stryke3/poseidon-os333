@@ -12,10 +12,12 @@ import re
 import subprocess
 import sys
 import math
+import tempfile
+from pathlib import Path
 
 import pymupdf
 
-PARSER_VERSION = 2
+PARSER_VERSION = 3
 MAX_RASTER_PIXELS = 6_000_000
 MAX_RASTER_EDGE = 3200
 
@@ -34,7 +36,7 @@ def ocr_page(page):
     best = ''; successes = 0
     # Sparse insurance cards and sideways fax scans need a different layout.
     # Retry only weak pages; ordinary packets keep one OCR pass per scan.
-    for rotation,layout in ((0,3),(0,11),(90,11),(270,11)):
+    for rotation,layout in ((0,3),(0,11),(180,11),(90,11),(270,11)):
         try:
             result = subprocess.run(['tesseract','stdin','stdout','--psm',str(layout)],
                 input=raster_page(page,rotation),capture_output=True,timeout=25,check=True,
@@ -48,6 +50,37 @@ def ocr_page(page):
         except (OSError,subprocess.SubprocessError,RuntimeError):
             continue
     return best,not bool(successes)
+
+
+def extract_poppler(content):
+    """Independent PDF engine for MuPDF process failures; bounded page renders."""
+    digest=hashlib.sha256(content).hexdigest()
+    output=[];failed=[];empty=[];ocr_pages=0
+    with tempfile.TemporaryDirectory(prefix='trident-parse-') as directory:
+        path=Path(directory)/'source.pdf';path.write_bytes(content);path.chmod(0o600)
+        info=subprocess.run(['pdfinfo',str(path)],capture_output=True,timeout=25,check=True).stdout.decode(errors='replace')
+        page_count=int(re.search(r'^Pages:\s*(\d+)',info,re.MULTILINE).group(1))
+        for page in range(1,page_count+1):
+            text='';ocr=''
+            try:
+                text=subprocess.run(['pdftotext','-f',str(page),'-l',str(page),str(path),'-'],
+                    capture_output=True,timeout=25,check=True).stdout.decode('utf-8',errors='replace').strip()
+                subprocess.run(['pdftoppm','-f',str(page),'-l',str(page),'-singlefile','-scale-to','2400',
+                    '-gray','-png',str(path),str(Path(directory)/'page')],capture_output=True,timeout=35,check=True)
+                image=pymupdf.open(Path(directory)/'page.png')
+                rendered=pymupdf.open('pdf',image.convert_to_pdf())
+                ocr,ocr_failed=ocr_page(rendered[0]);ocr_pages+=1
+                rendered.close();image.close()
+                if ocr_failed:failed.append(page)
+            except (OSError,subprocess.SubprocessError,RuntimeError):failed.append(page)
+            if ocr and ocr!=text:text=text+'\n'+ocr if text else ocr
+            if text:output.append(f'[Page {page}]\n{text}')
+            else:empty.append(page)
+    return {'status':'EXTRACTED' if output and not failed else 'NEEDS_REVIEW','text':'\n\n'.join(output),
+        'sha256':digest,'page_count':page_count,'extracted_pages':len(output),'ocr_pages':ocr_pages,
+        'error':'OCR_INCOMPLETE' if failed else 'NO_READABLE_CONTENT' if not output else None,
+        'details':{'parser_version':PARSER_VERSION,'parser_engine':'POPPLER','source_bytes':len(content),
+                   'failed_pages':failed,'empty_pages':empty}}
 
 
 def extract(content: bytes, mime: str) -> dict:
@@ -97,7 +130,8 @@ def extract(content: bytes, mime: str) -> dict:
 if __name__ == '__main__':
     try:
         data = json.load(sys.stdin)
-        result = extract(base64.b64decode(data['content_base64'], validate=True), data['mime_type'])
+        content=base64.b64decode(data['content_base64'],validate=True)
+        result = extract_poppler(content) if data.get('engine')=='poppler' else extract(content, data['mime_type'])
     except Exception:
         # Never emit document text/identifiers in process errors or application logs.
         result = {'status': 'NEEDS_REVIEW', 'error': 'DOCUMENT_EXTRACTION_FAILED', 'text': ''}

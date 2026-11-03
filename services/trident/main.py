@@ -50,6 +50,7 @@ from learning_pipeline import (ensure_schema, ingest_sources, index_outcomes, js
     outcome_record, fingerprint, rows as pipeline_rows, execute as pipeline_execute)
 from library_api import authorize as authorize_learning, library as learning_library
 from document_learning import process_documents, train_document_models, cancel_obsolete_scans, request_document_repair, complete_document_repairs
+from document_recovery import recover_archive_copy
 
 # ---------------------------------------------------------------------------
 app = create_app(
@@ -1267,3 +1268,16 @@ async def trident_backfill(request: Request):
     # then prove this dataset's membership without resending a claim or appeal.
     return {**ingestion,"outcomes_indexed":outcomes,"repair_queued":repair_queued,
         "training_state":"REPAIR_REFRESH_QUEUED" if repair_queued else "AWAITING_WEEKLY_TRAINING"}
+
+
+@app.post('/api/v1/trident/documents/recover')
+async def trident_recover_document(request: Request):
+    org_id=authorize_learning(request,write=True)
+    if int(request.headers.get('content-length','0'))>4_300_000:
+        raise HTTPException(413,'Recovery files must be at most 3 MiB.')
+    payload=await request.json()
+    if not isinstance(payload,dict):raise HTTPException(400,'Invalid recovery input')
+    async with request.app.state.db_pool.connection() as conn:
+        await _ensure_learning_schema(request.app,conn)
+        try:return await recover_archive_copy(conn,org_id,payload)
+        except ValueError as error:raise HTTPException(400,str(error))

@@ -67,6 +67,7 @@ async def ensure_schema(conn):
             FROM unnest(%s::text[]) expected(name)""", ([
                 'trident_feedback_ingestion','trident_model_artifacts','trident_training_membership',
                 'trident_learning_jobs','trident_learning_documents','trident_document_models',
+                'trident_recovered_files','trident_document_recoveries',
                 'trident_feedback_case_idx','trident_membership_source_idx',
                 'trident_documents_queue_idx','trident_documents_org_idx'],))
         return bool(result[0]['ready'])

@@ -20,6 +20,18 @@ from pathlib import Path
 from sklearn.feature_extraction.text import TfidfVectorizer
 from learning_pipeline import execute, fingerprint, json_safe, rows, table_exists
 
+CASE_LEARNING_FIELDS=('id','core_order_id','order_id','payer','payer_id','product','laterality','order_date',
+    'hcpcs','icd','source_hcpcs','source_icd','operator_approved_hcpcs','operator_approved_icd',
+    'final_hcpcs','final_icd','status','billing_status','pod_status','tebra_status',
+    'prior_auth_status','prior_auth_control_number','authorization_decisions','created_at','updated_at')
+
+
+def case_learning_facts(case):
+    return {'kind':'LIVE_CASE_FACTS','mime_type':'application/json','case_id':case['id'],
+        'org_id':case.get('org_id'),'evidence_role':'RECORDED_REFERENCE_FACTS',
+        'original_files_reconstructed':False,
+        'facts':{k:case[k] for k in CASE_LEARNING_FIELDS if case.get(k) is not None}}
+
 def verified_org(value):
     try:
         return str(uuid.UUID(str(value)))
@@ -83,6 +95,22 @@ async def discover_documents(conn) -> dict:
                 row['scope_conflict'] = True
             sources.append(row)
         coverage['spear_store_documents_and_artifacts'] = len(grouped)
+        # The live case record remains useful when the legacy archive omitted
+        # a PDF. It is a separate source, never a replacement signature or EOB.
+        scanned_tables.add('spear_case_facts')
+        case_rows=await rows(conn,'''SELECT s.store_key,c.item FROM spear_store_snapshots s
+            CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.store->'cases','[]'::jsonb)) c(item)
+            WHERE s.store_key=%s''',(os.getenv('SPEAR_SQL_STORE_KEY','spear-production'),))
+        for case_row in case_rows:
+            case=case_row['item']
+            if not any(case.get(k) for k in ('payer','hcpcs','source_hcpcs','final_hcpcs','product','billing_status')):
+                continue
+            item=case_learning_facts(case)
+            item['org_id']=item.get('org_id') or verified_org(os.getenv('TRIDENT_SPEAR_SQL_DOCUMENT_ORG_ID'))
+            item['filename']=f"live-case-{case['id']}.json"
+            sources.append({'source_table':'spear_case_facts','source_id':case_row['store_key']+':'+case['id'],
+                'item':item,'order_context':None})
+        coverage['live_case_facts']=sum(s['source_table']=='spear_case_facts' for s in sources)
     if await table_exists(conn, 'remittance_batches'):
         scanned_tables.add('remittance_batches')
         batches = await rows(conn, """SELECT 'remittance_batches' AS source_table,b.id::text AS source_id,
@@ -113,6 +141,15 @@ async def discover_documents(conn) -> dict:
             LEFT JOIN orders o ON o.id::text=replace(to_jsonb(e)->>'order_id','ord_','')"""
         )
         sources.extend(records); coverage[table] = len(records)
+    # Appeals and rebills were captured as receipts but their retained facts
+    # must also reach the evidence model. They are reference examples only;
+    # no submission, operator decision or fax receipt creates an outcome label.
+    scanned_tables.add('trident_feedback_ingestion')
+    activity=await rows(conn,"""SELECT 'trident_feedback_ingestion' AS source_table,source_key AS source_id,
+        (to_jsonb(f)-'ingested_at')||jsonb_build_object('kind','CLAIM_ACTIVITY_FACTS',
+          'mime_type','application/json','filename','activity-'||source_key||'.json') AS item,
+        NULL AS order_context FROM trident_feedback_ingestion f""")
+    sources.extend(activity);coverage['claim_activity_facts']=len(activity)
     indexed = 0
     incoming = []
     existing = {r['source_key']:r for r in await rows(conn,
@@ -178,6 +215,24 @@ async def discover_documents(conn) -> dict:
 
 async def source_bytes(conn, record):
     table = record['source_table']; sid = record['source_id']
+    if table=='trident_feedback_ingestion':
+        data=await rows(conn,"""SELECT to_jsonb(f)-'ingested_at' AS item FROM trident_feedback_ingestion f
+            WHERE source_key=%s AND org_id=%s::uuid""",(sid,str(record['org_id'])))
+        if data:
+            text=json.dumps(json_safe({'kind':'CLAIM_ACTIVITY_FACTS','evidence_role':'RECORDED_REFERENCE_FACTS',
+                'source':data[0]['item']}),sort_keys=True)
+            return base64.b64encode(text.encode()).decode()
+        return None
+    if table=='spear_case_facts':
+        store,case_id=sid.split(':',1)
+        data=await rows(conn,"""SELECT c.item FROM spear_store_snapshots s CROSS JOIN LATERAL
+            jsonb_array_elements(COALESCE(s.store->'cases','[]'::jsonb)) c(item)
+            WHERE s.store_key=%s AND c.item->>'id'=%s""",(store,case_id))
+        if data:
+            case=data[0]['item'];source_org=verified_org(case.get('org_id') or os.getenv('TRIDENT_SPEAR_SQL_DOCUMENT_ORG_ID'))
+            if source_org==str(record['org_id']):
+                return base64.b64encode(json.dumps(case_learning_facts(case),sort_keys=True).encode()).decode()
+        return None
     if table == 'order_documents':
         data = await rows(conn, "SELECT metadata->>'content_base64' AS content FROM order_documents WHERE id::text=%s", (sid,))
     elif table == 'spear_store_snapshots':
@@ -230,16 +285,24 @@ async def _extract_input(record, content, extractor=None):
                     'sha256':hashlib.sha256(decoded).hexdigest(),'page_count':1,
                     'extracted_pages':int(bool(text.strip())),'ocr_pages':0}
             else:
-                proc = await asyncio.create_subprocess_exec(sys.executable, str(Path(__file__).with_name('document_extract.py')),
-                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-                try:
-                    output, _ = await asyncio.wait_for(proc.communicate(json.dumps({
-                        'content_base64': content, 'mime_type': record['mime_type']}).encode()), timeout=600)
-                except BaseException:
-                    if proc.returncode is None: proc.kill()
-                    await proc.wait()
-                    raise
-                parsed = json.loads(output)
+                for engine in ('mupdf','poppler'):
+                    proc = await asyncio.create_subprocess_exec(sys.executable, str(Path(__file__).with_name('document_extract.py')),
+                        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+                    try:
+                        output, _ = await asyncio.wait_for(proc.communicate(json.dumps({
+                            'content_base64': content, 'mime_type': record['mime_type'],'engine':engine}).encode()), timeout=600)
+                    except BaseException:
+                        if proc.returncode is None: proc.kill()
+                        await proc.wait()
+                        raise
+                    if proc.returncode==0 and output:
+                        parsed=json.loads(output)
+                        if parsed.get('status')=='EXTRACTED' or engine=='poppler' or not content.startswith('JVBER'):
+                            break
+                    else:
+                        parsed={'status':'NEEDS_REVIEW','error':'LOCAL_PARSER_FAILED','text':'',
+                            'details':{'parser_version':3,'parser_engine':engine,'worker_return_code':proc.returncode}}
+                        if not content.startswith('JVBER'):break
         except (Exception, asyncio.TimeoutError):
             parsed = {'status': 'RETRY', 'error': 'EXTRACTION_RETRY', 'text': ''}
     return parsed
@@ -276,7 +339,7 @@ async def process_documents(conn, limit=8, extractor=None):
                 attempts=attempts+1,next_attempt_at=NOW()+INTERVAL '1 hour',extracted_at=NOW(),extraction_details=%s::jsonb
                 WHERE source_key=%s''', (parsed['status'], parsed.get('sha256'), text, parsed.get('page_count'),
                     parsed.get('extracted_pages'), parsed.get('ocr_pages'), codes, parsed.get('error'),
-                    json.dumps(parsed.get('details') or {'parser_version':2}),record['source_key']))
+                    json.dumps(parsed.get('details') or {'parser_version':3}),record['source_key']))
             result['processed'] += 1
             result['extracted' if parsed['status'] == 'EXTRACTED' else 'held'] += 1
     return result
@@ -292,7 +355,7 @@ async def train_document_models(conn, force=False, org_id=None):
         latest = await rows(conn, "SELECT EXISTS(SELECT 1 FROM trident_document_models WHERE org_id=%s::uuid AND created_at>NOW()-INTERVAL '7 days') AS fresh", (org['org_id'],))
         if not force and latest[0]['fresh']:
             continue
-        docs = await rows(conn, """SELECT source_key,content_sha256,text_content,page_count,extracted_pages
+        docs = await rows(conn, """SELECT source_key,content_sha256,text_content,page_count,extracted_pages,extraction_details
             FROM trident_learning_documents WHERE org_id=%s::uuid AND active AND status='EXTRACTED'
             AND length(trim(text_content))>0 ORDER BY source_key""", (org['org_id'],))
         # Chunk all text, never just the first pages of long packets.
@@ -308,7 +371,7 @@ async def train_document_models(conn, force=False, org_id=None):
             matrix = vectorizer.fit_transform(chunks)
         except ValueError:
             continue
-        manifest = [{k: d[k] for k in ('source_key','content_sha256','page_count','extracted_pages')} for d in docs]
+        manifest = [{k: d[k] for k in ('source_key','content_sha256','page_count','extracted_pages','extraction_details')} for d in docs]
         version = f"documents-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid.uuid4().hex[:8]}"
         await execute(conn, '''INSERT INTO trident_document_models(model_version,org_id,artifact,source_manifest,document_count)
             VALUES(%s,%s::uuid,%s,%s::jsonb,%s)''', (version,org['org_id'],
@@ -322,21 +385,30 @@ async def request_document_repair(conn, org_id):
     queued = await execute(conn, '''UPDATE trident_learning_documents SET status='PENDING',
         attempts=0,next_attempt_at=NOW() WHERE org_id=%s::uuid AND active
         AND status IN('NEEDS_REVIEW','RETRY')
-        AND COALESCE((extraction_details->>'parser_version')::int,0)<2''',(org_id,))
-    if queued:
+        AND COALESCE((extraction_details->>'parser_version')::int,0)<3''',(org_id,))
+    fresh=await rows(conn,'''SELECT COUNT(*) AS n FROM trident_learning_documents d
+        WHERE d.org_id=%s::uuid AND d.active AND d.status IN('EXTRACTED','PENDING')
+        AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE((SELECT source_manifest
+            FROM trident_document_models WHERE org_id=%s::uuid ORDER BY created_at DESC LIMIT 1),'[]'::jsonb)) m
+            WHERE m->>'source_key'=d.source_key)''',(org_id,org_id))
+    if queued or fresh[0]['n']:
         await execute(conn, '''INSERT INTO trident_learning_jobs(job_key,last_result)
             VALUES(%s,%s::jsonb) ON CONFLICT(job_key) DO UPDATE SET last_result=EXCLUDED.last_result''',
-            ('document_repair:'+org_id,json.dumps({'state':'REQUESTED','org_id':org_id,'queued':queued})))
+            ('document_repair:'+org_id,json.dumps({'state':'REQUESTED','org_id':org_id,'queued':queued,
+                'requested_at':datetime.now(timezone.utc).isoformat()})))
     return queued
 
 
-async def complete_document_repairs(conn):
+async def complete_document_repairs(conn, settle_seconds=60):
     jobs=await rows(conn, """SELECT job_key,last_result FROM trident_learning_jobs
         WHERE job_key LIKE 'document_repair:%%' AND last_result->>'state'='REQUESTED'""")
     completed=[]
     for job in jobs:
         org_id=verified_org(job['last_result'].get('org_id'))
         if not org_id:
+            continue
+        requested=job['last_result'].get('requested_at')
+        if requested and (datetime.now(timezone.utc)-datetime.fromisoformat(requested)).total_seconds()<settle_seconds:
             continue
         pending=await rows(conn, """SELECT COUNT(*) AS n FROM trident_learning_documents
             WHERE active AND org_id=%s::uuid AND status IN('PENDING','RETRY')""",(org_id,))
@@ -358,7 +430,7 @@ async def document_library(conn, org_id, query='', codes=None, include_text=Fals
     membership = {m['source_key']:models[0]['model_version'] for m in models[0]['source_manifest']} if models else {}
     for model in models: model.pop('source_manifest')
     found = await rows(conn, '''SELECT source_key,source_table,source_id,filename,document_kind,status,
-        content_sha256,page_count,extracted_pages,ocr_pages,last_error,extracted_at,
+        content_sha256,page_count,extracted_pages,ocr_pages,last_error,extracted_at,extraction_details,
         LEFT(text_content,600) AS excerpt,COUNT(*) OVER() AS matched_files
         FROM trident_learning_documents WHERE org_id=%s::uuid AND active
         AND (%s='' OR STRPOS(LOWER(COALESCE(payer_id,'')||' '||COALESCE(payer_name,'')||' '||filename||' '||COALESCE(text_content,'')),LOWER(%s))>0)

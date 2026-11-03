@@ -88,3 +88,20 @@ CREATE TABLE IF NOT EXISTS trident_document_models (
 );
 ALTER TABLE trident_learning_documents ADD COLUMN IF NOT EXISTS scope_basis TEXT;
 ALTER TABLE trident_learning_documents ADD COLUMN IF NOT EXISTS extraction_details JSONB;
+CREATE TABLE IF NOT EXISTS trident_recovered_files (
+    org_id UUID NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    content BYTEA NOT NULL,
+    filename TEXT NOT NULL,
+    provenance JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(org_id,content_sha256)
+);
+CREATE TABLE IF NOT EXISTS trident_document_recoveries (
+    source_key TEXT PRIMARY KEY REFERENCES trident_learning_documents(source_key),
+    org_id UUID NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    verification_basis TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY(org_id,content_sha256) REFERENCES trident_recovered_files(org_id,content_sha256)
+);
