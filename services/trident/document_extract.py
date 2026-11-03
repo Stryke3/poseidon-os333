@@ -11,8 +11,43 @@ import os
 import re
 import subprocess
 import sys
+import math
 
 import pymupdf
+
+PARSER_VERSION = 2
+MAX_RASTER_PIXELS = 6_000_000
+MAX_RASTER_EDGE = 3200
+
+
+def raster_page(page, rotation=0):
+    # Fax PDFs sometimes declare enormous physical pages. A fixed DPI then
+    # allocates gigabytes and times out before OCR sees a single character.
+    width, height = max(1,page.rect.width), max(1,page.rect.height)
+    scale = min(200/72, MAX_RASTER_EDGE/max(width,height),
+                math.sqrt(MAX_RASTER_PIXELS/(width*height)))
+    return page.get_pixmap(matrix=pymupdf.Matrix(scale,scale).prerotate(rotation),
+                           colorspace=pymupdf.csGRAY,alpha=False).tobytes('png')
+
+
+def ocr_page(page):
+    best = ''; successes = 0
+    # Sparse insurance cards and sideways fax scans need a different layout.
+    # Retry only weak pages; ordinary packets keep one OCR pass per scan.
+    for rotation,layout in ((0,3),(0,11),(90,11),(270,11)):
+        try:
+            result = subprocess.run(['tesseract','stdin','stdout','--psm',str(layout)],
+                input=raster_page(page,rotation),capture_output=True,timeout=25,check=True,
+                env={**os.environ,'OMP_THREAD_LIMIT':'1'})
+            successes += 1
+            text=result.stdout.decode('utf-8').strip()
+            if len(re.findall(r'\w',text))>len(re.findall(r'\w',best)):
+                best=text
+            if len(re.findall(r'\b\w{2,}\b',best))>=12:
+                break
+        except (OSError,subprocess.SubprocessError,RuntimeError):
+            continue
+    return best,not bool(successes)
 
 
 def extract(content: bytes, mime: str) -> dict:
@@ -30,7 +65,7 @@ def extract(content: bytes, mime: str) -> dict:
                     page_count=document.page_count, extracted_pages=0, ocr_pages=0)
     if not document.is_pdf:
         document = pymupdf.open('pdf', document.convert_to_pdf())
-    output = []; readable = 0; ocr_pages = 0; failures = 0
+    output = []; readable = 0; ocr_pages = 0; failures = []; empty = []
     for page in document:
         text = page.get_text('text').strip()
         # Small letterhead logos do not turn a selectable-text medical record
@@ -39,24 +74,24 @@ def extract(content: bytes, mime: str) -> dict:
         scanned_body=any(pymupdf.Rect(info['bbox']).get_area()/page_area>=0.08
                          for info in page.get_image_info())
         if len(re.findall(r'\w', text)) < 40 or scanned_body:
-            try:
-                raster = page.get_pixmap(dpi=170, alpha=False).tobytes('png')
-                result = subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '3'],
-                                        input=raster, capture_output=True, timeout=30, check=True,
-                                        env={**os.environ, 'OMP_THREAD_LIMIT':'1'})
-                ocr = result.stdout.decode('utf-8').strip()
-                ocr_pages += 1
-                if ocr and ocr != text:
-                    text = text + '\n' + ocr if text else ocr
-            except (OSError, subprocess.SubprocessError):
-                failures += 1
+            ocr,failed = ocr_page(page)
+            ocr_pages += 1
+            if ocr and ocr != text:
+                text = text + '\n' + ocr if text else ocr
+            if failed:
+                failures.append(page.number+1)
         if text:
             readable += 1
             output.append(f'[Page {page.number + 1}]\n{text}')
+        else:
+            empty.append(page.number+1)
     return dict(status='EXTRACTED' if readable and not failures else 'NEEDS_REVIEW',
                 text='\n\n'.join(output), sha256=digest, page_count=len(document),
                 extracted_pages=readable, ocr_pages=ocr_pages,
-                error='OCR_INCOMPLETE' if failures else None)
+                error='OCR_INCOMPLETE' if failures else 'NO_READABLE_CONTENT' if not readable else None,
+                details={'parser_version':PARSER_VERSION,'source_bytes':len(content),
+                    'failed_pages':failures,'empty_pages':empty,
+                    'page_sizes':[[round(p.rect.width),round(p.rect.height)] for p in document]})
 
 
 if __name__ == '__main__':

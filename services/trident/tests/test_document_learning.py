@@ -13,6 +13,53 @@ from document_learning import discover_documents, process_documents, train_docum
 from document_extract import extract
 
 
+def test_oversized_fax_raster_is_bounded_and_sparse_ocr_recovers(monkeypatch):
+    import document_extract
+    from types import SimpleNamespace
+    document=pymupdf.open();page=document.new_page(width=20_000,height=30_000)
+    raster=pymupdf.Pixmap(document_extract.raster_page(page))
+    assert raster.width*raster.height<=document_extract.MAX_RASTER_PIXELS+10_000
+    assert max(raster.width,raster.height)<=document_extract.MAX_RASTER_EDGE+1
+    calls=[]
+    def ocr(command,**kwargs):
+        calls.append(command[-1])
+        text=b'' if command[-1]=='3' else b'Synthetic insurance card payer plan identifier and authorization supporting documentation for E0676 claim'
+        return SimpleNamespace(stdout=text)
+    monkeypatch.setattr(document_extract.subprocess,'run',ocr)
+    result=extract(document.tobytes(),'application/pdf')
+    assert result['status']=='EXTRACTED' and 'E0676' in result['text']
+    assert calls==['3','11']
+    assert result['details']['parser_version']==2
+
+
+@pytest.mark.asyncio
+async def test_repair_retries_old_parser_once_and_refreshes_only_its_org():
+    from document_learning import request_document_repair,complete_document_repairs
+    conn=await database()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute('''CREATE TABLE order_documents(id uuid,order_id uuid,org_id uuid,doc_type text,
+                file_name text,mime_type text,metadata jsonb,status text)''')
+            for org in (ORG,OTHER):
+                await cur.execute("INSERT INTO order_documents VALUES(%s,NULL,%s,'eob','synthetic.txt','text/plain',%s::jsonb,'final')",
+                    (str(uuid.uuid4()),org,json.dumps({'content_base64':base64.b64encode(b'Synthetic payer E0676 authorization evidence').decode()})))
+        await discover_documents(conn)
+        async with conn.cursor() as cur:
+            await cur.execute("UPDATE trident_learning_documents SET status='NEEDS_REVIEW',attempts=2")
+        assert await request_document_repair(conn,ORG)==1
+        assert await request_document_repair(conn,ORG)==0
+        assert await complete_document_repairs(conn)==[]
+        await process_documents(conn)
+        completed=await complete_document_repairs(conn)
+        assert len(completed)==1 and completed[0]['models'][0]['documents']==1
+        assert await complete_document_repairs(conn)==[]
+        assert (await rows(conn,'SELECT org_id::text AS org_id FROM trident_document_models'))==[{'org_id':ORG}]
+        assert (await rows(conn,'SELECT status FROM trident_learning_documents WHERE org_id=%s::uuid',(OTHER,)))[0]['status']=='NEEDS_REVIEW'
+        assert (await rows(conn,'SELECT COUNT(*) AS n FROM payment_outcomes'))[0]['n']==0
+    finally:
+        await close(conn)
+
+
 @pytest.mark.asyncio
 async def test_warm_schema_checks_do_not_repeat_locking_ddl(monkeypatch):
     import learning_pipeline

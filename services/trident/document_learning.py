@@ -234,7 +234,7 @@ async def _extract_input(record, content, extractor=None):
                     stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
                 try:
                     output, _ = await asyncio.wait_for(proc.communicate(json.dumps({
-                        'content_base64': content, 'mime_type': record['mime_type']}).encode()), timeout=180)
+                        'content_base64': content, 'mime_type': record['mime_type']}).encode()), timeout=600)
                 except BaseException:
                     if proc.returncode is None: proc.kill()
                     await proc.wait()
@@ -273,18 +273,20 @@ async def process_documents(conn, limit=8, extractor=None):
             codes = sorted(set(re.findall(r'\b[A-V][0-9]{4}\b', text.upper())))
             await execute(conn, '''UPDATE trident_learning_documents SET status=%s,content_sha256=%s,
                 text_content=%s,page_count=%s,extracted_pages=%s,ocr_pages=%s,hcpcs=%s::text[],last_error=%s,
-                attempts=attempts+1,next_attempt_at=NOW()+INTERVAL '1 hour',extracted_at=NOW()
+                attempts=attempts+1,next_attempt_at=NOW()+INTERVAL '1 hour',extracted_at=NOW(),extraction_details=%s::jsonb
                 WHERE source_key=%s''', (parsed['status'], parsed.get('sha256'), text, parsed.get('page_count'),
-                    parsed.get('extracted_pages'), parsed.get('ocr_pages'), codes, parsed.get('error'), record['source_key']))
+                    parsed.get('extracted_pages'), parsed.get('ocr_pages'), codes, parsed.get('error'),
+                    json.dumps(parsed.get('details') or {'parser_version':2}),record['source_key']))
             result['processed'] += 1
             result['extracted' if parsed['status'] == 'EXTRACTED' else 'held'] += 1
     return result
 
 
-async def train_document_models(conn, force=False):
+async def train_document_models(conn, force=False, org_id=None):
     """Weekly private TF-IDF reference models, with exact file/page membership.
     These use document language, not synthetic paid/denied labels."""
-    organizations = await rows(conn, "SELECT DISTINCT org_id::text AS org_id FROM trident_learning_documents WHERE active AND status='EXTRACTED' AND org_id IS NOT NULL")
+    organizations = await rows(conn, """SELECT DISTINCT org_id::text AS org_id FROM trident_learning_documents
+        WHERE active AND status='EXTRACTED' AND org_id IS NOT NULL AND (%s::uuid IS NULL OR org_id=%s::uuid)""", (org_id,org_id))
     trained = []
     for org in organizations:
         latest = await rows(conn, "SELECT EXISTS(SELECT 1 FROM trident_document_models WHERE org_id=%s::uuid AND created_at>NOW()-INTERVAL '7 days') AS fresh", (org['org_id'],))
@@ -313,6 +315,39 @@ async def train_document_models(conn, force=False):
             pickle.dumps({'vectorizer':vectorizer,'matrix':matrix,'source_keys':keys}),json.dumps(manifest),len(docs)))
         trained.append({'model_version':version,'documents':len(docs),'chunks':len(chunks)})
     return trained
+
+
+async def request_document_repair(conn, org_id):
+    """Retry old-parser holds once and record a scoped model refresh request."""
+    queued = await execute(conn, '''UPDATE trident_learning_documents SET status='PENDING',
+        attempts=0,next_attempt_at=NOW() WHERE org_id=%s::uuid AND active
+        AND status IN('NEEDS_REVIEW','RETRY')
+        AND COALESCE((extraction_details->>'parser_version')::int,0)<2''',(org_id,))
+    if queued:
+        await execute(conn, '''INSERT INTO trident_learning_jobs(job_key,last_result)
+            VALUES(%s,%s::jsonb) ON CONFLICT(job_key) DO UPDATE SET last_result=EXCLUDED.last_result''',
+            ('document_repair:'+org_id,json.dumps({'state':'REQUESTED','org_id':org_id,'queued':queued})))
+    return queued
+
+
+async def complete_document_repairs(conn):
+    jobs=await rows(conn, """SELECT job_key,last_result FROM trident_learning_jobs
+        WHERE job_key LIKE 'document_repair:%%' AND last_result->>'state'='REQUESTED'""")
+    completed=[]
+    for job in jobs:
+        org_id=verified_org(job['last_result'].get('org_id'))
+        if not org_id:
+            continue
+        pending=await rows(conn, """SELECT COUNT(*) AS n FROM trident_learning_documents
+            WHERE active AND org_id=%s::uuid AND status IN('PENDING','RETRY')""",(org_id,))
+        if pending[0]['n']:
+            continue
+        models=await train_document_models(conn,force=True,org_id=org_id)
+        result={**job['last_result'],'state':'COMPLETED','models':models}
+        await execute(conn, '''UPDATE trident_learning_jobs SET last_result=%s::jsonb,last_success_at=NOW(),last_error=NULL
+            WHERE job_key=%s''',(json.dumps(result),job['job_key']))
+        completed.append(result)
+    return completed
 
 
 async def document_library(conn, org_id, query='', codes=None, include_text=False, insurance='', include_admin=False):
@@ -358,6 +393,7 @@ async def document_library(conn, org_id, query='', codes=None, include_text=Fals
     repair_inventory = await document_repair_inventory(conn, org_id) if include_admin and include_text else None
     return json_safe({'counts':{r['status']:r['count'] for r in counts},'models':models,'files':found,'jobs':diagnostics,
                      'repair_inventory':repair_inventory,
+                     'repair_runs':await rows(conn,'SELECT last_success_at,last_result FROM trident_learning_jobs WHERE job_key=%s',('document_repair:'+org_id,)) if include_admin else None,
                      'unlinked_sources':unlinked if include_admin else None,
                      'matched_files':found[0]['matched_files'] if found else 0})
 
@@ -365,7 +401,7 @@ async def document_library(conn, org_id, query='', codes=None, include_text=Fals
 async def document_repair_inventory(conn, org_id):
     """Scoped source locators for repair, without bytes or patient identity fields."""
     held = await rows(conn, '''SELECT source_key,source_table,source_id,source_revision,order_id,case_id,
-        filename,document_kind,status,last_error,content_sha256,page_count,extracted_pages,ocr_pages
+        filename,document_kind,status,last_error,content_sha256,page_count,extracted_pages,ocr_pages,extraction_details
         FROM trident_learning_documents WHERE active AND org_id=%s::uuid
         AND status<>'EXTRACTED' ORDER BY source_table,source_id LIMIT 1000''', (org_id,))
     locators = {}
@@ -389,11 +425,15 @@ async def document_repair_inventory(conn, org_id):
     safe_keys={'id','case_id','order_id','kind','size','created_at','source','source_id','source_document_id',
         'source_doc_id','source_artifact_id','document_id','artifact_id','storage_note','sha256','content_sha256',
         'source_sha256','dropbox_path','source_path','original_filename','original_file_name','file_name','filename',
-        'storage_key','object_key','bucket','extracted_text','ocr_text','text_content'}
+        'storage_key','object_key','bucket','source_file','storage_status','extracted_text','ocr_text','text_content'}
     for item in held:
         metadata=locators.get((item['source_table'],item['source_id']),{})
         item['metadata_keys']=sorted(metadata)
         item['source_locator']={k:v for k,v in metadata.items() if k in safe_keys and k not in {'extracted_text','ocr_text','text_content'}}
+        nested=metadata.get('metadata') or {}
+        if isinstance(nested,dict):
+            item['metadata_nested_keys']=sorted(nested)
+            item['source_locator']['metadata']={k:v for k,v in nested.items() if k in safe_keys and k not in {'extracted_text','ocr_text','text_content'}}
         item['retained_text_fields']=[k for k in ('extracted_text','ocr_text','text_content') if metadata.get(k)]
     return held
 

@@ -61,9 +61,9 @@ async def ensure_schema(conn):
     # Run before ingestion/training on startup, never from an unauthenticated read.
     async def ready():
         result=await rows(conn,"""SELECT bool_and(to_regclass(name) IS NOT NULL)
-            AND (SELECT COUNT(*)=2 FROM information_schema.columns
+            AND (SELECT COUNT(*)=3 FROM information_schema.columns
                 WHERE table_schema=current_schema() AND table_name='trident_learning_documents'
-                  AND column_name=ANY(ARRAY['content_token','scope_basis'])) AS ready
+                  AND column_name=ANY(ARRAY['content_token','scope_basis','extraction_details'])) AS ready
             FROM unnest(%s::text[]) expected(name)""", ([
                 'trident_feedback_ingestion','trident_model_artifacts','trident_training_membership',
                 'trident_learning_jobs','trident_learning_documents','trident_document_models',

@@ -87,3 +87,4 @@ CREATE TABLE IF NOT EXISTS trident_document_models (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE trident_learning_documents ADD COLUMN IF NOT EXISTS scope_basis TEXT;
+ALTER TABLE trident_learning_documents ADD COLUMN IF NOT EXISTS extraction_details JSONB;

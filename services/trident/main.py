@@ -49,7 +49,7 @@ except ImportError:
 from learning_pipeline import (ensure_schema, ingest_sources, index_outcomes, json_safe,
     outcome_record, fingerprint, rows as pipeline_rows, execute as pipeline_execute)
 from library_api import authorize as authorize_learning, library as learning_library
-from document_learning import process_documents, train_document_models, cancel_obsolete_scans
+from document_learning import process_documents, train_document_models, cancel_obsolete_scans, request_document_repair, complete_document_repairs
 
 # ---------------------------------------------------------------------------
 app = create_app(
@@ -947,6 +947,7 @@ async def _document_learning_loop(app) -> None:
                     # backlog clears; later model refreshes remain weekly.
                     pending = await pipeline_rows(conn,"SELECT COUNT(*) AS n FROM trident_learning_documents WHERE active AND org_id IS NOT NULL AND status='PENDING'")
                     result['models'] = await train_document_models(conn) if not pending[0]['n'] else []
+                    result['repairs'] = await complete_document_repairs(conn)
                     await pipeline_execute(conn,"""INSERT INTO trident_learning_jobs(job_key,last_success_at,last_result,last_error)
                         VALUES('document_extraction',NOW(),%s::jsonb,NULL) ON CONFLICT(job_key) DO UPDATE
                         SET last_success_at=NOW(),last_result=EXCLUDED.last_result,last_error=NULL""",(json.dumps(result),))
@@ -1261,6 +1262,8 @@ async def trident_backfill(request: Request):
             last_error='REPEATED_EXTRACTION_FAILURE' WHERE org_id=%s::uuid
             AND status='RETRY' AND attempts>=2 AND active""",(org_id,))
         await pipeline_execute(conn,"UPDATE trident_learning_documents SET next_attempt_at=NOW() WHERE org_id=%s::uuid AND status='RETRY' AND active",(org_id,))
+        repair_queued=await request_document_repair(conn,org_id)
     # Backfill only indexes source evidence. The explicit retrain endpoint can
     # then prove this dataset's membership without resending a claim or appeal.
-    return {**ingestion,"outcomes_indexed":outcomes,"training_state":"AWAITING_WEEKLY_TRAINING"}
+    return {**ingestion,"outcomes_indexed":outcomes,"repair_queued":repair_queued,
+        "training_state":"REPAIR_REFRESH_QUEUED" if repair_queued else "AWAITING_WEEKLY_TRAINING"}
