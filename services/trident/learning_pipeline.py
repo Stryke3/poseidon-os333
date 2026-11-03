@@ -59,9 +59,26 @@ async def execute(conn, query: str, params=()):
 
 async def ensure_schema(conn):
     # Run before ingestion/training on startup, never from an unauthenticated read.
+    async def ready():
+        result=await rows(conn,"""SELECT bool_and(to_regclass(name) IS NOT NULL)
+            AND (SELECT COUNT(*)=2 FROM information_schema.columns
+                WHERE table_schema=current_schema() AND table_name='trident_learning_documents'
+                  AND column_name=ANY(ARRAY['content_token','scope_basis'])) AS ready
+            FROM unnest(%s::text[]) expected(name)""", ([
+                'trident_feedback_ingestion','trident_model_artifacts','trident_training_membership',
+                'trident_learning_jobs','trident_learning_documents','trident_document_models',
+                'trident_feedback_case_idx','trident_membership_source_idx',
+                'trident_documents_queue_idx','trident_documents_org_idx'],))
+        return bool(result[0]['ready'])
     async with conn.transaction():
+        # Even IF NOT EXISTS DDL can request locks conflicting with extraction.
+        # A warm worker performs only this catalog read. A waiting initializer
+        # rechecks after the first worker commits instead of repeating the DDL.
+        if await ready():
+            return
         await rows(conn,"SELECT pg_advisory_xact_lock(817260030)")
-        await execute(conn, Path(__file__).with_name("learning_schema.sql").read_text())
+        if not await ready():
+            await execute(conn, Path(__file__).with_name("learning_schema.sql").read_text())
 
 
 async def table_exists(conn, name: str) -> bool:

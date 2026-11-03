@@ -261,17 +261,21 @@ async def process_documents(conn, limit=8, extractor=None):
         for record in queue:
             content = await source_bytes(conn, record)
             tasks[record['source_key']] = group.create_task(parse_one(record, content))
-    for record in queue:
-        parsed = tasks[record['source_key']].result()
-        text = parsed.get('text') or ''
-        codes = sorted(set(re.findall(r'\b[A-V][0-9]{4}\b', text.upper())))
-        await execute(conn, '''UPDATE trident_learning_documents SET status=%s,content_sha256=%s,
-            text_content=%s,page_count=%s,extracted_pages=%s,ocr_pages=%s,hcpcs=%s::text[],last_error=%s,
-            attempts=attempts+1,next_attempt_at=NOW()+INTERVAL '1 hour',extracted_at=NOW()
-            WHERE source_key=%s''', (parsed['status'], parsed.get('sha256'), text, parsed.get('page_count'),
-                parsed.get('extracted_pages'), parsed.get('ocr_pages'), codes, parsed.get('error'), record['source_key']))
-        result['processed'] += 1
-        result['extracted' if parsed['status'] == 'EXTRACTED' else 'held'] += 1
+    # Parsing holds no metadata write lock. Serialize the brief save phase
+    # with discovery so a bulk source update cannot deadlock a file batch.
+    async with conn.transaction():
+        await rows(conn, 'SELECT pg_advisory_xact_lock(817260031)')
+        for record in queue:
+            parsed = tasks[record['source_key']].result()
+            text = parsed.get('text') or ''
+            codes = sorted(set(re.findall(r'\b[A-V][0-9]{4}\b', text.upper())))
+            await execute(conn, '''UPDATE trident_learning_documents SET status=%s,content_sha256=%s,
+                text_content=%s,page_count=%s,extracted_pages=%s,ocr_pages=%s,hcpcs=%s::text[],last_error=%s,
+                attempts=attempts+1,next_attempt_at=NOW()+INTERVAL '1 hour',extracted_at=NOW()
+                WHERE source_key=%s''', (parsed['status'], parsed.get('sha256'), text, parsed.get('page_count'),
+                    parsed.get('extracted_pages'), parsed.get('ocr_pages'), codes, parsed.get('error'), record['source_key']))
+            result['processed'] += 1
+            result['extracted' if parsed['status'] == 'EXTRACTED' else 'held'] += 1
     return result
 
 

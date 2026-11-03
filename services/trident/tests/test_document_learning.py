@@ -8,9 +8,28 @@ import pymupdf
 import pytest
 
 from test_learning_pipeline import database, close, ORG, OTHER
-from learning_pipeline import rows
+from learning_pipeline import rows, ensure_schema
 from document_learning import discover_documents, process_documents, train_document_models, document_library
 from document_extract import extract
+
+
+@pytest.mark.asyncio
+async def test_warm_schema_checks_do_not_repeat_locking_ddl(monkeypatch):
+    import learning_pipeline
+    conn=await database()
+    try:
+        original=learning_pipeline.execute
+        async def reject_ddl(*args,**kwargs):
+            raise AssertionError('A warm schema check must not repeat DDL')
+        monkeypatch.setattr(learning_pipeline,'execute',reject_ddl)
+        await ensure_schema(conn)
+        monkeypatch.setattr(learning_pipeline,'execute',original)
+        async with conn.cursor() as cur:
+            await cur.execute('DROP INDEX trident_documents_org_idx')
+        await ensure_schema(conn)
+        assert (await rows(conn,"SELECT to_regclass('trident_documents_org_idx') IS NOT NULL AS present"))[0]['present']
+    finally:
+        await close(conn)
 
 
 @pytest.mark.asyncio
