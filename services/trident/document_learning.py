@@ -48,23 +48,28 @@ async def discover_documents(conn) -> dict:
         sources.extend(chart); coverage['order_documents'] = len(chart)
     if await table_exists(conn, 'spear_store_snapshots'):
         scanned_tables.add('spear_store_snapshots')
-        snapshots = await rows(conn, """SELECT 'spear_store_snapshots' AS source_table,
-            s.store_key||':'||section.name||':'||(d.item->>'id') AS source_id,
-            (d.item-'content_base64')||jsonb_build_object('store_key',s.store_key,'section',section.name,
-              'content_revision',md5(COALESCE(d.item->>'content_base64','')),
+        snapshots = await rows(conn, """WITH scoped AS MATERIALIZED (
+              SELECT store_key,store FROM spear_store_snapshots WHERE store_key=%s),
+            cases AS MATERIALIZED (
+              SELECT c.item FROM scoped s CROSS JOIN LATERAL
+              jsonb_array_elements(COALESCE(s.store->'cases','[]'::jsonb)) c(item)),
+            files AS MATERIALIZED (
+              SELECT s.store_key,section.name,(d.item-'content_base64')||jsonb_build_object(
+                'content_revision',md5(COALESCE(d.item->>'content_base64',''))) AS item
+              FROM scoped s CROSS JOIN (VALUES ('documents'),('artifacts')) section(name)
+              CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.store->section.name,'[]'::jsonb)) d(item))
+            SELECT 'spear_store_snapshots' AS source_table,
+            d.store_key||':'||d.name||':'||(d.item->>'id') AS source_id,
+            d.item||jsonb_build_object('store_key',d.store_key,'section',d.name,
               'id',d.item->>'id','core_order_id',c.item->>'core_order_id') AS item,
             to_jsonb(o) AS order_context
-            FROM spear_store_snapshots s
-            CROSS JOIN (VALUES ('documents'),('artifacts')) section(name)
-            CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.store->section.name,'[]'::jsonb)) d(item)
-            LEFT JOIN LATERAL (SELECT case_row.value AS item FROM jsonb_array_elements(COALESCE(s.store->'cases','[]'::jsonb)) case_row(value)
-              WHERE case_row.value->>'id'=d.item->>'case_id' LIMIT 1) c ON true
+            FROM files d LEFT JOIN cases c ON c.item->>'id'=d.item->>'case_id'
             LEFT JOIN LATERAL (SELECT o.* FROM orders o WHERE o.id::text=replace(
               COALESCE(NULLIF(c.item->>'core_order_id',''),c.item->>'order_id'),'ord_','')
               OR o.id::text IN(SELECT replace(to_jsonb(l)->>'order_id','ord_','') FROM ledger_claim_links l
                  WHERE to_jsonb(l)->>'case_id'=d.item->>'case_id')
               ORDER BY o.id LIMIT 2) o ON true
-            WHERE s.store_key=%s AND d.item->>'id' IS NOT NULL""",
+            WHERE d.item->>'id' IS NOT NULL""",
             (os.getenv('SPEAR_SQL_STORE_KEY', 'spear-production'),))
         # A document linked to multiple orders must not choose an arbitrary patient/org.
         grouped = {}
@@ -96,7 +101,7 @@ async def discover_documents(conn) -> dict:
         revisions = []
         for child, fk in dependencies:
             if await table_exists(conn, child):
-                revisions.append(f"COALESCE((SELECT jsonb_agg(to_jsonb(l) ORDER BY l.id)::text FROM {child} l WHERE l.{fk}::text=e.id::text),'')")
+                revisions.append(f"COALESCE((SELECT jsonb_agg(to_jsonb(l) ORDER BY l.id)::text FROM {child} l WHERE l.{fk}=e.id),'')")
         line_revision = "||".join(revisions) or "''"
         records = await rows(conn, f"""SELECT '{table}' AS source_table,e.id::text AS source_id,
             to_jsonb(e)-'patient_name'-'member_id'-'patient_control_number'-'patient_id'
@@ -107,6 +112,7 @@ async def discover_documents(conn) -> dict:
         )
         sources.extend(records); coverage[table] = len(records)
     indexed = 0
+    incoming = []
     existing = {r['source_key']:r for r in await rows(conn,
         'SELECT source_key,org_id::text AS org_id,order_id,active FROM trident_learning_documents')}
     for source in sources:
@@ -120,26 +126,33 @@ async def discover_documents(conn) -> dict:
         old = existing.get(key)
         if old and old['org_id']==org and old['order_id']==order_id and old['active']==(not deleted):
             continue
-        # Each revision is immutable; current-source activation controls serving.
-        await execute(conn, '''UPDATE trident_learning_documents SET active=false
-            WHERE source_table=%s AND source_id=%s AND source_key<>%s AND active''', (table, sid, key))
-        count = await execute(conn, '''INSERT INTO trident_learning_documents
+        values = (key, table, sid, revision, item.get('content_revision'), org, order_id,
+             item.get('case_id'), context.get('payer_id') or item.get('payer_id'), item.get('payer_name'),
+             str(item.get('file_name') or item.get('filename') or f'{table}-{sid}.json'),
+             str(item.get('doc_type') or item.get('kind') or table),
+             item.get('mime_type') or item.get('content_type') or 'application/json',
+             'PENDING' if org else 'UNLINKED', not deleted)
+        incoming.append(dict(zip(('source_key','source_table','source_id','source_revision','content_token','org_id',
+            'order_id','case_id','payer_id','payer_name','filename','document_kind','mime_type','status','active'),values)))
+    if incoming:
+        encoded = json.dumps(json_safe(incoming))
+        # Two bulk statements rather than two round trips per historical file.
+        await execute(conn, '''UPDATE trident_learning_documents d SET active=false
+            FROM jsonb_to_recordset(%s::jsonb) p(source_table text,source_id text,source_key text)
+            WHERE d.source_table=p.source_table AND d.source_id=p.source_id
+              AND d.source_key<>p.source_key AND d.active''', (encoded,))
+        indexed = await execute(conn, '''INSERT INTO trident_learning_documents
             (source_key,source_table,source_id,source_revision,content_token,org_id,order_id,case_id,payer_id,payer_name,
              filename,document_kind,mime_type,status,active)
-            VALUES(%s,%s,%s,%s,%s,%s::uuid,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            SELECT * FROM jsonb_to_recordset(%s::jsonb) p(source_key text,source_table text,source_id text,
+              source_revision text,content_token text,org_id uuid,order_id text,case_id text,payer_id text,
+              payer_name text,filename text,document_kind text,mime_type text,status text,active boolean)
             ON CONFLICT(source_key) DO UPDATE SET org_id=EXCLUDED.org_id,order_id=EXCLUDED.order_id,
               status=CASE WHEN trident_learning_documents.status='UNLINKED' AND EXCLUDED.org_id IS NOT NULL
                 THEN 'PENDING' ELSE trident_learning_documents.status END,active=EXCLUDED.active
             WHERE trident_learning_documents.org_id IS DISTINCT FROM EXCLUDED.org_id
               OR trident_learning_documents.order_id IS DISTINCT FROM EXCLUDED.order_id
-              OR trident_learning_documents.active IS DISTINCT FROM EXCLUDED.active''',
-            (key, table, sid, revision, item.get('content_revision'), org, order_id,
-             item.get('case_id'), context.get('payer_id') or item.get('payer_id'), item.get('payer_name'),
-             str(item.get('file_name') or item.get('filename') or f'{table}-{sid}.json'),
-             str(item.get('doc_type') or item.get('kind') or table),
-             item.get('mime_type') or item.get('content_type') or 'application/json',
-             'PENDING' if org else 'UNLINKED', not deleted))
-        indexed += count
+              OR trident_learning_documents.active IS DISTINCT FROM EXCLUDED.active''', (encoded,))
     # Removed source records remain in history but are no longer searchable or
     # included in a later model. Never serve deleted snapshot documents.
     for source_table in scanned_tables:
