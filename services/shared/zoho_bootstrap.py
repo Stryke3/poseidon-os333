@@ -113,6 +113,9 @@ class PgVault:
     def read(self) -> dict[str, Any]:
         return dict(self.conn.execute("SELECT grant_digest,encrypted_token,state FROM public.sfm_zoho_oauth_vault WHERE credential_key=%s", (self.slot,)).fetchone())
 
+    def replace_verified(self, digest: str, encrypted: str) -> None:
+        self.conn.execute("UPDATE public.sfm_zoho_oauth_vault SET grant_digest=%s,encrypted_token=%s,state='verified',updated_at=NOW() WHERE credential_key=%s", (digest, encrypted, self.slot))
+
     def reserve(self, digest: str) -> None:
         self.conn.execute("UPDATE public.sfm_zoho_oauth_vault SET grant_digest=%s,state='exchange_pending',updated_at=NOW() WHERE credential_key=%s", (digest, self.slot))
 
@@ -211,7 +214,9 @@ def verify_sheet(client: httpx.Client, config: Config, access: str) -> None:
 
 
 def bootstrap(env: MutableMapping[str, str], *, vault_factory=PgVault, client_factory=httpx.Client) -> dict[str, Any]:
-    grant = env.pop("ZOHO_OAUTH_GRANT_CODE", "").strip()
+    replacement = env.pop("ZOHO_OAUTH_REPLACEMENT_CODE", "").strip()
+    grant = replacement or env.pop("ZOHO_OAUTH_GRANT_CODE", "").strip()
+    env.pop("ZOHO_OAUTH_GRANT_CODE", None)
     if env.get("ZOHO_BOOTSTRAP_ENABLED", "false").lower() != "true":
         return {"status": "disabled"}
     try:
@@ -226,6 +231,18 @@ def bootstrap(env: MutableMapping[str, str], *, vault_factory=PgVault, client_fa
             access = None
             refresh = env.get("ZOHO_OAUTH_REFRESH_TOKEN", "").strip()
             with client_factory(timeout=15.0, follow_redirects=False) as client:
+                if replacement and fingerprint != stored.get("grant_digest"):
+                    tokens = token_request(client, config, grant_type="authorization_code", code=replacement)
+                    refresh = tokens.get("refresh_token")
+                    if not isinstance(refresh, str) or not refresh:
+                        raise SetupError("refresh_token_not_returned")
+                    access = tokens["access_token"]
+                    account_id, folder_id = discover_mail(client, config, access)
+                    verify_sheet(client, config, access)
+                    vault.replace_verified(fingerprint, config.cipher().encrypt(refresh.encode()).decode())
+                    env.update(ZOHO_OAUTH_REFRESH_TOKEN=refresh, ZOHO_MAIL_ACCOUNT_ID=account_id,
+                               ZOHO_MAIL_FOLDER_ID=folder_id, EMAIL_INTAKE_MAILBOX="INBOX")
+                    return {"status": "mail_and_sheet_verified", "account_id": account_id, "folder_id": folder_id}
                 if fingerprint and fingerprint != stored.get("grant_digest"):
                     if refresh or stored.get("encrypted_token"):
                         raise SetupError("existing_grant_preserved_rotation_required")
